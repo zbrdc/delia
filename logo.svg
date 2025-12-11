@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <!-- Watermelon rind gradient (green outer) -->
+    <linearGradient id="rind-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#689B8A"/>
+      <stop offset="100%" style="stop-color:#4A7D6D"/>
+    </linearGradient>
+    <!-- Watermelon flesh gradient (pink/coral inner) -->
+    <linearGradient id="flesh-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF6B7A"/>
+      <stop offset="100%" style="stop-color:#E85566"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer circle - watermelon rind (green) -->
+  <circle cx="60" cy="60" r="56" fill="url(#rind-gradient)"/>
+
+  <!-- Inner circle - watermelon flesh (pink/coral) -->
+  <circle cx="60" cy="60" r="46" fill="url(#flesh-gradient)"/>
+
+  <!-- White rind edge -->
+  <circle cx="60" cy="60" r="48" fill="none" stroke="#F2EDD1" stroke-width="3" opacity="0.6"/>
+
+  <!-- Stylized "D" with flowing curves -->
+  <path d="M45 32
+           L45 88
+           M45 32
+           C73 32, 87 44, 87 60
+           C87 76, 73 88, 45 88"
+        fill="none"
+        stroke="#F2EDD1"
+        stroke-width="6"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+
+  <!-- Seeds (representing model tiers) -->
+  <ellipse cx="64" cy="45" rx="3" ry="5" fill="#2D2D2D" transform="rotate(-20 64 45)"/>
+  <ellipse cx="72" cy="60" rx="3" ry="5" fill="#2D2D2D" transform="rotate(10 72 60)"/>
+  <ellipse cx="64" cy="75" rx="3" ry="5" fill="#2D2D2D" transform="rotate(25 64 75)"/>
+</svg>

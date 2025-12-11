@@ -1,0 +1,80 @@
+{
+  "version": "1.0",
+  "system": {
+    "gpu_memory_limit_gb": 8,
+    "memory_buffer_gb": 1,
+    "max_concurrent_requests_per_backend": 1,
+    "large_content_threshold": 50000,
+    "medium_content_threshold": 30000
+  },
+  "backends": [
+    {
+      "id": "local-llamacpp",
+      "name": "llama.cpp Local GPU",
+      "provider": "llamacpp",
+      "type": "local",
+      "url": "http://127.0.0.1:8080",
+      "enabled": true,
+      "priority": 1,
+      "models": {
+        "quick": "Qwen3-4B-Q4_K_M",
+        "coder": "Qwen3-4B-Q4_K_M",
+        "moe": "Qwen3-4B-Q4_K_M",
+        "thinking": "Qwen3-4B-Q4_K_M"
+      },
+      "health_endpoint": "/health",
+      "models_endpoint": "/v1/models",
+      "context_limit": 16384
+    },
+    {
+      "id": "gemini-cloud",
+      "name": "Gemini Cloud (Free Tier)",
+      "provider": "gemini",
+      "type": "remote",
+      "url": "https://generativelanguage.googleapis.com",
+      "enabled": true,
+      "priority": 10,
+      "models": {
+        "quick": "gemini-2.0-flash",
+        "coder": "gemini-2.0-flash",
+        "moe": "gemini-2.0-flash",
+        "thinking": "gemini-2.0-flash"
+      },
+      "health_endpoint": "",
+      "models_endpoint": "/v1beta/models",
+      "context_limit": 1000000,
+      "api_key": ""
+    }
+  ],
+  "routing": {
+    "prefer_local": true,
+    "fallback_enabled": true,
+    "load_balance": false
+  },
+  "models": {
+    "quick": {
+      "vram_gb": 9,
+      "context_tokens": 40000,
+      "num_ctx": 8192,
+      "max_input_kb": 50
+    },
+    "coder": {
+      "vram_gb": 9,
+      "context_tokens": 128000,
+      "num_ctx": 16384,
+      "max_input_kb": 100
+    },
+    "moe": {
+      "vram_gb": 17,
+      "context_tokens": 128000,
+      "num_ctx": 16384,
+      "max_input_kb": 100
+    },
+    "thinking": {
+      "vram_gb": 9,
+      "context_tokens": 128000,
+      "num_ctx": 16384,
+      "max_input_kb": 100
+    }
+  }
+}

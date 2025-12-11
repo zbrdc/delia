@@ -1,0 +1,148 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* Delia Color Palette - Watermelon Inspired
+ * Light Green:  #8BB5A6 - light sage (rind highlight)
+ * Sage Green:   #689B8A - primary (rind)
+ * Dark Green:   #1E3A32 - deep green (rind shadow)
+ * Coral Pink:   #FF6B7A - accent (flesh)
+ * Light Pink:   #FFB3BA - soft pink (flesh highlight)
+ * Cream:        #F2EDD1 - background
+ * Seed Dark:    #2D2D2D - seeds
+ */
+
+:root {
+  --radius: 0.625rem;
+  /* Light mode - fresh watermelon palette */
+  --background: #F5F2E3;
+  --foreground: #1E3A32;
+  --card: #FFFFFF;
+  --card-foreground: #1E3A32;
+  --popover: #FFFFFF;
+  --popover-foreground: #1E3A32;
+  --primary: #689B8A;
+  --primary-foreground: #FFFFFF;
+  --secondary: #8BB5A6;
+  --secondary-foreground: #1E3A32;
+  --muted: #E5E1D0;
+  --muted-foreground: #4A6158;
+  --accent: #FF6B7A;
+  --accent-foreground: #FFFFFF;
+  --destructive: #DC2626;
+  --border: #C8D4C0;
+  --input: #E8EDE6;
+  --ring: #689B8A;
+  /* Chart colors - watermelon spectrum */
+  --chart-1: #689B8A;
+  --chart-2: #FF6B7A;
+  --chart-3: #8BB5A6;
+  --chart-4: #FFB3BA;
+  --chart-5: #4A7D6D;
+  /* Sidebar - light green tint */
+  --sidebar: #E8EDE6;
+  --sidebar-foreground: #1E3A32;
+  --sidebar-primary: #689B8A;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #FF6B7A;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: #C8D4C0;
+  --sidebar-ring: #689B8A;
+}
+
+.dark {
+  /* Dark mode - high contrast watermelon */
+  --background: #0A1410;
+  --foreground: #F0F5F2;
+  --card: #12221C;
+  --card-foreground: #F0F5F2;
+  --popover: #12221C;
+  --popover-foreground: #F0F5F2;
+  --primary: #A8D4C4;
+  --primary-foreground: #0A1410;
+  --secondary: #1A3028;
+  --secondary-foreground: #C8E0D6;
+  --muted: #1A3028;
+  --muted-foreground: #A0BFB2;
+  --accent: #FF8A95;
+  --accent-foreground: #1A0508;
+  --destructive: #FF6B6B;
+  --border: rgba(168, 212, 196, 0.25);
+  --input: rgba(168, 212, 196, 0.15);
+  --ring: #A8D4C4;
+  /* Chart colors - vivid on dark */
+  --chart-1: #A8D4C4;
+  --chart-2: #FF8A95;
+  --chart-3: #7EC9AE;
+  --chart-4: #FFB8C0;
+  --chart-5: #5BA88E;
+  /* Sidebar - subtle dark green */
+  --sidebar: #12221C;
+  --sidebar-foreground: #F0F5F2;
+  --sidebar-primary: #A8D4C4;
+  --sidebar-primary-foreground: #0A1410;
+  --sidebar-accent: #FF8A95;
+  --sidebar-accent-foreground: #1A0508;
+  --sidebar-border: rgba(168, 212, 196, 0.2);
+  --sidebar-ring: #A8D4C4;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-weight: 450;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Make small text more readable */
+  .text-xs, .text-sm {
+    font-weight: 500;
+  }
+  .text-muted-foreground {
+    font-weight: 500;
+  }
+}

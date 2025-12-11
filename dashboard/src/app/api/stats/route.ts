@@ -1,0 +1,90 @@
+import { NextResponse } from "next/server"
+import { readFile } from "fs/promises"
+import { join } from "path"
+
+// Path to the usage stats files (in temp directory)
+const STATS_FILE = join(require("os").homedir(), ".cache", "delia", "usage_stats.json")
+const ENHANCED_STATS_FILE = join(require("os").homedir(), ".cache", "delia", "enhanced_stats.json")
+
+interface ModelStats {
+  calls: number
+  tokens: number
+}
+
+interface UsageStats {
+  quick: ModelStats
+  coder: ModelStats
+  moe: ModelStats
+}
+
+interface RecentCall {
+  timestamp: string
+  model: string
+  task_type: string
+  language: string
+  tokens: number
+  elapsed_ms: number
+  preview: string
+  thinking: boolean
+}
+
+interface ResponseTime {
+  ts: string
+  ms: number
+}
+
+interface EnhancedStats {
+  task_stats: Record<string, number>
+  recent_calls: RecentCall[]
+  response_times: {
+    quick: ResponseTime[]
+    coder: ResponseTime[]
+    moe: ResponseTime[]
+  }
+}
+
+export async function GET() {
+  try {
+    // Read basic stats
+    const data = await readFile(STATS_FILE, "utf-8")
+    const stats: UsageStats = JSON.parse(data)
+    
+    // Ensure all tiers exist with defaults (backward compatibility)
+    if (!stats.quick) stats.quick = { calls: 0, tokens: 0 }
+    if (!stats.coder) stats.coder = { calls: 0, tokens: 0 }
+    if (!stats.moe) stats.moe = { calls: 0, tokens: 0 }
+    
+    // Try to read enhanced stats
+    let enhanced: EnhancedStats | null = null
+    try {
+      const enhancedData = await readFile(ENHANCED_STATS_FILE, "utf-8")
+      enhanced = JSON.parse(enhancedData)
+    } catch {
+      // Enhanced stats file may not exist yet
+    }
+    
+    return NextResponse.json({
+      stats,
+      enhanced,
+      timestamp: new Date().toISOString(),
+    })
+  } catch (error) {
+    // Return empty stats if file doesn't exist
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return NextResponse.json({
+        stats: {
+          quick: { calls: 0, tokens: 0 },
+          coder: { calls: 0, tokens: 0 },
+          moe: { calls: 0, tokens: 0 },
+        },
+        enhanced: null,
+        timestamp: new Date().toISOString(),
+      })
+    }
+    
+    return NextResponse.json(
+      { error: "Failed to read stats file" },
+      { status: 500 }
+    )
+  }
+}

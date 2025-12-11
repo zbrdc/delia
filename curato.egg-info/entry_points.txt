@@ -1,0 +1,3 @@
+[console_scripts]
+curato = mcp_server:main
+curato-setup-auth = setup_auth:main

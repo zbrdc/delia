@@ -1,0 +1,293 @@
+Metadata-Version: 2.4
+Name: curato
+Version: 1.0.0
+Summary: I take care of it — Local LLM delegation via Model Context Protocol
+Author: zbrdc
+License: BSD-3-Clause
+Project-URL: Repository, https://github.com/zbrdc/curato
+Keywords: mcp,llm,ollama,local-ai,curato,delegation
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: BSD License
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: mcp>=1.9.0
+Requires-Dist: httpx>=0.28.1
+Requires-Dist: pydantic>=2.12.5
+Requires-Dist: fastmcp>=2.13.3
+Requires-Dist: pygments>=2.18.0
+Requires-Dist: tenacity>=9.0.0
+Requires-Dist: tiktoken>=0.8.0
+Requires-Dist: structlog>=24.4.0
+Requires-Dist: aiofiles>=24.1.0
+Requires-Dist: humanize>=4.10.0
+Requires-Dist: fastapi-users[oauth,sqlalchemy]>=14.0.0
+Requires-Dist: aiosqlite>=0.20.0
+Requires-Dist: python-jose[cryptography]>=3.5.0
+Requires-Dist: jinja2>=3.1.6
+Dynamic: license-file
+
+# Curato
+
+A Model Context Protocol (MCP) server that intelligently delegates tasks to local LLM backends. Routes tasks to appropriate models based on task type and content complexity.
+
+## Features
+
+- **Smart Model Selection**: Automatically routes tasks to appropriate models based on size and capability (from small 7B models for quick tasks to large 30B+ models for complex reasoning)
+- **Dual Backend Support**: Ollama and llama.cpp with automatic switching
+- **Context-Aware Routing**: Handles large content with appropriate context windows
+- **Circuit Breaker**: Graceful failure handling with exponential backoff
+- **Parallel Processing**: Distributes batch tasks across available backends
+- **Authentication**: Username/password and Microsoft 365 OAuth support
+- **Usage Tracking**: Monitors efficiency and cost savings
+- **Enhanced Prompt System**: Structured templates with JSON schema integration and task-specific optimizations
+
+## Requirements
+
+### Hardware
+| Component | Minimum | Recommended | For Large Models |
+|-----------|---------|-------------|------------------|
+| GPU | 4GB VRAM | 12GB VRAM | 24GB+ VRAM |
+| RAM | 8GB | 16GB | 32GB+ |
+| Storage | 10GB | 30GB | 50GB+ |
+
+*Curato adapts to your available hardware - use smaller models (3B-7B) for basic tasks or larger models (14B-30B+) for complex reasoning.*
+
+### Software
+- Python 3.11+
+- Choose one or both backends:
+  - **[Ollama](https://ollama.ai)** (recommended for ease of use)
+  - **[llama.cpp](https://github.com/ggerganov/llama.cpp)** with router mode (for advanced users)
+- [uv](https://docs.astral.sh/uv/) package manager
+
+## Quick Start
+
+1. **Install dependencies:**
+   ```bash
+   git clone https://github.com/zbrdc/curato.git
+   cd curato
+   uv sync
+   ```
+
+2. **Set up a backend:**
+   - **Ollama (recommended):**
+     ```bash
+     # Install any models you want - Curato adapts automatically
+     # Examples (choose based on your hardware):
+     ollama pull qwen3:14b           # ~9GB, general-purpose (recommended)
+     ollama pull qwen2.5-coder:14b   # ~9GB, code-specialized
+     ollama pull qwen3:30b-a3b       # ~17GB, complex reasoning
+     # Or use smaller models like llama3.2:3b, mistral:7b, etc.
+     ```
+   - **llama.cpp (advanced):**
+     ```bash
+     # Build llama.cpp
+     git clone https://github.com/ggerganov/llama.cpp
+     cd llama.cpp
+     mkdir build && cd build
+     cmake .. -DLLAMA_CURL=ON
+     make -j$(nproc)
+
+     # Download models
+     mkdir -p models
+     cd models
+     wget https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf
+
+     # Start router
+     cd ../build/bin
+     ./llama-server --models-dir ../../models --host 0.0.0.0 --port 8080 --ctx-size 16384 --threads $(nproc)
+     ```
+
+3. **Configure VS Code:**
+   Add to `~/.config/Code/User/mcp.json`:
+   ```json
+   {l
+     "servers": {
+       "curato": {
+         "command": "uv",
+         "args": ["run", "--directory", "/path/to/curato", "python", "mcp_server.py"],
+         "type": "stdio"
+       }
+     }
+   }
+   ```
+
+4. **Reload VS Code** and start using Curato!
+
+## Configuration
+
+### VS Code / GitHub Copilot
+
+Add to `~/.config/Code/User/mcp.json`:
+
+```json
+{
+  "servers": {
+    "curato": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/curato", "python", "mcp_server.py"],
+      "type": "stdio",
+      "env": {
+        "OLLAMA_BASE": "http://localhost:11434",
+        "LLAMACPP_BASE": "http://localhost:8080"
+      }
+    }
+  }
+}
+```
+
+Reload VS Code to activate. Curato will automatically detect task types and route to appropriate models.
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_BASE` | `http://localhost:11434` | Ollama API endpoint |
+| `LLAMACPP_BASE` | `http://localhost:8080` | llama.cpp router API endpoint |
+| `CURATO_BACKEND` | `ollama` | Force specific backend (optional - auto-selection recommended) |
+
+### Authentication (Optional)
+
+For HTTP transport mode, enable authentication:
+
+```bash
+# Quick setup
+python setup_auth.py
+
+# Or manually
+export CURATO_AUTH_ENABLED=true
+export CURATO_JWT_SECRET="your-secure-jwt-secret-here"
+```
+
+Supports username/password and Microsoft 365 OAuth. See full setup in the [HTTP Transport](#http-transport) section.
+
+### Advanced Configuration
+
+Most users won't need to change these, but they're available in `config.py`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `large_content_threshold` | 50,000 bytes | Content size for moe model routing |
+| `moe_tasks` | `plan`, `critique` | Tasks that use the moe model |
+| `coder_tasks` | `generate`, `review`, `analyze` | Tasks that use the coder model |
+| `temperature_normal` | 0.3 | Standard generation temperature |
+| `temperature_thinking` | 0.6 | Temperature for thinking/deep reasoning |
+
+## Usage
+
+### Command Line
+
+```bash
+# MCP mode (for VS Code/GitHub Copilot)
+uv run python mcp_server.py
+
+# HTTP API mode
+uv run python mcp_server.py --transport http --port 8200
+
+# View all options
+uv run python mcp_server.py --help
+```
+
+### Tools
+
+Curato provides these MCP tools for intelligent task delegation:
+
+- **delegate**: Execute tasks with automatic model selection
+- **think**: Extended reasoning for complex problems  
+- **batch**: Process multiple tasks in parallel
+- **health**: Check backend status and usage statistics
+- **models**: List available models and selection logic
+- **switch_backend**: Switch between Ollama and llama.cpp
+- **switch_model**: Change model for a tier at runtime
+- **get_model_info**: Get model specifications and capabilities
+
+## Model Selection
+
+Curato automatically selects the best model based on your task complexity and content size. It works with any model sizes you have available:
+
+| Task Complexity | Typical Model Size | Example Use Cases |
+|-----------------|-------------------|-------------------|
+| Quick tasks | 7B - 14B models | Summaries, simple questions, basic code help |
+| Code tasks | 14B - 30B models | Code generation, review, debugging |
+| Complex reasoning | 30B+ models | Architecture planning, critique, deep analysis |
+| Deep thinking | 7B - 14B specialized | Extended reasoning, research tasks |
+
+**Flexible Model Support**: Curato adapts to whatever models you have installed. It automatically detects model capabilities and routes tasks appropriately. You can mix different model sizes and families - Curato will use what's best for each task.
+
+Models are chosen automatically based on task type and content. You can also specify model hints like "large" or "30B" in your prompt for manual influence.
+
+## Architecture
+
+Curato is an MCP server that routes tasks to local LLMs via Ollama or llama.cpp. It supports both stdio (for VS Code/GitHub Copilot) and HTTP transports for maximum compatibility.
+
+**Interface Design**: Curato uses structured JSON APIs for backend communication (following Ollama/llama.cpp standards) while processing natural language prompts. This provides reliable, programmatic control while maintaining human-readable task delegation.
+
+**Enhanced Prompt System**: Features structured prompt templates with JSON schema integration and task-specific optimizations for improved LLM responses.
+
+**Model Flexibility**: Works with any model sizes and families you have available. Curato automatically detects capabilities and routes tasks to the most appropriate model for optimal performance.
+
+**Model Flexibility**: Works with any model sizes and families you have available. Curato automatically detects capabilities and routes tasks to the most appropriate model for optimal performance.
+
+## Troubleshooting
+
+## Troubleshooting
+
+### Common Issues
+
+- **Server won't start**: Check that Ollama is running (`ollama serve`) and models are available
+- **MCP not connecting**: Verify VS Code MCP configuration points to the correct path
+- **Slow responses**: Try a smaller model or check system resources
+- **Model not found**: Pull the model with `ollama pull <model-name>`
+
+### Backend Switching
+
+Curato automatically selects the best backend based on availability, content size, and task requirements. For manual control, use the `switch_backend` tool or set `CURATO_BACKEND` environment variable.
+
+## Performance
+
+Typical response times (on modern hardware):
+- Quick tasks: 2-5 seconds
+- Code generation: 5-15 seconds  
+- Complex analysis: 30-60 seconds
+
+Performance depends on your hardware, model size, and task complexity.
+
+## Integration
+
+Compatible with other MCP servers:
+
+- [Serena](https://github.com/oraios/serena)
+- [Context7](https://context7.com)
+- [GitHub MCP](https://github.com/github/github-mcp)
+
+## Dependencies
+
+### Core
+- Python 3.11+
+- MCP Python SDK
+- Ollama or llama.cpp
+- uv (package manager)
+
+### Key Libraries
+- FastMCP (MCP server framework)
+- httpx (HTTP client)
+- Pydantic (data validation)
+- FastAPI (web framework, optional)
+
+See `pyproject.toml` for complete dependencies.
+
+## License
+
+BSD 3-Clause
+
+## Acknowledgments
+
+- [Ollama](https://ollama.ai) — Local LLM runtime
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) — Protocol implementation
+- [Qwen](https://qwenlm.github.io/) — Base models
