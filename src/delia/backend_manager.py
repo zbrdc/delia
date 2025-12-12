@@ -19,6 +19,7 @@ Handles loading, managing, and health-checking backends defined in settings.json
 The WebGUI and CLI tools update this file directly.
 """
 import json
+import os
 import httpx
 import asyncio
 import time
@@ -26,6 +27,14 @@ from pathlib import Path
 from typing import Optional, Any
 from dataclasses import dataclass, field
 import structlog
+
+# Optional dependency - imported lazily in check_health()
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    genai = None
+    GEMINI_AVAILABLE = False
 
 from . import paths
 
@@ -161,26 +170,25 @@ class BackendConfig:
 
             # Gemini-specific health check
             if self.provider == "gemini":
+                if not GEMINI_AVAILABLE:
+                    _get_log().warning("gemini_dependency_missing", instruction="Run 'uv add google-generativeai' to enable")
+                    self._available = False
+                    return False
+
+                # Use configured api_key, fall back to env var if not set
+                api_key = self.api_key or os.environ.get("GEMINI_API_KEY")
+                if not api_key:
+                    _get_log().warning("gemini_health_check_failed", reason="no_api_key")
+                    self._available = False
+                    return False
+
                 try:
-                    import google.generativeai as genai
-                    import os
-                    
-                    api_key = self.api_key or os.environ.get("GEMINI_API_KEY")
-                    if not api_key:
-                        _get_log().warning("gemini_health_check_failed", reason="no_api_key")
-                        self._available = False
-                        return False
-                        
                     genai.configure(api_key=api_key)
                     # Lightweight check - list models
                     # Run in thread to avoid blocking async loop
                     await asyncio.to_thread(genai.list_models)
                     self._available = True
                     return True
-                except ImportError:
-                    _get_log().warning("gemini_dependency_missing", instruction="Run 'uv add google-generativeai' to enable")
-                    self._available = False
-                    return False
                 except Exception as e:
                     _get_log().warning("gemini_health_check_failed", error=str(e))
                     self._available = False
