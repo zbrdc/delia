@@ -1,0 +1,24 @@
+{
+  "version": "1.0",
+  "backends": [
+    {
+      "id": "ollama-local",
+      "name": "Ollama Local",
+      "provider": "ollama",
+      "type": "local",
+      "url": "http://localhost:11434",
+      "enabled": true,
+      "priority": 1,
+      "models": {
+        "quick": "qwen3:14b",
+        "coder": "qwen2.5-coder:14b",
+        "moe": "qwen3:30b-a3b",
+        "thinking": "deepseek-r1:14b"
+      }
+    }
+  ],
+  "routing": {
+    "prefer_local": true,
+    "fallback_enabled": true
+  }
+}

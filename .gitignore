@@ -40,6 +40,9 @@ env/
 # Delia runtime data (created at startup)
 /data/
 
+# User-specific backend configuration
+settings.json
+
 # Legacy data directories (before centralization)
 /.user_data/
 /.serena/

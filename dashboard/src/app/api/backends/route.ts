@@ -15,12 +15,13 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 import { NextResponse } from "next/server"
-import { readFile, writeFile } from "fs/promises"
+import { readFile, writeFile, copyFile, access } from "fs/promises"
 import { join } from "path"
 
 // Path to settings.json (always in project root)
 const PROJECT_ROOT = join(process.cwd(), "..")
 const SETTINGS_FILE = join(PROJECT_ROOT, "settings.json")
+const SETTINGS_EXAMPLE = join(PROJECT_ROOT, "settings.json.example")
 
 interface BackendModels {
   quick: string
@@ -95,24 +96,32 @@ async function loadSettingsConfig(): Promise<SettingsConfig> {
     const content = await readFile(SETTINGS_FILE, "utf-8")
     return JSON.parse(content)
   } catch {
-    // Return default config if file doesn't exist
-    return {
-      version: "1.0",
-      system: {
-        gpu_memory_limit_gb: 8,
-        memory_buffer_gb: 1,
-        max_concurrent_requests_per_backend: 1,
-      },
-      backends: [],
-      routing: {
-        prefer_local: true,
-        fallback_enabled: true,
-        load_balance: false,
-      },
-      models: {},
-      auth: {
-        enabled: false,
-        tracking_enabled: true
+    // settings.json doesn't exist - try to copy from example
+    try {
+      await access(SETTINGS_EXAMPLE)
+      await copyFile(SETTINGS_EXAMPLE, SETTINGS_FILE)
+      const content = await readFile(SETTINGS_FILE, "utf-8")
+      return JSON.parse(content)
+    } catch {
+      // No example file either - return default config
+      return {
+        version: "1.0",
+        system: {
+          gpu_memory_limit_gb: 8,
+          memory_buffer_gb: 1,
+          max_concurrent_requests_per_backend: 1,
+        },
+        backends: [],
+        routing: {
+          prefer_local: true,
+          fallback_enabled: true,
+          load_balance: false,
+        },
+        models: {},
+        auth: {
+          enabled: false,
+          tracking_enabled: true
+        }
       }
     }
   }

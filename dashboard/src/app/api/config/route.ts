@@ -15,12 +15,13 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 import { NextResponse } from "next/server"
-import { readFile, writeFile } from "fs/promises"
+import { readFile, writeFile, copyFile, access } from "fs/promises"
 import { join } from "path"
 
 // Path to settings.json (always in project root)
 const PROJECT_ROOT = join(process.cwd(), "..")
 const SETTINGS_FILE = join(PROJECT_ROOT, "settings.json")
+const SETTINGS_EXAMPLE = join(PROJECT_ROOT, "settings.json.example")
 
 interface ModelSettings {
   quick: string
@@ -58,7 +59,16 @@ async function loadSettings(): Promise<SettingsConfig> {
     const content = await readFile(SETTINGS_FILE, "utf-8")
     return JSON.parse(content)
   } catch {
-    return { backends: [], routing: { prefer_local: true } }
+    // settings.json doesn't exist - try to copy from example
+    try {
+      await access(SETTINGS_EXAMPLE)
+      await copyFile(SETTINGS_EXAMPLE, SETTINGS_FILE)
+      const content = await readFile(SETTINGS_FILE, "utf-8")
+      return JSON.parse(content)
+    } catch {
+      // No example file either - return default
+      return { backends: [], routing: { prefer_local: true } }
+    }
   }
 }
 

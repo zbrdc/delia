@@ -136,7 +136,13 @@ Create `~/.copilot-cli/mcp.json`:
 
 ### Backend Configuration
 
-Edit `settings.json` in the project root:
+Copy the example configuration and customize for your setup:
+
+```bash
+cp settings.json.example settings.json
+```
+
+Then edit `settings.json`:
 
 ```json
 {

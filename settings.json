@@ -1,1 +1,0 @@
-{"version": "1.0", "backends": [{"id": "test-backend", "name": "Test", "provider": "llamacpp", "type": "local", "url": "http://localhost:8080", "enabled": true, "priority": 0, "models": {"quick": "test-model", "coder": "test-model", "moe": "test-model", "thinking": "test-model"}}], "routing": {"prefer_local": true}}
