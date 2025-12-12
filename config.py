@@ -9,6 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 from dataclasses import dataclass, field
 
+import paths
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -167,7 +169,7 @@ class Config:
     # PERSISTENCE
     # ============================================================
     stats_file: Path = field(
-        default_factory=lambda: Path.home() / ".cache" / "delia" / "usage_stats.json"
+        default_factory=lambda: paths.STATS_FILE
     )
 
     # ============================================================

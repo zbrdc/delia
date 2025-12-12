@@ -13,6 +13,8 @@ from typing import Optional, Any
 from dataclasses import dataclass, field
 import structlog
 
+import paths
+
 # Health check cache TTL in seconds
 HEALTH_CHECK_TTL = 30
 
@@ -24,7 +26,7 @@ def _get_log():
 log = None  # Will be set to actual logger on first use
 
 # Path to the unified configuration file
-SETTINGS_FILE = Path(__file__).parent / "settings.json"
+SETTINGS_FILE = paths.SETTINGS_FILE
 
 
 @dataclass

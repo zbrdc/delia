@@ -21,6 +21,8 @@ import hashlib
 import structlog
 from limits import storage, strategies, parse
 
+import paths
+
 # Lazy logger to handle STDIO reconfiguration
 def _get_log():
     return structlog.get_logger()
@@ -37,7 +39,7 @@ DEFAULT_CONCURRENT_REQUESTS = 10
 
 # Persistence settings
 SAVE_INTERVAL_SECONDS = 60  # Background save interval
-DATA_DIR = Path(__file__).parent / ".user_data"
+DATA_DIR = paths.USER_DATA_DIR
 
 
 # ============================================================
@@ -203,7 +205,7 @@ class SimpleTracker:
 
     def __init__(self, data_dir: Path = None):
         self.data_dir = data_dir or DATA_DIR
-        self.data_dir.mkdir(exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
         # In-memory state
         self._clients: Dict[str, ClientInfo] = {}

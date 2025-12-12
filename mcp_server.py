@@ -24,6 +24,8 @@ from typing import Optional, Any, cast
 from pathlib import Path
 
 import structlog
+
+import paths
 from structlog.types import Processor
 
 # ============================================================
@@ -138,7 +140,7 @@ from multi_user_tracking import tracker
 
 
 
-LIVE_LOGS_FILE = Path.home() / ".cache" / "delia" / "live_logs.json"
+LIVE_LOGS_FILE = paths.LIVE_LOGS_FILE
 MAX_LIVE_LOGS = 100
 LIVE_LOGS: list[dict] = []
 _live_logs_lock = threading.Lock()
@@ -811,10 +813,10 @@ RESPONSE_TIMES = {
 MAX_RESPONSE_TIMES = 100  # Keep last 100 per model
 
 # Stats file for enhanced data
-ENHANCED_STATS_FILE = Path.home() / ".cache" / "delia" / "enhanced_stats.json"
+ENHANCED_STATS_FILE = paths.ENHANCED_STATS_FILE
 
 # Circuit breaker stats file (for dashboard)
-CIRCUIT_BREAKER_FILE = Path.home() / ".cache" / "delia" / "circuit_breaker.json"
+CIRCUIT_BREAKER_FILE = paths.CIRCUIT_BREAKER_FILE
 
 def load_live_logs():
     """Load live logs from disk into the structlog buffer."""
@@ -1069,9 +1071,8 @@ async def save_all_stats_async():
         await asyncio.to_thread(save_circuit_breaker_stats)
 
 
-# Ensure cache directory exists
-cache_dir = Path.home() / ".cache" / "delia"
-cache_dir.mkdir(parents=True, exist_ok=True)
+# Ensure all data directories exist
+paths.ensure_directories()
 
 # Load stats immediately at module import time
 load_usage_stats()
@@ -1837,7 +1838,7 @@ def log_thinking_and_response(response_text: str, model_tier: str, tokens: int) 
             preview=response_preview.replace("\n", " ").strip(),
             model=model_tier,
             tokens=tokens,
-            garden_msg=get_message(GardenEvent.RIPENING))
+            garden_msg=get_message(GardenEvent.HARVEST))
 
 
 # Retry decorator for transient failures (connection issues, timeouts on model load)
@@ -4191,7 +4192,7 @@ async def get_model_info_tool(model_name: str) -> str:
 # ============================================================
 
 # Memory directory - uses Serena's format for compatibility
-MEMORY_DIR = Path(__file__).parent / ".serena" / "memories"
+MEMORY_DIR = paths.MEMORIES_DIR
 
 
 def _read_serena_memory(name: str) -> Optional[str]:
@@ -4317,9 +4318,9 @@ Models (4-tier routing):
         if AUTH_ENABLED:
             asyncio.run(_init_database())
 
-        # Register startup/shutdown handlers with FastMCP/Starlette
-        mcp.app.add_event_handler("startup", _startup_handler)
-        mcp.app.add_event_handler("shutdown", _shutdown_handler)
+        # Run startup handler and register shutdown via atexit
+        asyncio.run(_startup_handler())
+        atexit.register(lambda: asyncio.run(_shutdown_handler()))
 
         auth_endpoints = ["/auth/register", "/auth/jwt/login", "/auth/me"] if AUTH_ENABLED else []
         log.info("server_starting", transport="http", host=args.host, port=args.port,
@@ -4336,9 +4337,9 @@ Models (4-tier routing):
         if AUTH_ENABLED:
             asyncio.run(_init_database())
 
-        # Register startup/shutdown handlers with FastMCP/Starlette
-        mcp.app.add_event_handler("startup", _startup_handler)
-        mcp.app.add_event_handler("shutdown", _shutdown_handler)
+        # Run startup handler and register shutdown via atexit
+        asyncio.run(_startup_handler())
+        atexit.register(lambda: asyncio.run(_shutdown_handler()))
 
         auth_endpoints = ["/auth/register", "/auth/jwt/login", "/auth/me"] if AUTH_ENABLED else []
         log.info("server_starting", transport="sse", host=args.host, port=args.port,

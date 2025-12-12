@@ -18,6 +18,8 @@ from typing import AsyncGenerator, Optional
 from pathlib import Path
 
 from fastapi import Depends, Request
+
+import paths
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import (
     AuthenticationBackend,
@@ -47,9 +49,9 @@ log = None  # Will be set to actual logger on first use
 # ============================================================
 
 # Database path (SQLite for simplicity)
-DATA_DIR = Path(__file__).parent / ".user_data"
-DATA_DIR.mkdir(exist_ok=True)
-DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR}/users.db"
+DATA_DIR = paths.USER_DATA_DIR
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATABASE_URL = f"sqlite+aiosqlite:///{paths.USER_DB_FILE}"
 
 # JWT Secret (generate a secure one in production!)
 # You can override with DELIA_JWT_SECRET environment variable

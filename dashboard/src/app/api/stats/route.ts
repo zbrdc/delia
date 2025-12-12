@@ -2,9 +2,11 @@ import { NextResponse } from "next/server"
 import { readFile } from "fs/promises"
 import { join } from "path"
 
-// Path to the usage stats files (in temp directory)
-const STATS_FILE = join(require("os").homedir(), ".cache", "delia", "usage_stats.json")
-const ENHANCED_STATS_FILE = join(require("os").homedir(), ".cache", "delia", "enhanced_stats.json")
+// Paths derived from DELIA_DATA_DIR env var (default: ../data/)
+const DATA_DIR = process.env.DELIA_DATA_DIR || join(process.cwd(), "..", "data")
+const CACHE_DIR = join(DATA_DIR, "cache")
+const STATS_FILE = join(CACHE_DIR, "usage_stats.json")
+const ENHANCED_STATS_FILE = join(CACHE_DIR, "enhanced_stats.json")
 
 interface ModelStats {
   calls: number

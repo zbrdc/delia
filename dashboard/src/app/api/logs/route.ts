@@ -2,8 +2,9 @@ import { NextResponse } from "next/server"
 import { readFile } from "fs/promises"
 import { join } from "path"
 
-// Path to the live logs file (in temp directory)
-const CACHE_DIR = join(require("os").homedir(), ".cache", "delia")
+// Paths derived from DELIA_DATA_DIR env var (default: ../data/)
+const DATA_DIR = process.env.DELIA_DATA_DIR || join(process.cwd(), "..", "data")
+const CACHE_DIR = join(DATA_DIR, "cache")
 
 interface LiveLog {
   ts: string

@@ -2,8 +2,9 @@ import { NextResponse } from "next/server"
 import { readFile, writeFile } from "fs/promises"
 import { join } from "path"
 
-// Path to settings.json config file
-const SETTINGS_FILE = join(process.cwd(), "..", "settings.json")
+// Path to settings.json (always in project root)
+const PROJECT_ROOT = join(process.cwd(), "..")
+const SETTINGS_FILE = join(PROJECT_ROOT, "settings.json")
 
 interface BackendModels {
   quick: string
