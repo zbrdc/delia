@@ -3465,7 +3465,7 @@ def finalize_delegate_response(
     tokens: int,
     elapsed_ms: int,
     detected_language: str,
-    target_backend: str,
+    target_backend: Any,
     tier: str,
 ) -> str:
     """Add metadata footer and update tracking."""
@@ -3474,11 +3474,14 @@ def finalize_delegate_response(
     if client_id:
         tracker.update_last_request(client_id, tokens=tokens, model_tier=tier)
 
-    # Add metadata footer
+    # Extract backend name (handle both string and BackendConfig)
+    backend_name = target_backend.name if hasattr(target_backend, 'name') else str(target_backend)
+
+    # Add concise metadata footer
     return f"""{response_text}
 
 ---
-_Model: {selected_model} | Tokens: {tokens} | Time: {elapsed_ms}ms | Language: {detected_language} | Backend: {target_backend}_"""
+_Model: {selected_model} | Tokens: {tokens} | Time: {elapsed_ms}ms | Backend: {backend_name}_"""
 
 async def _delegate_impl(
     task: str,
