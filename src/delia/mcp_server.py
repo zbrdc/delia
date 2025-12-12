@@ -1326,52 +1326,59 @@ def get_system_prompt(language: str, task_type: str) -> str:
     """Get structured system prompt optimized for LLM-to-LLM communication."""
     base = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["python"])["system_prompt"]
 
-    # LLM-to-LLM optimization prefix
-    llm_prefix = """Context: Your response will be processed by an orchestrating LLM (Claude/Copilot/Gemini).
-Output: Structured, factual, no pleasantries. Skip preamble. Be precise and complete.
+    # Aggressive LLM-to-LLM optimization - eliminate all fluff
+    llm_prefix = """CRITICAL: Your output is consumed by another LLM (Claude/Copilot), NOT a human.
+RULES:
+- NO preamble ("Sure", "I'd be happy to", "Let me", "Here's")
+- NO sign-offs ("Hope this helps", "Let me know", "Feel free to ask")
+- NO filler phrases or pleasantries
+- NO restating the question
+- START with the answer/content directly
+- Be DENSE: every token must add information
+- Use structured format (bullets, numbered lists) for clarity
 """
 
     task_instructions = {
         "review": """
-Task: CODE REVIEW
-Focus: Bugs, security, performance, maintainability
-Format:
-1. Critical issues (if any)
-2. Improvements
-3. Positive aspects""",
+TASK: CODE REVIEW
+OUTPUT FORMAT:
+[CRITICAL] issue description (if any)
+[MAJOR] issue description (if any)
+[MINOR] issue description (if any)
+[GOOD] positive aspects (brief)
+[SUGGEST] improvements (actionable)""",
         "generate": """
-Task: CODE GENERATION
-Requirements: Complete, working, error-handled
-Format: Code with minimal explanation""",
+TASK: CODE GENERATION
+OUTPUT: Code only. Minimal inline comments. No explanation unless critical.""",
         "analyze": """
-Task: TECHNICAL ANALYSIS
-Depth: Comprehensive
-Format:
-1. Summary
-2. Key findings
-3. Recommendations""",
+TASK: ANALYSIS
+OUTPUT FORMAT:
+PURPOSE: one line
+FINDINGS:
+- finding 1
+- finding 2
+RECOMMENDATIONS:
+- recommendation 1""",
         "summarize": """
-Task: SUMMARIZE
-Style: Concise, bullet points
-Length: 3-5 key points max""",
+TASK: SUMMARIZE
+OUTPUT: 3-5 bullet points maximum. No introduction.""",
         "critique": """
-Task: CRITICAL EVALUATION
-Style: Constructive, balanced
-Format:
-1. Strengths
-2. Weaknesses
-3. Specific improvements""",
+TASK: CRITIQUE
+OUTPUT FORMAT:
+STRENGTHS: bullet list
+WEAKNESSES: bullet list
+PRIORITY FIXES: numbered list""",
         "plan": """
-Task: PLANNING/ARCHITECTURE
-Style: Actionable steps
-Format:
-1. Overview
-2. Step-by-step plan
-3. Considerations/risks""",
+TASK: PLANNING
+OUTPUT FORMAT:
+OVERVIEW: one paragraph max
+STEPS:
+1. step
+2. step
+RISKS: bullet list (if any)""",
         "quick": """
-Task: QUICK ANSWER
-Style: Direct, concise
-Format: Answer first, brief explanation if needed""",
+TASK: QUICK ANSWER
+OUTPUT: Direct answer first. One sentence explanation if needed.""",
     }
 
     return llm_prefix + base + task_instructions.get(task_type, "")
@@ -1875,7 +1882,8 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
                       enable_thinking: bool = False, task_type: str = "unknown",
                       original_task: str = "unknown",
                       language: str = "unknown", content_preview: str = "",
-                      backend_obj: Optional[BackendConfig] = None) -> dict:
+                      backend_obj: Optional[BackendConfig] = None,
+                      max_tokens: Optional[int] = None) -> dict:
     """Call Ollama API with Pydantic validation, retry logic, and circuit breaker."""
     start_time = time.time()
 
@@ -1934,6 +1942,9 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
             "num_ctx": num_ctx,
         }
     }
+    # Add max_tokens limit if specified (Ollama uses num_predict)
+    if max_tokens:
+        payload["options"]["num_predict"] = max_tokens
     if system:
         payload["system"] = system
 
@@ -2058,7 +2069,8 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
                         enable_thinking: bool = False, task_type: str = "unknown",
                         original_task: str = "unknown",
                         language: str = "unknown", content_preview: str = "",
-                        backend_obj: Optional[BackendConfig] = None) -> dict:
+                        backend_obj: Optional[BackendConfig] = None,
+                        max_tokens: Optional[int] = None) -> dict:
     """Call OpenAI-compatible API (llama.cpp, vLLM, etc.) with Pydantic validation, retry, and circuit breaker."""
     start_time = time.time()
 
@@ -2120,7 +2132,7 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
         "model": model, 
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": num_ctx,  # Use context size as max tokens
+        "max_tokens": max_tokens if max_tokens else num_ctx,  # Use explicit limit or context size
         "stream": False,
     }
 
@@ -2407,7 +2419,8 @@ async def call_llm(model: str, prompt: str, system: Optional[str] = None,
                    enable_thinking: bool = False, task_type: str = "unknown",
                    original_task: str = "unknown",
                    language: str = "unknown", content_preview: str = "",
-                   backend: Optional[str] = None, backend_obj: Optional[BackendConfig] = None) -> dict:
+                   backend: Optional[str] = None, backend_obj: Optional[BackendConfig] = None,
+                   max_tokens: Optional[int] = None) -> dict:
     """
     Unified LLM call dispatcher that routes to the appropriate backend.
 
@@ -2421,6 +2434,7 @@ async def call_llm(model: str, prompt: str, system: Optional[str] = None,
         content_preview: Preview for logging
         backend: Override backend ID or provider name
         backend_obj: Optional BackendConfig object to use directly
+        max_tokens: Maximum response tokens (limits verbosity)
     """
     # Acquire model from queue (prevents concurrent loading)
     # Note: Gemini is cloud-based so we might skip local queue for it, 
@@ -2476,9 +2490,9 @@ async def call_llm(model: str, prompt: str, system: Optional[str] = None,
 
         # Dispatch based on provider type
         if active_backend.provider in ("llama.cpp", "llamacpp", "vllm", "openai", "custom"):
-            result = await call_llamacpp(model, prompt, system, enable_thinking, task_type, original_task, language, content_preview, backend_obj=active_backend)
+            result = await call_llamacpp(model, prompt, system, enable_thinking, task_type, original_task, language, content_preview, backend_obj=active_backend, max_tokens=max_tokens)
         elif active_backend.provider == "ollama":
-            result = await call_ollama(model, prompt, system, enable_thinking, task_type, original_task, language, content_preview, backend_obj=active_backend)
+            result = await call_ollama(model, prompt, system, enable_thinking, task_type, original_task, language, content_preview, backend_obj=active_backend, max_tokens=max_tokens)
         elif active_backend.provider == "gemini":
             result = await call_gemini(model, prompt, system, enable_thinking, task_type, original_task, language, content_preview, backend_obj=active_backend)
         else:
@@ -3437,7 +3451,8 @@ async def execute_delegate_call(
     detected_language: str,
     target_backend: str,
     backend_obj: Optional[Any] = None,
-) -> tuple[str, int, int]:
+    max_tokens: Optional[int] = None,
+) -> tuple[str, int]:
     """Execute the LLM call and return response with metadata."""
     # Call LLM
     enable_thinking = task_type in config.thinking_tasks
@@ -3447,7 +3462,7 @@ async def execute_delegate_call(
     result = await call_llm(
         selected_model, content, system, enable_thinking,
         task_type=task_type, original_task=original_task, language=detected_language, content_preview=content_preview,
-        backend=target_backend, backend_obj=backend_obj
+        backend=target_backend, backend_obj=backend_obj, max_tokens=max_tokens
     )
 
     if not result.get("success"):
@@ -3510,6 +3525,7 @@ async def _delegate_impl(
     backend_obj: Optional[Any] = None,  # Backend object from backend_manager
     files: Optional[str] = None,  # Comma-separated file paths (Delia reads directly)
     include_metadata: bool = True,  # Include footer with model/tokens/time info
+    max_tokens: Optional[int] = None,  # Limit response length (reduces verbosity)
 ) -> str:
     """
     Core implementation for delegate - can be called directly by batch().
@@ -3520,6 +3536,7 @@ async def _delegate_impl(
         backend: Override backend ("ollama" or "llamacpp"), defaults to active_backend
         files: Comma-separated file paths - Delia reads directly from disk (efficient)
         include_metadata: If False, skip the metadata footer (saves ~30 Claude tokens)
+        max_tokens: Limit response tokens (forces concise output, saves Claude tokens)
     """
     start_time = time.time()
 
@@ -3557,7 +3574,7 @@ async def _delegate_impl(
     try:
         response_text, tokens = await execute_delegate_call(
             selected_model, prepared_content, system, task_type, task,
-            detected_language, target_backend, backend_obj
+            detected_language, target_backend, backend_obj, max_tokens=max_tokens
         )
     except Exception as e:
         return f"Error: {str(e)}"
@@ -3586,6 +3603,7 @@ async def delegate(
     backend_type: Optional[str] = None,
     files: Optional[str] = None,
     include_metadata: bool = True,
+    max_tokens: Optional[int] = None,
 ) -> str:
     """
     Execute a task on local/remote GPU with intelligent 3-tier model selection.
@@ -3612,6 +3630,7 @@ async def delegate(
         backend_type: Force backend type - "local" | "remote" (default: auto-select)
         files: Comma-separated file paths - Delia reads directly from disk (efficient, no serialization)
         include_metadata: If False, skip the metadata footer (saves ~30 tokens). Default: True
+        max_tokens: Limit response length to N tokens (forces concise output). Default: None (unlimited)
 
     ROUTING LOGIC:
     1. Content > 32K tokens → Uses backend with largest context window
@@ -3627,14 +3646,14 @@ async def delegate(
         delegate(task="generate", content="Write a REST API", backend_type="local")
         delegate(task="plan", content="Design caching strategy", model="moe")
         delegate(task="review", files="src/main.py,src/utils.py", content="Review these files")
-        delegate(task="quick", content="...", include_metadata=False)  # Skip footer
+        delegate(task="quick", content="...", max_tokens=500)  # Limit response
     """
     # Smart backend selection using backend_manager
     backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
     return await _delegate_impl(
         task, content, file, model, language, context, symbols, include_references,
         backend=backend_provider, backend_obj=backend_obj, files=files,
-        include_metadata=include_metadata
+        include_metadata=include_metadata, max_tokens=max_tokens
     )
 
 
@@ -3806,6 +3825,7 @@ def _assign_backends_to_tasks(task_list: list[dict], available: dict[str, bool])
 async def batch(
     tasks: str,
     include_metadata: bool = True,
+    max_tokens: Optional[int] = None,
 ) -> str:
     """
     Execute multiple tasks in PARALLEL across all available GPUs for maximum throughput.
@@ -3825,7 +3845,9 @@ async def batch(
             - model: Force tier - "quick"|"coder"|"moe"
             - language: Language hint for code tasks
             - include_metadata: Override batch-level include_metadata for this task
+            - max_tokens: Override batch-level max_tokens for this task
         include_metadata: If False, skip metadata footers on all tasks (saves tokens). Default: True
+        max_tokens: Limit response length per task (forces concise output). Default: None
 
     ROUTING LOGIC:
     - Distributes tasks across ALL available GPUs (local + remote)
@@ -3842,6 +3864,7 @@ async def batch(
             {"task": "review", "content": "code2...", "language": "python"},
             {"task": "analyze", "content": "log3..."}
         ]')
+        batch('[...]', max_tokens=500)  # Limit all responses
     """
     start_time = time.time()
 
@@ -3895,8 +3918,9 @@ async def batch(
         context = t.get("context")
         symbols = t.get("symbols")
         include_refs = t.get("include_references", False)
-        # Per-task override, falling back to batch-level setting
+        # Per-task overrides, falling back to batch-level settings
         task_include_metadata = t.get("include_metadata", include_metadata)
+        task_max_tokens = t.get("max_tokens", max_tokens)
 
         # backend_id passed to _delegate_impl will resolve to ID
         result = await _delegate_impl(
@@ -3911,6 +3935,7 @@ async def batch(
             backend=backend_id,
             files=files,
             include_metadata=task_include_metadata,
+            max_tokens=task_max_tokens,
         )
         return f"### Task {i+1}: {task_type}\n\n{result}"
 
@@ -4472,6 +4497,7 @@ async def plant(
     backend_type: Optional[str] = None,
     files: Optional[str] = None,
     include_metadata: bool = True,
+    max_tokens: Optional[int] = None,
 ) -> str:
     """
     Plant a seed in Delia's garden and watch it grow into a response.
@@ -4495,6 +4521,7 @@ async def plant(
         backend_type: Force "local" or "remote" garden
         files: Comma-separated file paths - Delia reads directly from disk
         include_metadata: If False, skip the metadata footer (saves ~30 tokens)
+        max_tokens: Limit harvest size (forces concise growth)
 
     Returns:
         A fresh melon harvested from the vine!
@@ -4503,7 +4530,7 @@ async def plant(
     return await _delegate_impl(
         task, content, file, model, language, context, symbols, include_references,
         backend=backend_provider, backend_obj=backend_obj, files=files,
-        include_metadata=include_metadata
+        include_metadata=include_metadata, max_tokens=max_tokens
     )
 
 
@@ -4537,6 +4564,7 @@ async def ponder(
 async def harvest(
     tasks: str,
     include_metadata: bool = True,
+    max_tokens: Optional[int] = None,
 ) -> str:
     """
     Gather multiple melons from across the garden in parallel.
@@ -4549,11 +4577,12 @@ async def harvest(
         tasks: JSON array of seeds to plant:
             [{"task": "review", "content": "..."}, {"task": "generate", "content": "..."}]
         include_metadata: If False, skip metadata footers (saves tokens)
+        max_tokens: Limit harvest size per melon (forces concise growth)
 
     Returns:
         A basket full of harvested melons!
     """
-    return await batch(tasks, include_metadata=include_metadata)
+    return await batch(tasks, include_metadata=include_metadata, max_tokens=max_tokens)
 
 
 @mcp.tool()
