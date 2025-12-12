@@ -3317,32 +3317,55 @@ async def prepare_delegate_content(
     context: Optional[str] = None,
     symbols: Optional[str] = None,
     include_references: bool = False,
+    files: Optional[str] = None,
 ) -> str:
-    """Prepare content with context and symbol focus."""
-    prepared_content = content
+    """Prepare content with context, files, and symbol focus.
+
+    Args:
+        content: The main task content/prompt
+        context: Comma-separated Serena memory names to include
+        symbols: Comma-separated symbol names to focus on
+        include_references: Whether references to symbols are included
+        files: Comma-separated file paths to read and include (Delia reads directly)
+    """
+    parts = []
+
+    # Load files directly from disk (efficient - no Claude serialization)
+    if files:
+        file_contents = _read_files(files)
+        if file_contents:
+            for path, file_content in file_contents:
+                # Detect language from extension for syntax highlighting hint
+                ext = Path(path).suffix.lstrip(".")
+                lang_hint = ext if ext else ""
+                parts.append(f"### File: `{path}`\n```{lang_hint}\n{file_content}\n```")
+            log.info("files_loaded", count=len(file_contents),
+                    paths=[p for p, _ in file_contents])
 
     # Load Serena memory context if specified
     if context:
-        context_parts = []
         memory_names = [m.strip() for m in context.split(",")]
         for mem_name in memory_names:
             mem_content = _read_serena_memory(mem_name)
             if mem_content:
-                context_parts.append(f"### Context from '{mem_name}':\n{mem_content}")
+                parts.append(f"### Context from '{mem_name}':\n{mem_content}")
                 log.info("context_memory_loaded", memory=mem_name)
-        if context_parts:
-            prepared_content = "\n\n".join(context_parts) + "\n\n---\n\n### Task:\n" + prepared_content
 
     # Add symbol focus hint if symbols specified
     if symbols:
         symbol_list = [s.strip() for s in symbols.split(",")]
-        symbol_hint = f"\n\n### Focus Symbols: {', '.join(symbol_list)}"
+        symbol_hint = f"### Focus Symbols: {', '.join(symbol_list)}"
         if include_references:
             symbol_hint += "\n_References to these symbols are included below._"
-        prepared_content = symbol_hint + "\n\n" + prepared_content
+        parts.append(symbol_hint)
         log.info("context_symbol_focus", symbols=symbol_list, include_references=include_references)
 
-    return prepared_content
+    # Add task content
+    if parts:
+        parts.append(f"---\n\n### Task:\n{content}")
+        return "\n\n".join(parts)
+    else:
+        return content
 
 
 def determine_task_type(task: str) -> str:
@@ -3468,6 +3491,7 @@ async def _delegate_impl(
     include_references: bool = False,
     backend: Optional[str] = None,
     backend_obj: Optional[Any] = None,  # Backend object from backend_manager
+    files: Optional[str] = None,  # Comma-separated file paths (Delia reads directly)
 ) -> str:
     """
     Core implementation for delegate - can be called directly by batch().
@@ -3476,6 +3500,7 @@ async def _delegate_impl(
         symbols: Comma-separated symbol names to focus on (e.g., "Foo,Foo/calculate")
         include_references: If True, indicates that references to symbols are included in content
         backend: Override backend ("ollama" or "llamacpp"), defaults to active_backend
+        files: Comma-separated file paths - Delia reads directly from disk (efficient)
     """
     start_time = time.time()
 
@@ -3484,8 +3509,8 @@ async def _delegate_impl(
     if not valid:
         return error
 
-    # Prepare content with context and symbols
-    prepared_content = await prepare_delegate_content(content, context, symbols, include_references)
+    # Prepare content with context, files, and symbols
+    prepared_content = await prepare_delegate_content(content, context, symbols, include_references, files)
 
     # Map task to internal type
     task_type = determine_task_type(task)
@@ -3539,6 +3564,7 @@ async def delegate(
     symbols: Optional[str] = None,
     include_references: bool = False,
     backend_type: Optional[str] = None,
+    files: Optional[str] = None,
 ) -> str:
     """
     Execute a task on local/remote GPU with intelligent 3-tier model selection.
@@ -3563,6 +3589,7 @@ async def delegate(
         symbols: Code symbols to focus on (comma-separated: "Foo,Bar/calculate")
         include_references: True if content includes symbol usages from elsewhere
         backend_type: Force backend type - "local" | "remote" (default: auto-select)
+        files: Comma-separated file paths - Delia reads directly from disk (efficient, no serialization)
 
     ROUTING LOGIC:
     1. Content > 32K tokens → Uses backend with largest context window
@@ -3579,10 +3606,11 @@ async def delegate(
         delegate(task="plan", content="Design caching strategy", model="moe")
         delegate(task="analyze", content="Debug this error", model="14b")
         delegate(task="quick", content="Summarize this article", model="fast")
+        delegate(task="review", files="src/main.py,src/utils.py", content="Review these files")
     """
     # Smart backend selection using backend_manager
     backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
-    return await _delegate_impl(task, content, file, model, language, context, symbols, include_references, backend=backend_provider, backend_obj=backend_obj)
+    return await _delegate_impl(task, content, file, model, language, context, symbols, include_references, backend=backend_provider, backend_obj=backend_obj, files=files)
 
 
 @mcp.tool()
@@ -3767,6 +3795,7 @@ async def batch(
             - task: "quick"|"summarize"|"generate"|"review"|"analyze"|"plan"|"critique"
             - content: The content to process (required)
             - file: Optional file path
+            - files: Comma-separated file paths - Delia reads directly from disk
             - model: Force tier - "quick"|"coder"|"moe"
             - language: Language hint for code tasks
 
@@ -3832,6 +3861,7 @@ async def batch(
         task_type = t.get("task", "analyze")
         content = t.get("content", "")
         file_path = t.get("file")
+        files = t.get("files")  # Comma-separated file paths (Delia reads directly)
         model_hint = t.get("model")
         language = t.get("language")
         context = t.get("context")
@@ -3849,6 +3879,7 @@ async def batch(
             symbols=symbols,
             include_references=include_refs,
             backend=backend_id,
+            files=files,
         )
         return f"### Task {i+1}: {task_type}\n\n{result}"
 
@@ -4223,6 +4254,52 @@ def _read_serena_memory(name: str) -> Optional[str]:
     return None
 
 
+def _read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[str, str]]:
+    """
+    Read multiple files from disk efficiently.
+
+    Args:
+        file_paths: Comma-separated file paths (absolute or relative to cwd)
+        max_size_bytes: Maximum file size to read (default 500KB)
+
+    Returns:
+        List of (path, content) tuples for successfully read files.
+        Files that don't exist or are too large are skipped with a warning.
+    """
+    results = []
+    paths = [p.strip() for p in file_paths.split(",") if p.strip()]
+
+    for path_str in paths:
+        file_path = Path(path_str)
+
+        # Try relative to cwd if not absolute
+        if not file_path.is_absolute():
+            file_path = Path.cwd() / file_path
+
+        if not file_path.exists():
+            log.warning("file_read_skipped", path=path_str, reason="not_found")
+            continue
+
+        if not file_path.is_file():
+            log.warning("file_read_skipped", path=path_str, reason="not_a_file")
+            continue
+
+        try:
+            size = file_path.stat().st_size
+            if size > max_size_bytes:
+                log.warning("file_read_skipped", path=path_str, reason="too_large",
+                           size_kb=size // 1024, max_kb=max_size_bytes // 1024)
+                continue
+
+            content = file_path.read_text(encoding="utf-8")
+            results.append((path_str, content))
+            log.info("file_read_success", path=path_str, size_kb=size // 1024)
+        except Exception as e:
+            log.warning("file_read_failed", path=path_str, error=str(e))
+
+    return results
+
+
 # ============================================================
 # STRUCTURED TOOLS (LLM-to-LLM optimized JSON interfaces)
 # ============================================================
@@ -4251,6 +4328,7 @@ async def plant(
     symbols: Optional[str] = None,
     include_references: bool = False,
     backend_type: Optional[str] = None,
+    files: Optional[str] = None,
 ) -> str:
     """
     Plant a seed in Delia's garden and watch it grow into a response.
@@ -4272,12 +4350,13 @@ async def plant(
         symbols: Code symbols to focus the growth
         include_references: Include symbol references in context
         backend_type: Force "local" or "remote" garden
+        files: Comma-separated file paths - Delia reads directly from disk
 
     Returns:
         A fresh melon harvested from the vine!
     """
     backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
-    return await _delegate_impl(task, content, file, model, language, context, symbols, include_references, backend=backend_provider, backend_obj=backend_obj)
+    return await _delegate_impl(task, content, file, model, language, context, symbols, include_references, backend=backend_provider, backend_obj=backend_obj, files=files)
 
 
 @mcp.tool()

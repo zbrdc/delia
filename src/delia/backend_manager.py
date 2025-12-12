@@ -189,7 +189,6 @@ class BackendConfig:
             self._available = False
             return False
         except Exception as e:
-            print(f"Health check for {self.id} failed with error: {e}")
             _get_log().debug("backend_health_check_failed", backend_id=self.id, error=str(e))
             self._available = False
             return False
