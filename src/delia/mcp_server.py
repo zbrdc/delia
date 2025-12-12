@@ -1323,8 +1323,13 @@ def detect_language(content: str, file_path: str = "") -> str:
     return "python"  # Default fallback
 
 def get_system_prompt(language: str, task_type: str) -> str:
-    """Get structured system prompt for LLM consumption."""
+    """Get structured system prompt optimized for LLM-to-LLM communication."""
     base = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["python"])["system_prompt"]
+
+    # LLM-to-LLM optimization prefix
+    llm_prefix = """Context: Your response will be processed by an orchestrating LLM (Claude/Copilot/Gemini).
+Output: Structured, factual, no pleasantries. Skip preamble. Be precise and complete.
+"""
 
     task_instructions = {
         "review": """
@@ -1369,7 +1374,7 @@ Style: Direct, concise
 Format: Answer first, brief explanation if needed""",
     }
 
-    return base + task_instructions.get(task_type, "")
+    return llm_prefix + base + task_instructions.get(task_type, "")
 
 
 def optimize_prompt(content: str, task_type: str) -> str:
@@ -3467,12 +3472,21 @@ def finalize_delegate_response(
     detected_language: str,
     target_backend: Any,
     tier: str,
+    include_metadata: bool = True,
 ) -> str:
-    """Add metadata footer and update tracking."""
+    """Add metadata footer and update tracking.
+
+    Args:
+        include_metadata: If False, return response without footer (saves ~30 tokens)
+    """
     # Update tracker with actual token count and model tier
     client_id = current_client_id.get()
     if client_id:
         tracker.update_last_request(client_id, tokens=tokens, model_tier=tier)
+
+    # Return without metadata if requested (saves Claude tokens)
+    if not include_metadata:
+        return response_text
 
     # Extract backend name (handle both string and BackendConfig)
     backend_name = target_backend.name if hasattr(target_backend, 'name') else str(target_backend)
@@ -3495,6 +3509,7 @@ async def _delegate_impl(
     backend: Optional[str] = None,
     backend_obj: Optional[Any] = None,  # Backend object from backend_manager
     files: Optional[str] = None,  # Comma-separated file paths (Delia reads directly)
+    include_metadata: bool = True,  # Include footer with model/tokens/time info
 ) -> str:
     """
     Core implementation for delegate - can be called directly by batch().
@@ -3504,6 +3519,7 @@ async def _delegate_impl(
         include_references: If True, indicates that references to symbols are included in content
         backend: Override backend ("ollama" or "llamacpp"), defaults to active_backend
         files: Comma-separated file paths - Delia reads directly from disk (efficient)
+        include_metadata: If False, skip the metadata footer (saves ~30 Claude tokens)
     """
     start_time = time.time()
 
@@ -3552,7 +3568,8 @@ async def _delegate_impl(
     # Finalize response with metadata
     return finalize_delegate_response(
         response_text, selected_model, tokens, elapsed_ms,
-        detected_language, target_backend, tier
+        detected_language, target_backend, tier,
+        include_metadata=include_metadata
     )
 
 
@@ -3568,6 +3585,7 @@ async def delegate(
     include_references: bool = False,
     backend_type: Optional[str] = None,
     files: Optional[str] = None,
+    include_metadata: bool = True,
 ) -> str:
     """
     Execute a task on local/remote GPU with intelligent 3-tier model selection.
@@ -3593,6 +3611,7 @@ async def delegate(
         include_references: True if content includes symbol usages from elsewhere
         backend_type: Force backend type - "local" | "remote" (default: auto-select)
         files: Comma-separated file paths - Delia reads directly from disk (efficient, no serialization)
+        include_metadata: If False, skip the metadata footer (saves ~30 tokens). Default: True
 
     ROUTING LOGIC:
     1. Content > 32K tokens → Uses backend with largest context window
@@ -3601,19 +3620,22 @@ async def delegate(
     4. Load balances across available backends based on priority weights
 
     Returns:
-        LLM response with metadata footer showing model, tokens, time, backend
+        LLM response optimized for orchestrator processing, with optional metadata footer
 
     Examples:
         delegate(task="review", content="<code>", language="python")
         delegate(task="generate", content="Write a REST API", backend_type="local")
         delegate(task="plan", content="Design caching strategy", model="moe")
-        delegate(task="analyze", content="Debug this error", model="14b")
-        delegate(task="quick", content="Summarize this article", model="fast")
         delegate(task="review", files="src/main.py,src/utils.py", content="Review these files")
+        delegate(task="quick", content="...", include_metadata=False)  # Skip footer
     """
     # Smart backend selection using backend_manager
     backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
-    return await _delegate_impl(task, content, file, model, language, context, symbols, include_references, backend=backend_provider, backend_obj=backend_obj, files=files)
+    return await _delegate_impl(
+        task, content, file, model, language, context, symbols, include_references,
+        backend=backend_provider, backend_obj=backend_obj, files=files,
+        include_metadata=include_metadata
+    )
 
 
 @mcp.tool()
@@ -3783,6 +3805,7 @@ def _assign_backends_to_tasks(task_list: list[dict], available: dict[str, bool])
 @mcp.tool()
 async def batch(
     tasks: str,
+    include_metadata: bool = True,
 ) -> str:
     """
     Execute multiple tasks in PARALLEL across all available GPUs for maximum throughput.
@@ -3801,6 +3824,8 @@ async def batch(
             - files: Comma-separated file paths - Delia reads directly from disk
             - model: Force tier - "quick"|"coder"|"moe"
             - language: Language hint for code tasks
+            - include_metadata: Override batch-level include_metadata for this task
+        include_metadata: If False, skip metadata footers on all tasks (saves tokens). Default: True
 
     ROUTING LOGIC:
     - Distributes tasks across ALL available GPUs (local + remote)
@@ -3870,6 +3895,8 @@ async def batch(
         context = t.get("context")
         symbols = t.get("symbols")
         include_refs = t.get("include_references", False)
+        # Per-task override, falling back to batch-level setting
+        task_include_metadata = t.get("include_metadata", include_metadata)
 
         # backend_id passed to _delegate_impl will resolve to ID
         result = await _delegate_impl(
@@ -3883,6 +3910,7 @@ async def batch(
             include_references=include_refs,
             backend=backend_id,
             files=files,
+            include_metadata=task_include_metadata,
         )
         return f"### Task {i+1}: {task_type}\n\n{result}"
 
@@ -4443,6 +4471,7 @@ async def plant(
     include_references: bool = False,
     backend_type: Optional[str] = None,
     files: Optional[str] = None,
+    include_metadata: bool = True,
 ) -> str:
     """
     Plant a seed in Delia's garden and watch it grow into a response.
@@ -4465,12 +4494,17 @@ async def plant(
         include_references: Include symbol references in context
         backend_type: Force "local" or "remote" garden
         files: Comma-separated file paths - Delia reads directly from disk
+        include_metadata: If False, skip the metadata footer (saves ~30 tokens)
 
     Returns:
         A fresh melon harvested from the vine!
     """
     backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
-    return await _delegate_impl(task, content, file, model, language, context, symbols, include_references, backend=backend_provider, backend_obj=backend_obj, files=files)
+    return await _delegate_impl(
+        task, content, file, model, language, context, symbols, include_references,
+        backend=backend_provider, backend_obj=backend_obj, files=files,
+        include_metadata=include_metadata
+    )
 
 
 @mcp.tool()
@@ -4500,7 +4534,10 @@ async def ponder(
 
 
 @mcp.tool()
-async def harvest(tasks: str) -> str:
+async def harvest(
+    tasks: str,
+    include_metadata: bool = True,
+) -> str:
     """
     Gather multiple melons from across the garden in parallel.
     Garden-themed alias for 'batch'.
@@ -4511,11 +4548,12 @@ async def harvest(tasks: str) -> str:
     Args:
         tasks: JSON array of seeds to plant:
             [{"task": "review", "content": "..."}, {"task": "generate", "content": "..."}]
+        include_metadata: If False, skip metadata footers (saves tokens)
 
     Returns:
         A basket full of harvested melons!
     """
-    return await batch(tasks)
+    return await batch(tasks, include_metadata=include_metadata)
 
 
 @mcp.tool()
