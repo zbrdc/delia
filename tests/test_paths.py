@@ -33,14 +33,15 @@ class TestPathsModule:
 
     def test_import_paths(self):
         """paths.py should import without errors."""
-        import paths
+        from delia import paths
         assert paths is not None
 
     def test_project_root_exists(self):
         """PROJECT_ROOT should point to actual project directory."""
-        import paths
+        from delia import paths
         assert paths.PROJECT_ROOT.exists()
-        assert (paths.PROJECT_ROOT / "paths.py").exists()
+        # After src-layout, paths.py is in src/delia/, verify pyproject.toml exists in project root
+        assert (paths.PROJECT_ROOT / "pyproject.toml").exists()
 
     def test_data_dir_default(self):
         """DATA_DIR should default to PROJECT_ROOT/data."""
@@ -51,11 +52,12 @@ class TestPathsModule:
         # Remove env var if set
         env_backup = os.environ.pop("DELIA_DATA_DIR", None)
 
-        # Reload paths module to get fresh values
-        if "paths" in sys.modules:
-            del sys.modules["paths"]
+        # Reload paths module to get fresh values - must clear delia.paths and delia
+        for mod in list(sys.modules.keys()):
+            if mod == "delia.paths" or mod == "delia" or mod.startswith("delia."):
+                del sys.modules[mod]
 
-        import paths
+        from delia import paths
 
         try:
             expected = paths.PROJECT_ROOT / "data"
@@ -67,7 +69,7 @@ class TestPathsModule:
 
     def test_derived_directories(self):
         """Derived directories should be under DATA_DIR."""
-        import paths
+        from delia import paths
 
         assert paths.CACHE_DIR == paths.DATA_DIR / "cache"
         assert paths.USER_DATA_DIR == paths.DATA_DIR / "users"
@@ -75,7 +77,7 @@ class TestPathsModule:
 
     def test_file_paths(self):
         """File paths should be correctly derived."""
-        import paths
+        from delia import paths
 
         assert paths.STATS_FILE == paths.CACHE_DIR / "usage_stats.json"
         assert paths.ENHANCED_STATS_FILE == paths.CACHE_DIR / "enhanced_stats.json"
@@ -85,7 +87,7 @@ class TestPathsModule:
 
     def test_settings_file_in_project_root(self):
         """SETTINGS_FILE should be in PROJECT_ROOT, not DATA_DIR."""
-        import paths
+        from delia import paths
 
         assert paths.SETTINGS_FILE == paths.PROJECT_ROOT / "settings.json"
         assert paths.SETTINGS_FILE.parent == paths.PROJECT_ROOT
@@ -105,12 +107,13 @@ class TestCustomDataDir:
         env_backup = os.environ.get("DELIA_DATA_DIR")
         os.environ["DELIA_DATA_DIR"] = custom_path
 
-        # Force reimport
-        if "paths" in sys.modules:
-            del sys.modules["paths"]
+        # Force reimport - must clear all delia modules
+        for mod in list(sys.modules.keys()):
+            if mod == "delia.paths" or mod == "delia" or mod.startswith("delia."):
+                del sys.modules[mod]
 
         try:
-            import paths
+            from delia import paths
             assert str(paths.DATA_DIR) == custom_path
             assert paths.CACHE_DIR == Path(custom_path) / "cache"
         finally:
@@ -120,9 +123,10 @@ class TestCustomDataDir:
             else:
                 os.environ.pop("DELIA_DATA_DIR", None)
 
-            # Reimport with original settings
-            if "paths" in sys.modules:
-                del sys.modules["paths"]
+            # Reimport with original settings - must clear all delia modules
+            for mod in list(sys.modules.keys()):
+                if mod == "delia.paths" or mod == "delia" or mod.startswith("delia."):
+                    del sys.modules[mod]
 
 
 class TestEnsureDirectories:
@@ -137,12 +141,13 @@ class TestEnsureDirectories:
             # Set custom data dir
             os.environ["DELIA_DATA_DIR"] = tmpdir
 
-            # Force reimport
-            if "paths" in sys.modules:
-                del sys.modules["paths"]
+            # Force reimport - must clear all delia modules
+            for mod in list(sys.modules.keys()):
+                if mod == "delia.paths" or mod == "delia" or mod.startswith("delia."):
+                    del sys.modules[mod]
 
             try:
-                import paths
+                from delia import paths
 
                 # Directories shouldn't exist yet
                 assert not (Path(tmpdir) / "cache").exists()
@@ -158,8 +163,9 @@ class TestEnsureDirectories:
                 assert (Path(tmpdir) / "memories").exists()
             finally:
                 os.environ.pop("DELIA_DATA_DIR", None)
-                if "paths" in sys.modules:
-                    del sys.modules["paths"]
+                for mod in list(sys.modules.keys()):
+                    if mod == "delia.paths" or mod == "delia" or mod.startswith("delia."):
+                        del sys.modules[mod]
 
     def test_ensure_directories_idempotent(self):
         """ensure_directories() should be safe to call multiple times."""
@@ -169,11 +175,13 @@ class TestEnsureDirectories:
         with tempfile.TemporaryDirectory() as tmpdir:
             os.environ["DELIA_DATA_DIR"] = tmpdir
 
-            if "paths" in sys.modules:
-                del sys.modules["paths"]
+            # Force reimport - must clear all delia modules
+            for mod in list(sys.modules.keys()):
+                if mod == "delia.paths" or mod == "delia" or mod.startswith("delia."):
+                    del sys.modules[mod]
 
             try:
-                import paths
+                from delia import paths
 
                 # Call multiple times - should not raise
                 paths.ensure_directories()
@@ -183,8 +191,9 @@ class TestEnsureDirectories:
                 assert (Path(tmpdir) / "cache").exists()
             finally:
                 os.environ.pop("DELIA_DATA_DIR", None)
-                if "paths" in sys.modules:
-                    del sys.modules["paths"]
+                for mod in list(sys.modules.keys()):
+                    if mod == "delia.paths" or mod == "delia" or mod.startswith("delia."):
+                        del sys.modules[mod]
 
 
 class TestModuleImports:
@@ -196,8 +205,8 @@ class TestModuleImports:
         import sys
 
         modules_to_clear = [
-            "paths", "config", "backend_manager",
-            "multi_user_tracking", "auth", "mcp_server"
+            "delia.paths", "delia.config", "delia.backend_manager",
+            "delia.multi_user_tracking", "delia.auth", "delia.mcp_server", "delia"
         ]
 
         # Clean before test
@@ -216,22 +225,22 @@ class TestModuleImports:
 
     def test_config_uses_paths(self):
         """config.py should use paths.STATS_FILE."""
-        import paths
-        import config
+        from delia import paths
+        from delia import config
 
         assert config.config.stats_file == paths.STATS_FILE
 
     def test_backend_manager_uses_paths(self):
         """backend_manager.py should use paths.SETTINGS_FILE."""
-        import paths
-        import backend_manager
+        from delia import paths
+        from delia import backend_manager
 
         assert backend_manager.SETTINGS_FILE == paths.SETTINGS_FILE
 
     def test_multi_user_tracking_uses_paths(self):
         """multi_user_tracking.py should use paths.USER_DATA_DIR."""
-        import paths
-        import multi_user_tracking
+        from delia import paths
+        from delia import multi_user_tracking
 
         assert multi_user_tracking.DATA_DIR == paths.USER_DATA_DIR
 
@@ -249,20 +258,20 @@ class TestEndToEnd:
 
             # Clear all related modules
             modules_to_clear = [
-                "paths", "config", "backend_manager",
-                "multi_user_tracking", "auth"
+                "delia.paths", "delia.config", "delia.backend_manager",
+                "delia.multi_user_tracking", "delia.auth", "delia"
             ]
-            for mod in modules_to_clear:
-                if mod in sys.modules:
+            for mod in list(sys.modules.keys()):
+                if any(mod == m or mod.startswith(m + ".") for m in modules_to_clear):
                     del sys.modules[mod]
 
             try:
-                import paths
+                from delia import paths
                 paths.ensure_directories()
 
-                import config
-                import backend_manager
-                import multi_user_tracking
+                from delia import config
+                from delia import backend_manager
+                from delia import multi_user_tracking
 
                 # Verify all paths point to custom dir
                 assert str(paths.DATA_DIR) == tmpdir
@@ -275,8 +284,8 @@ class TestEndToEnd:
 
             finally:
                 os.environ.pop("DELIA_DATA_DIR", None)
-                for mod in modules_to_clear:
-                    if mod in sys.modules:
+                for mod in list(sys.modules.keys()):
+                    if any(mod == m or mod.startswith(m + ".") for m in modules_to_clear):
                         del sys.modules[mod]
 
 

@@ -60,7 +60,7 @@ def setup_test_environment(tmp_path):
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
     # Clear cached modules
-    modules_to_clear = ["paths", "config", "backend_manager", "mcp_server"]
+    modules_to_clear = ["delia.paths", "delia.config", "delia.backend_manager", "delia.mcp_server", "delia"]
     for mod in list(sys.modules.keys()):
         if any(mod.startswith(m) or mod == m for m in modules_to_clear):
             del sys.modules[mod]
@@ -128,7 +128,7 @@ class TestBackendManager:
 
     def test_detect_available_backend(self, tmp_path):
         """Backend manager should detect available backends."""
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
 
         # Create settings with our backends
         settings = {
@@ -162,7 +162,7 @@ class TestBackendManager:
     @pytest.mark.asyncio
     async def test_backend_health_check(self, tmp_path):
         """Backend manager should check backend health."""
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
 
         settings = {
             "version": "1.0",
@@ -225,7 +225,7 @@ class TestDelegateFunction:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -233,7 +233,7 @@ class TestDelegateFunction:
     @pytest.mark.asyncio
     async def test_delegate_simple_task(self):
         """delegate() should successfully call the LLM."""
-        import mcp_server
+        from delia import mcp_server
 
         # Reload backend manager to pick up settings
         await mcp_server.backend_manager.reload()
@@ -252,7 +252,7 @@ class TestDelegateFunction:
     @pytest.mark.asyncio
     async def test_delegate_code_task(self):
         """delegate() should handle code generation tasks."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         # Call delegate via .fn
@@ -291,7 +291,7 @@ class TestHealthAndModels:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -299,7 +299,7 @@ class TestHealthAndModels:
     @pytest.mark.asyncio
     async def test_health_tool(self):
         """health() tool should return backend status."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.health.fn()
@@ -311,7 +311,7 @@ class TestHealthAndModels:
     @pytest.mark.asyncio
     async def test_models_tool(self):
         """models() tool should return available models."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.models.fn()
@@ -349,7 +349,7 @@ class TestThinkFunction:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -357,7 +357,7 @@ class TestThinkFunction:
     @pytest.mark.asyncio
     async def test_think_simple(self):
         """think() should process reasoning tasks."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.think.fn(

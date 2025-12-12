@@ -19,7 +19,7 @@ import sys
 # Add current directory to path
 sys.path.append(os.getcwd())
 
-from mcp_server import call_llamacpp, backend_manager
+from delia.mcp_server import call_llamacpp, backend_manager
 
 async def main():
     print("Sending message to Local GPU (llama.cpp)...")

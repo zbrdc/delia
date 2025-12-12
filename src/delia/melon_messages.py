@@ -166,3 +166,143 @@ def format_queue_status(position: int, total: int) -> str:
     elif position <= 3:
         return f"Seedling #{position} in nursery ({total} waiting)"
     return f"Row {position} of {total} in tray"
+
+
+# =============================================================================
+# GARDEN-THEMED TASK MESSAGES
+# =============================================================================
+
+TASK_MESSAGES = {
+    "plant": {
+        "start": [
+            "Planting your seed in the garden...",
+            "Finding the perfect soil for your task...",
+            "Tucking your request into rich earth...",
+            "A new seed enters the patch...",
+        ],
+        "complete": [
+            "Your melon is ready!",
+            "Fresh harvest from the garden!",
+            "Picked ripe from the vine!",
+            "The garden delivers your fruit!",
+        ],
+    },
+    "prune": {
+        "start": [
+            "Examining the code vines...",
+            "Inspecting for weeds and tangles...",
+            "Checking the health of your branches...",
+            "Looking for overgrowth...",
+        ],
+        "complete": [
+            "Pruning complete!",
+            "Garden trimmed and tidy!",
+            "Weeds identified and marked!",
+            "Code vines looking healthier!",
+        ],
+    },
+    "grow": {
+        "start": [
+            "Cultivating fresh code...",
+            "Planting logic seeds...",
+            "Growing new branches...",
+            "Nurturing your request into code...",
+        ],
+        "complete": [
+            "Fresh code grown!",
+            "New branches ready!",
+            "Code cultivated successfully!",
+            "Your code vine has flourished!",
+        ],
+    },
+    "tend": {
+        "start": [
+            "Tending to the code garden...",
+            "Examining roots and structure...",
+            "Checking soil composition...",
+            "Analyzing the garden layout...",
+        ],
+        "complete": [
+            "Garden analysis complete!",
+            "Tending report ready!",
+            "Your patch has been examined!",
+            "Garden insights harvested!",
+        ],
+    },
+    "ponder": {
+        "start": [
+            "Letting thoughts grow slowly...",
+            "Deep roots spreading...",
+            "Contemplating in the shade...",
+            "Wisdom vine unfurling...",
+        ],
+        "complete": [
+            "Thoughts fully ripened!",
+            "Wisdom melon ready!",
+            "Deep contemplation complete!",
+            "Pondering has borne fruit!",
+        ],
+    },
+    "ruminate": {
+        "start": [
+            "Deep contemplation beginning...",
+            "Slow growth for deep wisdom...",
+            "Patient cultivation underway...",
+            "Roots reaching deep for answers...",
+        ],
+        "complete": [
+            "Deep rumination complete!",
+            "Wisdom fully cultivated!",
+            "Patient growth has paid off!",
+            "Thoughtful harvest ready!",
+        ],
+    },
+    "harvest": {
+        "start": [
+            "Gathering multiple seeds...",
+            "Preparing for batch harvest...",
+            "Tending multiple plots...",
+            "Garden-wide cultivation starting...",
+        ],
+        "complete": [
+            "Bountiful harvest complete!",
+            "Multiple melons picked!",
+            "Garden fully harvested!",
+            "All fruits gathered!",
+        ],
+    },
+}
+
+
+def get_task_message(task: str, phase: str = "start") -> str:
+    """Get a themed message for a garden task."""
+    task_data = TASK_MESSAGES.get(task, TASK_MESSAGES["plant"])
+    msgs = task_data.get(phase, task_data["start"])
+    return random.choice(msgs)
+
+
+def format_garden_response(content: str, task: str, vine: str, tokens: int, elapsed_ms: int) -> str:
+    """Format a response with garden theming."""
+    complete_msg = get_task_message(task, "complete")
+    stats = format_harvest_stats(tokens, elapsed_ms, vine)
+    return f"{content}\n\n---\n_{complete_msg} {stats}_"
+
+
+# Map standard task names to garden names
+GARDEN_TASK_MAP = {
+    "delegate": "plant",
+    "review": "prune",
+    "generate": "grow",
+    "analyze": "tend",
+    "think": "ponder",
+    "batch": "harvest",
+    "summarize": "plant",
+    "critique": "prune",
+    "plan": "tend",
+    "quick": "plant",
+}
+
+
+def get_garden_task_name(task: str) -> str:
+    """Map a standard task name to its garden equivalent."""
+    return GARDEN_TASK_MAP.get(task, "plant")

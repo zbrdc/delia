@@ -325,16 +325,16 @@ class TestDashboardDataIntegration:
         os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
         # Clear modules
-        modules_to_clear = ["paths", "config", "mcp_server", "backend_manager"]
+        modules_to_clear = ["delia.paths", "delia.config", "delia.mcp_server", "delia.backend_manager", "delia"]
         for mod in list(sys.modules.keys()):
             if any(mod.startswith(m) or mod == m for m in modules_to_clear):
                 del sys.modules[mod]
 
         try:
-            import paths
+            from delia import paths
             paths.ensure_directories()
 
-            import mcp_server
+            from delia import mcp_server
 
             # Record some usage
             mcp_server.MODEL_USAGE["quick"]["calls"] = 50
@@ -356,16 +356,16 @@ class TestDashboardDataIntegration:
         """Backend manager should create settings dashboard can parse."""
         os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
-        modules_to_clear = ["paths", "config", "backend_manager"]
+        modules_to_clear = ["delia.paths", "delia.config", "delia.backend_manager", "delia"]
         for mod in list(sys.modules.keys()):
             if any(mod.startswith(m) or mod == m for m in modules_to_clear):
                 del sys.modules[mod]
 
         try:
-            import paths
+            from delia import paths
             paths.ensure_directories()
 
-            from backend_manager import BackendManager
+            from delia.backend_manager import BackendManager
 
             # Create manager which creates default settings
             settings_file = paths.SETTINGS_FILE

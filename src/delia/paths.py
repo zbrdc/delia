@@ -25,8 +25,8 @@ Usage:
 import os
 from pathlib import Path
 
-# Project root (where this file lives)
-PROJECT_ROOT = Path(__file__).parent
+# Project root (go up from src/delia/ to project root)
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # Base data directory - override with DELIA_DATA_DIR
 DATA_DIR = Path(os.environ.get("DELIA_DATA_DIR", PROJECT_ROOT / "data"))

@@ -27,7 +27,7 @@ from typing import Optional, Any
 from dataclasses import dataclass, field
 import structlog
 
-import paths
+from . import paths
 
 # Health check cache TTL in seconds
 HEALTH_CHECK_TTL = 30

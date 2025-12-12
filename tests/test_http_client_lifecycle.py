@@ -26,12 +26,15 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from backend_manager import BackendConfig, BackendManager, shutdown_backends
+from delia.backend_manager import BackendConfig, BackendManager, shutdown_backends
 
 
+@pytest.mark.asyncio
 async def test_client_creation_and_reuse():
     """Test that clients are created once and reused."""
     print("\n=== Test 1: Client Creation and Reuse ===")
@@ -55,6 +58,7 @@ async def test_client_creation_and_reuse():
     print(f"✓ Same client returned on reuse")
 
 
+@pytest.mark.asyncio
 async def test_client_cleanup():
     """Test that clients are properly closed without leaks."""
     print("\n=== Test 2: Client Cleanup ===")
@@ -87,6 +91,7 @@ async def test_client_cleanup():
     await backend.close_client()
 
 
+@pytest.mark.asyncio
 async def test_client_recreation_on_url_change():
     """Test that client is recreated when URL changes."""
     print("\n=== Test 3: Client Recreation on URL Change ===")
@@ -126,6 +131,7 @@ async def test_client_recreation_on_url_change():
     manager.backends.clear()
 
 
+@pytest.mark.asyncio
 async def test_concurrent_client_operations():
     """Test that concurrent operations don't cause connection leaks."""
     print("\n=== Test 4: Concurrent Client Operations ===")
@@ -177,6 +183,7 @@ async def test_concurrent_client_operations():
     manager.backends.clear()
 
 
+@pytest.mark.asyncio
 async def test_no_leaks_on_rapid_reload():
     """Test that rapid reloads don't leave unclosed clients."""
     print("\n=== Test 5: No Leaks on Rapid Reload ===")
@@ -214,6 +221,7 @@ async def test_no_leaks_on_rapid_reload():
     manager.backends.clear()
 
 
+@pytest.mark.asyncio
 async def test_shutdown_closes_all_clients():
     """Test that shutdown handler closes all clients."""
     print("\n=== Test 6: Shutdown Closes All Clients ===")
@@ -246,13 +254,14 @@ async def test_shutdown_closes_all_clients():
     print(f"✓ All clients properly closed by shutdown handler")
 
     # Also test the global shutdown_backends function
-    from backend_manager import backend_manager
+    from delia.backend_manager import backend_manager
     if backend_manager.backends:
         await shutdown_backends()
         # Verify at least some clients are closed
         print(f"✓ Global shutdown_backends() executed successfully")
 
 
+@pytest.mark.asyncio
 async def test_error_handling_in_close():
     """Test that errors during close are handled gracefully."""
     print("\n=== Test 7: Error Handling in Close ===")

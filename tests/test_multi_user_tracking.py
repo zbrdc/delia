@@ -34,7 +34,7 @@ def setup_test_environment(tmp_path):
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
     # Clear cached modules
-    modules_to_clear = ["paths", "config", "multi_user_tracking"]
+    modules_to_clear = ["delia.paths", "delia.config", "delia.multi_user_tracking", "delia"]
     for mod in list(sys.modules.keys()):
         if any(mod.startswith(m) or mod == m for m in modules_to_clear):
             del sys.modules[mod]
@@ -49,14 +49,14 @@ class TestRateLimiter:
 
     def test_rate_limiter_creation(self):
         """RateLimiter should initialize correctly."""
-        from multi_user_tracking import RateLimiter
+        from delia.multi_user_tracking import RateLimiter
 
         limiter = RateLimiter()
         assert limiter is not None
 
     def test_rate_limiter_default_quota(self):
         """RateLimiter should return default quota for unknown client."""
-        from multi_user_tracking import RateLimiter
+        from delia.multi_user_tracking import RateLimiter
 
         limiter = RateLimiter()
         quota = limiter.get_quota("unknown-client")
@@ -67,7 +67,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_set_quota(self):
         """RateLimiter should allow setting custom quota."""
-        from multi_user_tracking import RateLimiter, QuotaConfig
+        from delia.multi_user_tracking import RateLimiter, QuotaConfig
 
         limiter = RateLimiter()
         custom_quota = QuotaConfig(
@@ -85,7 +85,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_check_allowed(self):
         """RateLimiter should allow requests within limits."""
-        from multi_user_tracking import RateLimiter
+        from delia.multi_user_tracking import RateLimiter
 
         limiter = RateLimiter()
         allowed, reason = limiter.check_rate_limit("test-client")
@@ -95,7 +95,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_token_budget(self):
         """RateLimiter should check token budget."""
-        from multi_user_tracking import RateLimiter
+        from delia.multi_user_tracking import RateLimiter
 
         limiter = RateLimiter()
         allowed, reason = limiter.check_token_budget("test-client", 1000)
@@ -104,7 +104,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_record_tokens(self):
         """RateLimiter should record token usage."""
-        from multi_user_tracking import RateLimiter
+        from delia.multi_user_tracking import RateLimiter
 
         limiter = RateLimiter()
         # Should not raise
@@ -112,7 +112,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_concurrent_tracking(self):
         """RateLimiter should track concurrent requests."""
-        from multi_user_tracking import RateLimiter
+        from delia.multi_user_tracking import RateLimiter
 
         limiter = RateLimiter()
 
@@ -130,7 +130,7 @@ class TestRateLimiter:
 
     def test_rate_limiter_stats(self):
         """RateLimiter should return usage stats."""
-        from multi_user_tracking import RateLimiter
+        from delia.multi_user_tracking import RateLimiter
 
         limiter = RateLimiter()
         limiter.record_tokens("client-1", 1000)
@@ -147,20 +147,20 @@ class TestSimpleTracker:
 
     def test_tracker_creation(self):
         """SimpleTracker should initialize correctly."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         tracker = SimpleTracker()
         assert tracker is not None
 
     def test_tracker_get_or_create_client(self):
         """SimpleTracker should create new clients."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker, ClientInfo
+        from delia.multi_user_tracking import SimpleTracker, ClientInfo
 
         tracker = SimpleTracker()
         client = tracker.get_or_create_client(
@@ -177,10 +177,10 @@ class TestSimpleTracker:
 
     def test_tracker_get_client(self):
         """SimpleTracker should retrieve existing clients."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         tracker = SimpleTracker()
         client = tracker.get_or_create_client(
@@ -198,10 +198,10 @@ class TestSimpleTracker:
 
     def test_tracker_same_client_same_id(self):
         """SimpleTracker should return same ID for same client."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         tracker = SimpleTracker()
 
@@ -212,10 +212,10 @@ class TestSimpleTracker:
 
     def test_tracker_check_quota_allowed(self):
         """SimpleTracker should allow requests within quota."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         tracker = SimpleTracker()
         client = tracker.get_or_create_client("user", "127.0.0.1", None, "stdio")
@@ -227,10 +227,10 @@ class TestSimpleTracker:
 
     def test_tracker_record_request(self):
         """SimpleTracker should record completed requests."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         tracker = SimpleTracker()
         client = tracker.get_or_create_client("user", "127.0.0.1", None, "stdio")
@@ -254,10 +254,10 @@ class TestSimpleTracker:
 
     def test_tracker_get_all_stats(self):
         """SimpleTracker should return all user stats."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         tracker = SimpleTracker()
 
@@ -272,10 +272,10 @@ class TestSimpleTracker:
 
     def test_tracker_get_active_clients(self):
         """SimpleTracker should return recently active clients."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         tracker = SimpleTracker()
 
@@ -293,7 +293,7 @@ class TestQuotaConfig:
 
     def test_quota_config_defaults(self):
         """QuotaConfig should have sensible defaults."""
-        from multi_user_tracking import QuotaConfig
+        from delia.multi_user_tracking import QuotaConfig
 
         quota = QuotaConfig()
 
@@ -304,7 +304,7 @@ class TestQuotaConfig:
 
     def test_quota_config_custom(self):
         """QuotaConfig should accept custom values."""
-        from multi_user_tracking import QuotaConfig
+        from delia.multi_user_tracking import QuotaConfig
 
         quota = QuotaConfig(
             max_requests_per_hour=50,
@@ -324,7 +324,7 @@ class TestClientInfo:
 
     def test_client_info_creation(self):
         """ClientInfo should be created correctly."""
-        from multi_user_tracking import ClientInfo
+        from delia.multi_user_tracking import ClientInfo
 
         client = ClientInfo(
             client_id="test-id",
@@ -341,7 +341,7 @@ class TestClientInfo:
 
     def test_client_info_touch(self):
         """ClientInfo.touch() should update last_seen."""
-        from multi_user_tracking import ClientInfo
+        from delia.multi_user_tracking import ClientInfo
         import time
 
         client = ClientInfo(
@@ -364,7 +364,7 @@ class TestUserStats:
 
     def test_user_stats_creation(self):
         """UserStats should be created with correct defaults."""
-        from multi_user_tracking import UserStats
+        from delia.multi_user_tracking import UserStats
 
         stats = UserStats(username="testuser")
 
@@ -381,10 +381,10 @@ class TestTrackerPersistence:
     @pytest.mark.asyncio
     async def test_tracker_saves_to_disk(self):
         """SimpleTracker should save stats to disk."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         tracker = SimpleTracker()
 
@@ -404,10 +404,10 @@ class TestTrackerPersistence:
 
     def test_tracker_loads_from_disk(self, tmp_path):
         """SimpleTracker should load existing stats on startup."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         # Create first tracker and save data
         tracker1 = SimpleTracker()
@@ -428,20 +428,20 @@ class TestMultiUserTracker:
 
     def test_multi_user_tracker_exists(self):
         """MultiUserTracker class should exist for backwards compatibility."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import MultiUserTracker
+        from delia.multi_user_tracking import MultiUserTracker
 
         tracker = MultiUserTracker()
         assert tracker is not None
 
     def test_register_client_method(self):
         """MultiUserTracker should have register_client method."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import MultiUserTracker
+        from delia.multi_user_tracking import MultiUserTracker
 
         tracker = MultiUserTracker()
 
@@ -455,19 +455,19 @@ class TestGlobalTracker:
 
     def test_global_tracker_exists(self):
         """Global tracker instance should be available."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import tracker
+        from delia.multi_user_tracking import tracker
 
         assert tracker is not None
 
     def test_global_tracker_data_dir(self):
         """Global tracker should use correct data directory."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import DATA_DIR
+        from delia.multi_user_tracking import DATA_DIR
 
         assert DATA_DIR == paths.USER_DATA_DIR
 

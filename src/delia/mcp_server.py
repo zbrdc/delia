@@ -40,7 +40,7 @@ from pathlib import Path
 
 import structlog
 
-import paths
+from . import paths
 from structlog.types import Processor
 
 # ============================================================
@@ -85,19 +85,19 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import tiktoken
 
 # Import configuration (all tunable values in config.py)
-from config import (
+from .config import (
     config, STATS_FILE,
     detect_model_tier, get_backend_health, BackendHealth
 )
 
 # Import unified backend manager (single source of truth from settings.json)
-from backend_manager import backend_manager, BackendConfig
+from .backend_manager import backend_manager, BackendConfig
 
 # Import prompt templating system
-from prompt_templates import create_structured_prompt
+from .prompt_templates import create_structured_prompt
 
 # Import watermelon-themed messages for fun logging
-from melon_messages import (
+from .melon_messages import (
     GardenEvent, get_message, get_display_event, get_vine_message,
     format_harvest_stats, get_backend_status_message, get_startup_message
 )
@@ -107,7 +107,7 @@ AUTH_ENABLED = config.auth_enabled
 TRACKING_ENABLED = config.tracking_enabled
 
 if AUTH_ENABLED:
-    from auth import (
+    from .auth import (
         create_db_and_tables, get_async_session, get_user_manager, get_user_db,
         get_async_session_context, get_user_db_context, get_user_manager_context,
         fastapi_users, auth_backend, current_active_user, current_user_optional,
@@ -151,7 +151,7 @@ else:
     def decode_jwt_token(token: str) -> Optional[dict]:
         return None
 
-from multi_user_tracking import tracker
+from .multi_user_tracking import tracker
 
 
 
@@ -1623,7 +1623,7 @@ async def get_loaded_models() -> list[str]:
 
 def get_model_info(model_name: str) -> dict:
     """Get model information from configuration or estimate from name."""
-    from config import config
+    from .config import config
 
     # Check against active backend models
     backend = backend_manager.get_active_backend()
@@ -2712,7 +2712,7 @@ class UserTrackingMiddleware(Middleware):
                                     if user:
                                         username = user.email
                                         # Set user quota from database
-                                        from multi_user_tracking import QuotaConfig
+                                        from .multi_user_tracking import QuotaConfig
                                         quota = QuotaConfig(
                                             max_requests_per_hour=user.max_requests_per_hour,
                                             max_tokens_per_hour=user.max_tokens_per_hour,
@@ -3177,7 +3177,7 @@ else:
 # ============================================================
 
 if AUTH_ENABLED:
-    from auth import (
+    from .auth import (
         microsoft_oauth_client, oauth_backend, get_user_manager,
         JWT_SECRET, MICROSOFT_REDIRECT_URL
     )
@@ -4224,6 +4224,222 @@ def _read_serena_memory(name: str) -> Optional[str]:
 
 
 # ============================================================
+# STRUCTURED TOOLS (LLM-to-LLM optimized JSON interfaces)
+# ============================================================
+
+# Import structured tools module - this registers additional MCP tools
+# with typed JSON input/output for programmatic use by AI assistants.
+# The import must happen after mcp and all helper functions are defined.
+from . import structured_tools  # noqa: F401, E402
+
+
+# ============================================================
+# GARDEN-THEMED ALIASES (Fun alternatives to standard tools)
+# ============================================================
+
+from .melon_messages import get_task_message
+
+
+@mcp.tool()
+async def plant(
+    task: str,
+    content: str,
+    file: Optional[str] = None,
+    model: Optional[str] = None,
+    language: Optional[str] = None,
+    context: Optional[str] = None,
+    symbols: Optional[str] = None,
+    include_references: bool = False,
+    backend_type: Optional[str] = None,
+) -> str:
+    """
+    Plant a seed in Delia's garden and watch it grow into a response.
+    Garden-themed alias for 'delegate'.
+
+    Seeds are planted in the appropriate vine:
+    - Quick vine (7B) for fast-growing seeds
+    - Coder vine (14B) for code-flavored seeds
+    - MoE vine (30B+) for deep-rooted wisdom
+    - Thinking vine for slow-ripening contemplation
+
+    Args:
+        task: Type of seed - "quick", "review", "generate", "analyze", "plan", "critique"
+        content: The seed to plant (your prompt)
+        file: Optional file to enrich the soil
+        model: Force a specific vine - "quick", "coder", "moe", "thinking"
+        language: Language hint for code gardens
+        context: Serena memories to fertilize with
+        symbols: Code symbols to focus the growth
+        include_references: Include symbol references in context
+        backend_type: Force "local" or "remote" garden
+
+    Returns:
+        A fresh melon harvested from the vine!
+    """
+    backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
+    return await _delegate_impl(task, content, file, model, language, context, symbols, include_references, backend=backend_provider, backend_obj=backend_obj)
+
+
+@mcp.tool()
+async def ponder(
+    problem: str,
+    context: str = "",
+    depth: str = "normal",
+) -> str:
+    """
+    Let thoughts grow slowly in the contemplation garden.
+    Garden-themed alias for 'think'.
+
+    Pondering depths:
+    - "quick" - A quick sprout of insight
+    - "normal" - Balanced growth with root exploration
+    - "deep" - Deep roots reaching for wisdom
+
+    Args:
+        problem: The question to let grow
+        context: Supporting soil (additional context)
+        depth: How deep should the roots go?
+
+    Returns:
+        Ripened wisdom from the thinking vine
+    """
+    return await think(problem, context, depth)
+
+
+@mcp.tool()
+async def harvest(tasks: str) -> str:
+    """
+    Gather multiple melons from across the garden in parallel.
+    Garden-themed alias for 'batch'.
+
+    Distributes seeds across all available garden plots (GPUs)
+    for a bountiful parallel harvest.
+
+    Args:
+        tasks: JSON array of seeds to plant:
+            [{"task": "review", "content": "..."}, {"task": "generate", "content": "..."}]
+
+    Returns:
+        A basket full of harvested melons!
+    """
+    return await batch(tasks)
+
+
+@mcp.tool()
+async def prune(
+    content: str,
+    file: Optional[str] = None,
+    language: Optional[str] = None,
+    focus_areas: Optional[str] = None,
+) -> str:
+    """
+    Examine code vines for weeds, tangles, and overgrowth.
+    Garden-themed code review tool.
+
+    The gardener inspects your code for:
+    - Weeds (bugs, issues)
+    - Tangles (complexity)
+    - Overgrowth (unnecessary code)
+
+    Args:
+        content: The code vine to prune
+        file: File path for context
+        language: Programming language
+        focus_areas: Comma-separated areas to focus on (e.g., "security,performance")
+
+    Returns:
+        Pruning report with identified weeds and suggestions
+    """
+    task_context = f"Focus on: {focus_areas}" if focus_areas else ""
+    full_content = f"{task_context}\n\n{content}" if task_context else content
+    backend_provider, backend_obj = await _select_optimal_backend_v2(full_content, file, "review", None)
+    return await _delegate_impl("review", full_content, file, "coder", language, None, None, False, backend=backend_provider, backend_obj=backend_obj)
+
+
+@mcp.tool()
+async def grow(
+    content: str,
+    language: Optional[str] = None,
+    requirements: Optional[str] = None,
+) -> str:
+    """
+    Cultivate fresh code from a seed of an idea.
+    Garden-themed code generation tool.
+
+    Plant your requirements and watch code grow!
+
+    Args:
+        content: Description of what to grow
+        language: Target programming language
+        requirements: Comma-separated requirements for the code
+
+    Returns:
+        Freshly grown code from the coder vine
+    """
+    task_context = f"Requirements: {requirements}" if requirements else ""
+    full_content = f"{task_context}\n\n{content}" if task_context else content
+    backend_provider, backend_obj = await _select_optimal_backend_v2(full_content, None, "generate", None)
+    return await _delegate_impl("generate", full_content, None, "coder", language, None, None, False, backend=backend_provider, backend_obj=backend_obj)
+
+
+@mcp.tool()
+async def tend(
+    content: str,
+    file: Optional[str] = None,
+    language: Optional[str] = None,
+    analysis_type: Optional[str] = None,
+) -> str:
+    """
+    Tend to the code garden - examine structure and health.
+    Garden-themed code analysis tool.
+
+    The gardener examines:
+    - Roots (dependencies, architecture)
+    - Soil (code quality)
+    - Growth patterns (complexity)
+
+    Args:
+        content: The code garden to tend
+        file: File path for context
+        language: Programming language
+        analysis_type: Type of analysis (complexity, security, architecture, general)
+
+    Returns:
+        Garden tending report with insights
+    """
+    task_context = f"Analysis type: {analysis_type}" if analysis_type else ""
+    full_content = f"{task_context}\n\n{content}" if task_context else content
+    backend_provider, backend_obj = await _select_optimal_backend_v2(full_content, file, "analyze", None)
+    return await _delegate_impl("analyze", full_content, file, "coder", language, None, None, False, backend=backend_provider, backend_obj=backend_obj)
+
+
+@mcp.tool()
+async def ruminate(
+    problem: str,
+    context: str = "",
+    constraints: Optional[str] = None,
+) -> str:
+    """
+    Deep contemplation in the wisdom garden.
+    Garden-themed deep thinking tool.
+
+    Like a wise old tree, ruminate deeply on complex problems.
+    Takes time but produces the ripest wisdom.
+
+    Args:
+        problem: The deep question to contemplate
+        context: Supporting context
+        constraints: Comma-separated constraints to consider
+
+    Returns:
+        Deeply ripened wisdom from extended contemplation
+    """
+    if constraints:
+        context = f"{context}\n\nConstraints: {constraints}" if context else f"Constraints: {constraints}"
+    return await think(problem, context, "deep")
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -4254,7 +4470,7 @@ async def _shutdown_handler():
     - Saves tracker state to disk
     This is called automatically on server shutdown.
     """
-    from backend_manager import shutdown_backends
+    from .backend_manager import shutdown_backends
     await shutdown_backends()
 
     # Save tracker state on shutdown

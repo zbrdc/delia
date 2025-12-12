@@ -28,13 +28,16 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import queue system
-from mcp_server import ModelQueue, QueuedRequest
+from delia.mcp_server import ModelQueue, QueuedRequest
 
 
+@pytest.mark.asyncio
 async def test_immediate_availability():
     """Test that loaded models return immediately."""
     print("\n=== Test 1: Immediate Availability ===")
@@ -53,6 +56,7 @@ async def test_immediate_availability():
     print("✓ Loaded models are immediately available")
 
 
+@pytest.mark.asyncio
 async def test_queueing():
     """Test that requests are queued when model is loading."""
     print("\n=== Test 2: Queueing System ===")
@@ -72,6 +76,7 @@ async def test_queueing():
     print("✓ Queue stats updated correctly")
 
 
+@pytest.mark.asyncio
 async def test_future_resolution():
     """Test that futures are resolved after model loading."""
     print("\n=== Test 3: Future Resolution ===")
@@ -103,6 +108,7 @@ async def test_future_resolution():
     await completion_task
 
 
+@pytest.mark.asyncio
 async def test_priority_ordering():
     """Test that higher priority requests are processed first."""
     print("\n=== Test 4: Priority Ordering ===")
@@ -125,6 +131,7 @@ async def test_priority_ordering():
     print("✓ Higher priority requests are at top of queue")
 
 
+@pytest.mark.asyncio
 async def test_concurrent_requests():
     """Test handling of concurrent requests."""
     print("\n=== Test 5: Concurrent Requests ===")
@@ -161,6 +168,7 @@ async def test_concurrent_requests():
     print(f"  Total queued: {queue.total_queued}, total processed: {queue.total_processed}")
 
 
+@pytest.mark.asyncio
 async def test_failed_load():
     """Test that futures fail when model loading fails."""
     print("\n=== Test 6: Failed Load Handling ===")
@@ -185,6 +193,7 @@ async def test_failed_load():
         print("✓ Future properly fails when model load fails")
 
 
+@pytest.mark.asyncio
 async def test_queue_stats():
     """Test queue health statistics."""
     print("\n=== Test 7: Queue Statistics ===")
@@ -205,6 +214,7 @@ async def test_queue_stats():
     print(f"  Queue stats: {stats['queue_stats']}")
 
 
+@pytest.mark.asyncio
 async def test_timeout_detection():
     """Test that timeouts are tracked."""
     print("\n=== Test 8: Timeout Detection ===")

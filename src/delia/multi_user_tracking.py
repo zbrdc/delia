@@ -35,7 +35,7 @@ import hashlib
 import structlog
 from limits import storage, strategies, parse
 
-import paths
+from . import paths
 
 # Lazy logger to handle STDIO reconfiguration
 def _get_log():

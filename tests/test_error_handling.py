@@ -35,7 +35,7 @@ def setup_test_environment(tmp_path):
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
     # Clear cached modules
-    modules_to_clear = ["paths", "config", "backend_manager", "mcp_server", "multi_user_tracking"]
+    modules_to_clear = ["delia.paths", "delia.config", "delia.backend_manager", "delia.mcp_server", "delia.multi_user_tracking", "delia"]
     for mod in list(sys.modules.keys()):
         if any(mod.startswith(m) or mod == m for m in modules_to_clear):
             del sys.modules[mod]
@@ -68,7 +68,7 @@ class TestBackendConnectionErrors:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -76,8 +76,8 @@ class TestBackendConnectionErrors:
     @pytest.mark.asyncio
     async def test_backend_health_check_timeout(self):
         """Backend health check should handle connection timeout."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
         backend = manager.get_backend("unreachable-backend")
@@ -89,7 +89,7 @@ class TestBackendConnectionErrors:
     @pytest.mark.asyncio
     async def test_delegate_handles_backend_failure(self):
         """delegate() should handle backend connection failure gracefully."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         # This should not raise an unhandled exception
@@ -117,7 +117,7 @@ class TestInvalidInputHandling:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -125,7 +125,7 @@ class TestInvalidInputHandling:
     @pytest.mark.asyncio
     async def test_delegate_empty_content(self):
         """delegate() should handle empty content."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.delegate.fn(
             task="summarize",
@@ -138,7 +138,7 @@ class TestInvalidInputHandling:
     @pytest.mark.asyncio
     async def test_delegate_invalid_task(self):
         """delegate() should handle invalid task type."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.delegate.fn(
             task="invalid_task_type_that_does_not_exist",
@@ -151,7 +151,7 @@ class TestInvalidInputHandling:
     @pytest.mark.asyncio
     async def test_think_empty_problem(self):
         """think() should handle empty problem."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.think.fn(
             problem="",
@@ -163,7 +163,7 @@ class TestInvalidInputHandling:
     @pytest.mark.asyncio
     async def test_switch_model_empty_name(self):
         """switch_model() should handle empty model name."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.switch_model.fn(
             tier="quick",
@@ -180,14 +180,14 @@ class TestConfigFileErrors:
 
     def test_corrupted_settings_json(self, tmp_path):
         """BackendManager should handle corrupted settings.json."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         # Write corrupted JSON
         with open(paths.SETTINGS_FILE, "w") as f:
             f.write("{ this is not valid json }")
 
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
 
         # Should not crash, should create default
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
@@ -195,28 +195,28 @@ class TestConfigFileErrors:
 
     def test_missing_required_fields_in_settings(self, tmp_path):
         """BackendManager should handle missing fields in settings."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         # Write incomplete settings
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump({"version": "1.0"}, f)  # Missing backends and routing
 
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
         assert manager is not None
 
     def test_corrupted_stats_file(self, tmp_path):
         """load_usage_stats should handle corrupted stats file."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         # Write corrupted stats
         with open(paths.STATS_FILE, "w") as f:
             f.write("not json at all")
 
-        import mcp_server
+        from delia import mcp_server
 
         # Should not crash
         mcp_server.load_usage_stats()
@@ -228,7 +228,7 @@ class TestCircuitBreakerBehavior:
 
     def test_circuit_breaker_opens_after_failures(self):
         """Circuit breaker should open after consecutive failures."""
-        from config import BackendHealth
+        from delia.config import BackendHealth
 
         health = BackendHealth("test-backend")
 
@@ -241,7 +241,7 @@ class TestCircuitBreakerBehavior:
 
     def test_circuit_breaker_closes_after_cooldown(self):
         """Circuit breaker should close after cooldown period."""
-        from config import BackendHealth
+        from delia.config import BackendHealth
         import time
 
         health = BackendHealth("test-backend")
@@ -260,7 +260,7 @@ class TestCircuitBreakerBehavior:
 
     def test_circuit_breaker_resets_on_success(self):
         """Circuit breaker should reset failure count on success."""
-        from config import BackendHealth
+        from delia.config import BackendHealth
 
         health = BackendHealth("test-backend")
 
@@ -282,7 +282,7 @@ class TestRateLimitingEdgeCases:
 
     def test_rate_limit_zero_quota(self):
         """Rate limiter should handle zero quota."""
-        from multi_user_tracking import RateLimiter, QuotaConfig
+        from delia.multi_user_tracking import RateLimiter, QuotaConfig
 
         limiter = RateLimiter()
 
@@ -301,7 +301,7 @@ class TestRateLimitingEdgeCases:
 
     def test_rate_limit_very_high_tokens(self):
         """Rate limiter should handle very high token requests."""
-        from multi_user_tracking import RateLimiter
+        from delia.multi_user_tracking import RateLimiter
 
         limiter = RateLimiter()
 
@@ -317,7 +317,7 @@ class TestConcurrencyEdgeCases:
 
     def test_concurrent_counter_negative_protection(self):
         """Concurrent counter should not go negative."""
-        from multi_user_tracking import RateLimiter
+        from delia.multi_user_tracking import RateLimiter
 
         limiter = RateLimiter()
 
@@ -331,10 +331,10 @@ class TestConcurrencyEdgeCases:
     @pytest.mark.asyncio
     async def test_parallel_requests_tracking(self):
         """Tracker should handle parallel requests correctly."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from multi_user_tracking import SimpleTracker
+        from delia.multi_user_tracking import SimpleTracker
 
         tracker = SimpleTracker()
         client = tracker.get_or_create_client("parallel-user", "127.0.0.1", None, "stdio")
@@ -357,10 +357,10 @@ class TestMemoryAndResourceManagement:
 
     def test_recent_calls_bounded(self):
         """RECENT_CALLS should not grow unbounded."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         # Add many entries
         for i in range(200):
@@ -376,10 +376,10 @@ class TestMemoryAndResourceManagement:
 
     def test_response_times_structure(self):
         """RESPONSE_TIMES should have correct structure for all tiers."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         # Verify structure exists for all model tiers
         assert "quick" in mcp_server.RESPONSE_TIMES
@@ -397,7 +397,7 @@ class TestGracefulDegradation:
     @pytest.mark.asyncio
     async def test_all_backends_unavailable(self):
         """System should handle all backends being unavailable."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         settings = {
@@ -408,7 +408,7 @@ class TestGracefulDegradation:
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
 
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         # Should return error message, not crash
@@ -424,7 +424,7 @@ class TestGracefulDegradation:
     @pytest.mark.asyncio
     async def test_health_with_no_backends(self):
         """health() should work with no backends configured."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         settings = {
@@ -435,7 +435,7 @@ class TestGracefulDegradation:
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
 
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.health.fn()
@@ -449,13 +449,13 @@ class TestFileSystemErrors:
 
     def test_read_only_directory(self, tmp_path):
         """Should handle read-only directory gracefully."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         # This test is OS-dependent and may not work in all environments
         # Just verify the code doesn't crash catastrophically
 
-        import mcp_server
+        from delia import mcp_server
 
         # Save should handle errors
         try:

@@ -42,7 +42,7 @@ class TestDeliaEntryPoint:
     def test_delia_help(self):
         """delia --help should display usage info."""
         result = subprocess.run(
-            ["uv", "run", "python", "-m", "mcp_server", "--help"],
+            ["uv", "run", "python", "-m", "delia.mcp_server", "--help"],
             capture_output=True,
             text=True,
             cwd="/home/dan/git/delia",
@@ -59,7 +59,7 @@ class TestDeliaEntryPoint:
     def test_delia_transport_options(self):
         """delia should accept transport options."""
         result = subprocess.run(
-            ["uv", "run", "python", "-m", "mcp_server", "--help"],
+            ["uv", "run", "python", "-m", "delia.mcp_server", "--help"],
             capture_output=True,
             text=True,
             cwd="/home/dan/git/delia",
@@ -74,7 +74,7 @@ class TestDeliaEntryPoint:
     def test_delia_port_option(self):
         """delia should accept port option."""
         result = subprocess.run(
-            ["uv", "run", "python", "-m", "mcp_server", "--help"],
+            ["uv", "run", "python", "-m", "delia.mcp_server", "--help"],
             capture_output=True,
             text=True,
             cwd="/home/dan/git/delia",
@@ -86,7 +86,7 @@ class TestDeliaEntryPoint:
     def test_delia_host_option(self):
         """delia should accept host option."""
         result = subprocess.run(
-            ["uv", "run", "python", "-m", "mcp_server", "--help"],
+            ["uv", "run", "python", "-m", "delia.mcp_server", "--help"],
             capture_output=True,
             text=True,
             cwd="/home/dan/git/delia",
@@ -98,7 +98,7 @@ class TestDeliaEntryPoint:
     def test_delia_invalid_transport(self):
         """delia should reject invalid transport."""
         result = subprocess.run(
-            ["uv", "run", "python", "-m", "mcp_server", "--transport", "invalid_transport"],
+            ["uv", "run", "python", "-m", "delia.mcp_server", "--transport", "invalid_transport"],
             capture_output=True,
             text=True,
             cwd="/home/dan/git/delia",
@@ -119,7 +119,7 @@ class TestDeliaHTTPStartup:
 
         # Start server in background
         proc = subprocess.Popen(
-            ["uv", "run", "python", "-m", "mcp_server", "--transport", "http", "--port", "18765"],
+            ["uv", "run", "python", "-m", "delia.mcp_server", "--transport", "http", "--port", "18765"],
             cwd="/home/dan/git/delia",
             env=env,
             stdout=subprocess.PIPE,
@@ -162,7 +162,7 @@ class TestDeliaSSEStartup:
 
         # Start server in background
         proc = subprocess.Popen(
-            ["uv", "run", "python", "-m", "mcp_server", "--transport", "sse", "--port", "18766"],
+            ["uv", "run", "python", "-m", "delia.mcp_server", "--transport", "sse", "--port", "18766"],
             cwd="/home/dan/git/delia",
             env=env,
             stdout=subprocess.PIPE,
@@ -190,18 +190,18 @@ class TestDeliaSetupAuth:
 
     def test_setup_auth_module_exists(self):
         """setup_auth.py should exist and be importable."""
-        import setup_auth
+        from delia import setup_auth
         assert setup_auth is not None
 
     def test_setup_auth_has_main(self):
         """setup_auth should have main function."""
-        import setup_auth
+        from delia import setup_auth
         assert hasattr(setup_auth, 'main')
         assert callable(setup_auth.main)
 
     def test_setup_auth_has_jwt_generator(self):
         """setup_auth should have JWT secret generator."""
-        import setup_auth
+        from delia import setup_auth
         assert hasattr(setup_auth, 'generate_jwt_secret')
 
         # Generate a secret
@@ -211,7 +211,7 @@ class TestDeliaSetupAuth:
 
     def test_setup_auth_generates_unique_secrets(self):
         """setup_auth should generate unique JWT secrets."""
-        import setup_auth
+        from delia import setup_auth
 
         secrets = [setup_auth.generate_jwt_secret() for _ in range(10)]
 
@@ -220,12 +220,12 @@ class TestDeliaSetupAuth:
 
     def test_setup_auth_has_oauth_setup(self):
         """setup_auth should have OAuth setup function."""
-        import setup_auth
+        from delia import setup_auth
         assert hasattr(setup_auth, 'setup_oauth')
 
     def test_setup_auth_has_basic_auth_setup(self):
         """setup_auth should have basic auth setup function."""
-        import setup_auth
+        from delia import setup_auth
         assert hasattr(setup_auth, 'setup_basic_auth')
 
 
@@ -234,7 +234,7 @@ class TestMainFunction:
 
     def test_main_function_exists(self):
         """mcp_server should have main function."""
-        import mcp_server
+        from delia import mcp_server
         assert hasattr(mcp_server, 'main')
         assert callable(mcp_server.main)
 
@@ -242,7 +242,7 @@ class TestMainFunction:
         """Main should use argparse with correct options."""
         # Test by running with --help
         result = subprocess.run(
-            ["uv", "run", "python", "-m", "mcp_server", "--help"],
+            ["uv", "run", "python", "-m", "delia.mcp_server", "--help"],
             capture_output=True,
             text=True,
             cwd="/home/dan/git/delia",
@@ -279,7 +279,7 @@ class TestPackageEntryPoints:
 
         scripts = config.get("project", {}).get("scripts", {})
         assert "delia-setup-auth" in scripts
-        assert "setup_auth:main" in scripts["delia-setup-auth"]
+        assert "delia.setup_auth:main" in scripts["delia-setup-auth"]
 
 
 if __name__ == "__main__":

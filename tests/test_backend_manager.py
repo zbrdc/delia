@@ -19,7 +19,7 @@ import shutil
 
 import pytest
 
-from backend_manager import BackendManager, BackendConfig
+from delia.backend_manager import BackendManager, BackendConfig
 
 
 class TestBackendManager:

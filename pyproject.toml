@@ -36,8 +36,16 @@ dependencies = [
     "limits>=3.13.0",
 ]
 
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
-exclude = ["dashboard*", "node_modules*"]
+where = ["src"]
+exclude = ["dashboard*", "node_modules*", "tests*"]
 
 [dependency-groups]
 dev = [
@@ -49,9 +57,9 @@ dev = [
 Repository = "https://github.com/zbrdc/delia"
 
 [project.scripts]
-delia = "mcp_server:main"
-delia-setup-auth = "setup_auth:main"
+delia = "delia.mcp_server:main"
+delia-setup-auth = "delia.setup_auth:main"
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src"]
 testpaths = ["tests"]

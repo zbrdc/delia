@@ -30,11 +30,13 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
+import pytest
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import stats functions
-from mcp_server import (
+from delia.mcp_server import (
     _update_stats_sync,
     _snapshot_stats,
     save_all_stats_async,
@@ -46,6 +48,7 @@ from mcp_server import (
 )
 
 
+@pytest.mark.asyncio
 async def test_concurrent_updates():
     """Test concurrent stat updates don't cause corruption."""
     print("\n=== Test 1: Concurrent Updates ===")
@@ -92,6 +95,7 @@ async def test_concurrent_updates():
     print(f"  - RECENT_CALLS: {recent_count}")
 
 
+@pytest.mark.asyncio
 async def test_snapshot_consistency():
     """Test that snapshots are consistent even during updates."""
     print("\n=== Test 2: Snapshot Consistency ===")
@@ -118,6 +122,7 @@ async def test_snapshot_consistency():
     print(f"  - Recent calls: {len(recent_snap)} items")
 
 
+@pytest.mark.asyncio
 async def test_concurrent_snapshots():
     """Test that concurrent snapshots don't corrupt stats."""
     print("\n=== Test 3: Concurrent Snapshots ===")
@@ -177,6 +182,7 @@ async def test_concurrent_snapshots():
     print(f"  - Final tasks: {final_tasks}")
 
 
+@pytest.mark.asyncio
 async def test_save_during_updates():
     """Test that saves work correctly during concurrent updates."""
     print("\n=== Test 4: Save During Updates ===")
@@ -223,12 +229,13 @@ async def test_save_during_updates():
     print(f"  - Final stats saved: {final_calls} calls")
 
 
+@pytest.mark.asyncio
 async def test_no_data_loss():
     """Test that no updates are lost even under high concurrency."""
     print("\n=== Test 5: No Data Loss Under High Concurrency ===")
 
     # Import to check max limit
-    from mcp_server import MAX_RECENT_CALLS
+    from delia.mcp_server import MAX_RECENT_CALLS
 
     # Reset stats
     with _stats_thread_lock:
@@ -277,6 +284,7 @@ async def test_no_data_loss():
     print(f"  - Recent calls (bounded): {final_recent}/{MAX_RECENT_CALLS}")
 
 
+@pytest.mark.asyncio
 async def test_token_accumulation():
     """Test that tokens accumulate correctly under concurrency."""
     print("\n=== Test 6: Token Accumulation ===")

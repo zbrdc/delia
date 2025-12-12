@@ -34,7 +34,7 @@ def setup_test_environment(tmp_path):
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
     # Clear cached modules
-    modules_to_clear = ["paths", "config", "auth", "multi_user_tracking"]
+    modules_to_clear = ["delia.paths", "delia.config", "delia.auth", "delia.multi_user_tracking", "delia"]
     for mod in list(sys.modules.keys()):
         if any(mod.startswith(m) or mod == m for m in modules_to_clear):
             del sys.modules[mod]
@@ -49,26 +49,26 @@ class TestAuthModuleImport:
 
     def test_auth_imports(self):
         """auth.py should import without errors."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import auth
+        from delia import auth
         assert auth is not None
 
     def test_user_model_exists(self):
         """User model should be defined."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import User
+        from delia.auth import User
         assert User is not None
 
     def test_user_manager_exists(self):
         """UserManager should be defined."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import UserManager
+        from delia.auth import UserManager
         assert UserManager is not None
 
 
@@ -77,10 +77,10 @@ class TestUserModel:
 
     def test_user_has_required_fields(self):
         """User model should have required fields."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import User
+        from delia.auth import User
 
         # Check model has expected attributes
         assert hasattr(User, 'id')
@@ -92,10 +92,10 @@ class TestUserModel:
 
     def test_user_has_delia_fields(self):
         """User model should have Delia-specific fields."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import User
+        from delia.auth import User
 
         # Delia-specific fields for quotas
         assert hasattr(User, 'display_name') or hasattr(User, 'max_tokens_per_hour')
@@ -106,10 +106,10 @@ class TestDatabaseSetup:
 
     def test_database_url_uses_paths(self):
         """Database URL should be based on paths module."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import DATABASE_URL
+        from delia.auth import DATABASE_URL
 
         assert DATABASE_URL is not None
         # Should contain the user data directory path
@@ -118,10 +118,10 @@ class TestDatabaseSetup:
     @pytest.mark.asyncio
     async def test_create_db_and_tables(self):
         """Should be able to create database tables."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import create_db_and_tables
+        from delia.auth import create_db_and_tables
 
         # Should not raise
         await create_db_and_tables()
@@ -136,10 +136,10 @@ class TestUserManagerCallbacks:
 
     def test_user_manager_instantiation(self):
         """UserManager should instantiate correctly."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import UserManager, get_user_db
+        from delia.auth import UserManager, get_user_db
 
         # UserManager requires a user_db dependency
         # Just verify the class exists and has expected methods
@@ -153,19 +153,19 @@ class TestFastAPIUsersIntegration:
 
     def test_fastapi_users_instance(self):
         """fastapi_users instance should be available."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import fastapi_users
+        from delia.auth import fastapi_users
 
         assert fastapi_users is not None
 
     def test_current_user_dependencies(self):
         """Current user dependencies should be available."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import current_active_user, current_superuser, current_user_optional
+        from delia.auth import current_active_user, current_superuser, current_user_optional
 
         assert current_active_user is not None
         assert current_superuser is not None
@@ -177,20 +177,20 @@ class TestJWTAuthentication:
 
     def test_jwt_backend_exists(self):
         """JWT authentication backend should be configured."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import auth_backend
+        from delia.auth import auth_backend
 
         assert auth_backend is not None
 
     def test_jwt_strategy(self):
         """JWT secret should be configured."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         # JWT should have a secret key
-        from auth import JWT_SECRET
+        from delia.auth import JWT_SECRET
 
         assert JWT_SECRET is not None
         assert len(JWT_SECRET) > 0
@@ -202,10 +202,10 @@ class TestAnonymousUser:
     @pytest.mark.asyncio
     async def test_get_or_create_anonymous_user(self):
         """Should be able to get or create anonymous user."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import get_or_create_anonymous_user, create_db_and_tables
+        from delia.auth import get_or_create_anonymous_user, create_db_and_tables
 
         # Create tables first
         await create_db_and_tables()
@@ -223,10 +223,10 @@ class TestUserQuotaInfo:
 
     def test_get_user_quota_info(self):
         """Should extract quota info from user object."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import get_user_quota_info
+        from delia.auth import get_user_quota_info
 
         # Create a mock user object with quota fields
         class MockUser:
@@ -248,10 +248,10 @@ class TestAuthRouters:
 
     def test_auth_router_exists(self):
         """Auth router should be available."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import fastapi_users
+        from delia.auth import fastapi_users
 
         # FastAPI-Users provides router methods
         assert hasattr(fastapi_users, 'get_auth_router')
@@ -264,11 +264,11 @@ class TestOAuthIntegration:
 
     def test_oauth_router_available(self):
         """OAuth router should be available if configured."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         try:
-            from auth import oauth_router
+            from delia.auth import oauth_router
             # OAuth is configured
             assert oauth_router is not None or True
         except ImportError:
@@ -281,10 +281,10 @@ class TestSecretKeyConfiguration:
 
     def test_secret_key_not_default(self):
         """JWT secret should not be a weak default value."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import JWT_SECRET
+        from delia.auth import JWT_SECRET
 
         # Should not be common placeholder values
         assert JWT_SECRET != "secret"
@@ -299,10 +299,10 @@ class TestDatabasePathConfiguration:
 
     def test_database_in_user_data_dir(self):
         """Database should be in USER_DATA_DIR."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        from auth import DATABASE_URL
+        from delia.auth import DATABASE_URL
 
         # Should reference the user data directory
         user_dir_str = str(paths.USER_DATA_DIR)

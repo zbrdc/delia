@@ -37,7 +37,7 @@ def setup_test_environment(tmp_path):
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
     # Clear cached modules
-    modules_to_clear = ["paths", "config", "backend_manager", "mcp_server"]
+    modules_to_clear = ["delia.paths", "delia.config", "delia.backend_manager", "delia.mcp_server", "delia"]
     for mod in list(sys.modules.keys()):
         if any(mod.startswith(m) or mod == m for m in modules_to_clear):
             del sys.modules[mod]
@@ -52,7 +52,7 @@ class TestMultiBackendConfiguration:
 
     def test_multiple_backends_load(self, tmp_path):
         """Multiple backends should load from settings."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         settings = {
@@ -95,7 +95,7 @@ class TestMultiBackendConfiguration:
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
 
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -106,7 +106,7 @@ class TestMultiBackendConfiguration:
 
     def test_backends_sorted_by_priority(self, tmp_path):
         """Backends should be sorted by priority."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         settings = {
@@ -125,7 +125,7 @@ class TestMultiBackendConfiguration:
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
 
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
         enabled = manager.get_enabled_backends()
@@ -142,7 +142,7 @@ class TestBackendHealthChecks:
     @pytest.fixture(autouse=True)
     def setup_backends(self, tmp_path):
         """Set up test backends."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         settings = {
@@ -178,8 +178,8 @@ class TestBackendHealthChecks:
     @pytest.mark.asyncio
     async def test_health_check_marks_unavailable(self):
         """Health check should mark unavailable backends."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -197,8 +197,8 @@ class TestBackendHealthChecks:
     @pytest.mark.asyncio
     async def test_health_cache_works(self):
         """Health check results should be cached."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -214,8 +214,8 @@ class TestBackendHealthChecks:
     @pytest.mark.asyncio
     async def test_health_cache_invalidation(self):
         """Health cache should be invalidatable."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -233,7 +233,7 @@ class TestCircuitBreakerFailover:
 
     def test_circuit_breaker_opens(self):
         """Circuit breaker should open after failures."""
-        from config import BackendHealth
+        from delia.config import BackendHealth
 
         health = BackendHealth("test-backend")
 
@@ -246,7 +246,7 @@ class TestCircuitBreakerFailover:
 
     def test_circuit_breaker_reports_time_until_available(self):
         """Circuit breaker should report time until available."""
-        from config import BackendHealth
+        from delia.config import BackendHealth
 
         health = BackendHealth("test-backend")
 
@@ -260,7 +260,7 @@ class TestCircuitBreakerFailover:
 
     def test_circuit_breaker_context_reduction(self):
         """Circuit breaker should suggest context reduction."""
-        from config import BackendHealth
+        from delia.config import BackendHealth
 
         health = BackendHealth("test-backend")
 
@@ -281,7 +281,7 @@ class TestActiveBackendFailover:
     @pytest.fixture(autouse=True)
     def setup_backends(self, tmp_path):
         """Set up test backends."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         settings = {
@@ -316,8 +316,8 @@ class TestActiveBackendFailover:
 
     def test_active_backend_defaults_to_first_enabled(self):
         """Active backend should default to highest priority enabled backend."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -328,8 +328,8 @@ class TestActiveBackendFailover:
 
     def test_can_switch_active_backend(self):
         """Should be able to manually switch active backend."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -342,8 +342,8 @@ class TestActiveBackendFailover:
     @pytest.mark.asyncio
     async def test_fallback_on_remove(self):
         """Removing active backend should fallback to next."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -365,7 +365,7 @@ class TestDelegateFailover:
     @pytest.fixture(autouse=True)
     def setup_backends(self, tmp_path):
         """Set up test backends."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         settings = {
@@ -401,7 +401,7 @@ class TestDelegateFailover:
     @pytest.mark.asyncio
     async def test_delegate_returns_error_when_no_backends(self):
         """delegate() should return error when no backends available."""
-        import paths
+        from delia import paths
 
         # Create empty backend config
         settings = {
@@ -412,7 +412,7 @@ class TestDelegateFailover:
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
 
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.delegate.fn(
@@ -431,7 +431,7 @@ class TestBackendTypeRouting:
     @pytest.fixture(autouse=True)
     def setup_backends(self, tmp_path):
         """Set up local and remote backends."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         settings = {
@@ -466,8 +466,8 @@ class TestBackendTypeRouting:
 
     def test_prefer_local_setting(self):
         """Should prefer local backends when configured."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -477,8 +477,8 @@ class TestBackendTypeRouting:
 
     def test_backend_type_detection(self):
         """Should correctly detect backend types."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -495,7 +495,7 @@ class TestConcurrentBackendRequests:
     @pytest.fixture(autouse=True)
     def setup_backends(self, tmp_path):
         """Set up test backends."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         settings = {
@@ -521,8 +521,8 @@ class TestConcurrentBackendRequests:
     @pytest.mark.asyncio
     async def test_concurrent_health_checks(self):
         """Multiple concurrent health checks should work."""
-        from backend_manager import BackendManager
-        import paths
+        from delia.backend_manager import BackendManager
+        from delia import paths
 
         manager = BackendManager(settings_file=paths.SETTINGS_FILE)
 
@@ -542,7 +542,7 @@ class TestBackendRecovery:
 
     def test_circuit_breaker_recovery(self):
         """Circuit breaker should allow recovery after cooldown."""
-        from config import BackendHealth
+        from delia.config import BackendHealth
         import time
 
         health = BackendHealth("test-backend")
@@ -561,7 +561,7 @@ class TestBackendRecovery:
 
     def test_success_resets_failures(self):
         """Successful request should reset failure count."""
-        from config import BackendHealth
+        from delia.config import BackendHealth
 
         health = BackendHealth("test-backend")
 

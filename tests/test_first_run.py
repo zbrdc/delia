@@ -46,8 +46,8 @@ class TestFreshClone:
 
         # Clear cached module imports
         modules_to_clear = [
-            "paths", "config", "backend_manager",
-            "multi_user_tracking", "auth"
+            "delia.paths", "delia.config", "delia.backend_manager",
+            "delia.multi_user_tracking", "delia.auth", "delia"
         ]
         for mod in list(sys.modules.keys()):
             if any(mod.startswith(m) or mod == m for m in modules_to_clear):
@@ -67,13 +67,13 @@ class TestFreshClone:
 
     def test_paths_module_loads_without_data_dir(self):
         """paths.py should load even when data dir doesn't exist."""
-        import paths
+        from delia import paths
         assert paths.DATA_DIR == self.data_dir
         assert not self.data_dir.exists()  # Still doesn't exist
 
     def test_ensure_directories_creates_structure(self):
         """ensure_directories() should create full directory structure."""
-        import paths
+        from delia import paths
 
         paths.ensure_directories()
 
@@ -84,16 +84,16 @@ class TestFreshClone:
 
     def test_config_loads_without_data_dir(self):
         """config.py should load and use correct paths."""
-        import paths
-        import config
+        from delia import paths
+        from delia import config
 
         assert config.config.stats_file == paths.STATS_FILE
         assert str(config.config.stats_file).startswith(str(self.data_dir))
 
     def test_backend_manager_creates_default_settings(self, tmp_path):
         """BackendManager should create default settings.json if missing."""
-        import paths
-        from backend_manager import BackendManager
+        from delia import paths
+        from delia.backend_manager import BackendManager
 
         # Use a temp settings file that doesn't exist
         settings_file = tmp_path / "new_settings.json"
@@ -113,31 +113,31 @@ class TestFreshClone:
 
     def test_multi_user_tracking_creates_data_dir(self):
         """MultiUserTracker should create its data directory."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import multi_user_tracking
+        from delia import multi_user_tracking
 
         # Tracker should have created its directory
         assert multi_user_tracking.DATA_DIR.exists()
 
     def test_full_initialization_sequence(self):
         """Test the full initialization sequence as mcp_server.py does."""
-        import paths
+        from delia import paths
 
         # 1. Ensure directories (done early in mcp_server.py)
         paths.ensure_directories()
 
         # 2. Import config
-        import config
+        from delia import config
         assert config.config is not None
 
         # 3. Import backend manager
-        import backend_manager
+        from delia import backend_manager
         assert backend_manager.backend_manager is not None
 
         # 4. Import tracking
-        import multi_user_tracking
+        from delia import multi_user_tracking
         assert multi_user_tracking.tracker is not None
 
         # All directories should exist
@@ -150,7 +150,7 @@ class TestSettingsJson:
 
     def test_missing_settings_creates_default(self, tmp_path):
         """Missing settings.json should trigger default creation."""
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
 
         settings_file = tmp_path / "settings.json"
         manager = BackendManager(settings_file=settings_file)
@@ -166,7 +166,7 @@ class TestSettingsJson:
 
     def test_invalid_settings_creates_default(self, tmp_path):
         """Invalid JSON in settings.json should trigger default creation."""
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
 
         settings_file = tmp_path / "settings.json"
         settings_file.write_text("{ invalid json }")
@@ -181,7 +181,7 @@ class TestSettingsJson:
 
     def test_valid_settings_preserved(self, tmp_path):
         """Valid settings.json should be loaded, not overwritten."""
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
 
         settings_file = tmp_path / "settings.json"
         custom_settings = {
@@ -216,17 +216,17 @@ class TestMCPServerInitialization:
     def test_mcp_server_imports(self):
         """mcp_server.py should import without errors."""
         # This tests that all module-level code runs without crashing
-        import mcp_server
+        from delia import mcp_server
         assert mcp_server is not None
 
     def test_mcp_instance_created(self):
         """FastMCP instance should be created."""
-        import mcp_server
+        from delia import mcp_server
         assert mcp_server.mcp is not None
 
     def test_tools_registered(self):
         """MCP tools should be registered."""
-        import mcp_server
+        from delia import mcp_server
 
         # Check that key tools exist
         # FastMCP stores tools internally
@@ -243,7 +243,7 @@ class TestMCPServerInitialization:
 
     def test_stats_structures_initialized(self):
         """Stats tracking structures should be initialized."""
-        import mcp_server
+        from delia import mcp_server
 
         assert hasattr(mcp_server, 'MODEL_USAGE')
         assert hasattr(mcp_server, 'TASK_STATS')

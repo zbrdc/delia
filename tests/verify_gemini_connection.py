@@ -15,7 +15,7 @@
 import asyncio
 import sys
 import os
-from backend_manager import backend_manager
+from delia.backend_manager import backend_manager
 
 async def test_connection():
     print("Checking backend health...")

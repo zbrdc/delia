@@ -39,7 +39,7 @@ def setup_test_environment(tmp_path):
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
     # Create minimal settings
-    import paths
+    from delia import paths
     paths.ensure_directories()
 
     settings = {
@@ -71,12 +71,12 @@ class TestMCPToolsExport:
 
     def test_mcp_instance_exists(self):
         """FastMCP instance should be created."""
-        import mcp_server
+        from delia import mcp_server
         assert mcp_server.mcp is not None
 
     def test_mcp_has_tools_registered(self):
         """MCP should have tools registered."""
-        import mcp_server
+        from delia import mcp_server
 
         # Check that key tool functions exist
         assert hasattr(mcp_server, 'delegate')
@@ -91,7 +91,7 @@ class TestMCPToolsExport:
 
     def test_tools_are_callable_via_fn(self):
         """MCP tools should be callable via .fn attribute."""
-        import mcp_server
+        from delia import mcp_server
 
         # FastMCP decorates functions as FunctionTool objects
         # The actual function is accessible via .fn
@@ -107,7 +107,7 @@ class TestMCPToolSignatures:
 
     def test_delegate_parameters(self):
         """delegate() should accept required parameters."""
-        import mcp_server
+        from delia import mcp_server
         import inspect
 
         sig = inspect.signature(mcp_server.delegate.fn)
@@ -122,7 +122,7 @@ class TestMCPToolSignatures:
 
     def test_think_parameters(self):
         """think() should accept required parameters."""
-        import mcp_server
+        from delia import mcp_server
         import inspect
 
         sig = inspect.signature(mcp_server.think.fn)
@@ -133,7 +133,7 @@ class TestMCPToolSignatures:
 
     def test_batch_parameters(self):
         """batch() should accept tasks parameter."""
-        import mcp_server
+        from delia import mcp_server
         import inspect
 
         sig = inspect.signature(mcp_server.batch.fn)
@@ -143,7 +143,7 @@ class TestMCPToolSignatures:
 
     def test_switch_backend_parameters(self):
         """switch_backend() should accept backend_id."""
-        import mcp_server
+        from delia import mcp_server
         import inspect
 
         sig = inspect.signature(mcp_server.switch_backend.fn)
@@ -153,7 +153,7 @@ class TestMCPToolSignatures:
 
     def test_switch_model_parameters(self):
         """switch_model() should accept tier and model_name."""
-        import mcp_server
+        from delia import mcp_server
         import inspect
 
         sig = inspect.signature(mcp_server.switch_model.fn)
@@ -169,7 +169,7 @@ class TestMCPToolResponses:
     @pytest.mark.asyncio
     async def test_health_returns_string(self):
         """health() should return a string."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.health.fn()
 
@@ -179,7 +179,7 @@ class TestMCPToolResponses:
     @pytest.mark.asyncio
     async def test_models_returns_string(self):
         """models() should return a string."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.models.fn()
 
@@ -189,7 +189,7 @@ class TestMCPToolResponses:
     @pytest.mark.asyncio
     async def test_queue_status_returns_string(self):
         """queue_status() should return a string."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.queue_status.fn()
 
@@ -199,7 +199,7 @@ class TestMCPToolResponses:
     @pytest.mark.asyncio
     async def test_get_model_info_returns_string(self):
         """get_model_info_tool() should return a string."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.get_model_info_tool.fn(model_name="llama-3-8b")
 
@@ -224,12 +224,12 @@ class TestMCPHTTPProtocol:
             "routing": {"prefer_local": True}
         }
         # Need to create in project root
-        import paths
+        from delia import paths
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
 
         proc = subprocess.Popen(
-            ["uv", "run", "python", "-m", "mcp_server", "--transport", "http", "--port", "18770"],
+            ["uv", "run", "python", "-m", "delia.mcp_server", "--transport", "http", "--port", "18770"],
             cwd="/home/dan/git/delia",
             env=env,
             stdout=subprocess.PIPE,
@@ -338,7 +338,7 @@ class TestMCPToolCallFlow:
     @pytest.mark.asyncio
     async def test_delegate_flow(self):
         """Test complete delegate tool call flow."""
-        import mcp_server
+        from delia import mcp_server
 
         # Simulate MCP tool call
         result = await mcp_server.delegate.fn(
@@ -353,7 +353,7 @@ class TestMCPToolCallFlow:
     @pytest.mark.asyncio
     async def test_think_flow(self):
         """Test complete think tool call flow."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.think.fn(
             problem="What is 2 + 2?",
@@ -366,7 +366,7 @@ class TestMCPToolCallFlow:
     @pytest.mark.asyncio
     async def test_batch_flow(self):
         """Test complete batch tool call flow."""
-        import mcp_server
+        from delia import mcp_server
 
         tasks = json.dumps([
             {"task": "quick", "content": "What is Python?"},
@@ -385,7 +385,7 @@ class TestMCPErrorHandling:
     @pytest.mark.asyncio
     async def test_invalid_task_handled(self):
         """Invalid task should return error, not crash."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.delegate.fn(
             task="",  # Empty task
@@ -398,7 +398,7 @@ class TestMCPErrorHandling:
     @pytest.mark.asyncio
     async def test_invalid_json_batch_handled(self):
         """Invalid JSON in batch should return error."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.batch.fn(tasks="not valid json")
 
@@ -412,7 +412,7 @@ class TestMCPTransportCompatibility:
 
     def test_mcp_supports_stdio(self):
         """MCP should support stdio transport."""
-        import mcp_server
+        from delia import mcp_server
 
         # FastMCP's run method should accept stdio
         mcp = mcp_server.mcp
@@ -420,13 +420,13 @@ class TestMCPTransportCompatibility:
 
     def test_mcp_supports_http(self):
         """MCP should support http transport."""
-        import mcp_server
+        from delia import mcp_server
         mcp = mcp_server.mcp
         assert mcp is not None
 
     def test_mcp_supports_sse(self):
         """MCP should support sse transport."""
-        import mcp_server
+        from delia import mcp_server
         mcp = mcp_server.mcp
         assert mcp is not None
 

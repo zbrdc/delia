@@ -34,7 +34,7 @@ def setup_test_environment(tmp_path):
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
     # Clear cached modules
-    modules_to_clear = ["paths", "config", "backend_manager", "mcp_server", "multi_user_tracking", "auth"]
+    modules_to_clear = ["delia.paths", "delia.config", "delia.backend_manager", "delia.mcp_server", "delia.multi_user_tracking", "delia.auth", "delia"]
     for mod in list(sys.modules.keys()):
         if any(mod.startswith(m) or mod == m for m in modules_to_clear):
             del sys.modules[mod]
@@ -72,7 +72,7 @@ class TestBatchFunction:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -80,7 +80,7 @@ class TestBatchFunction:
     @pytest.mark.asyncio
     async def test_batch_parses_json_tasks(self):
         """batch() should parse JSON task array."""
-        import mcp_server
+        from delia import mcp_server
 
         # Mock the actual LLM call to avoid needing a real backend
         with patch.object(mcp_server, 'execute_delegate_call', new_callable=AsyncMock) as mock_execute:
@@ -100,7 +100,7 @@ class TestBatchFunction:
     @pytest.mark.asyncio
     async def test_batch_rejects_invalid_json(self):
         """batch() should handle invalid JSON gracefully."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.batch.fn(tasks="not valid json")
 
@@ -109,7 +109,7 @@ class TestBatchFunction:
     @pytest.mark.asyncio
     async def test_batch_rejects_non_array(self):
         """batch() should reject non-array JSON."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.batch.fn(tasks='{"task": "summarize"}')
 
@@ -139,7 +139,7 @@ class TestHealthFunction:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -147,7 +147,7 @@ class TestHealthFunction:
     @pytest.mark.asyncio
     async def test_health_returns_status(self):
         """health() should return backend status."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.health.fn()
@@ -159,7 +159,7 @@ class TestHealthFunction:
     @pytest.mark.asyncio
     async def test_health_includes_usage_stats(self):
         """health() should include usage statistics."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.health.fn()
@@ -180,7 +180,7 @@ class TestQueueStatusFunction:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -188,7 +188,7 @@ class TestQueueStatusFunction:
     @pytest.mark.asyncio
     async def test_queue_status_returns_info(self):
         """queue_status() should return queue information."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.queue_status.fn()
 
@@ -229,7 +229,7 @@ class TestModelsFunction:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -237,7 +237,7 @@ class TestModelsFunction:
     @pytest.mark.asyncio
     async def test_models_lists_backends(self):
         """models() should list configured models."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.models.fn()
@@ -281,7 +281,7 @@ class TestSwitchBackendFunction:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -289,7 +289,7 @@ class TestSwitchBackendFunction:
     @pytest.mark.asyncio
     async def test_switch_backend_valid(self):
         """switch_backend() should switch to valid backend."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.switch_backend.fn(backend_id="backend-b")
@@ -301,7 +301,7 @@ class TestSwitchBackendFunction:
     @pytest.mark.asyncio
     async def test_switch_backend_invalid(self):
         """switch_backend() should handle invalid backend ID."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.switch_backend.fn(backend_id="nonexistent")
@@ -334,7 +334,7 @@ class TestSwitchModelFunction:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -342,7 +342,7 @@ class TestSwitchModelFunction:
     @pytest.mark.asyncio
     async def test_switch_model_valid_tier(self):
         """switch_model() should update model for valid tier."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.switch_model.fn(tier="quick", model_name="phi3")
@@ -353,7 +353,7 @@ class TestSwitchModelFunction:
     @pytest.mark.asyncio
     async def test_switch_model_invalid_tier(self):
         """switch_model() should reject invalid tier."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         result = await mcp_server.switch_model.fn(tier="invalid_tier", model_name="llama3")
@@ -375,7 +375,7 @@ class TestGetModelInfoFunction:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -383,7 +383,7 @@ class TestGetModelInfoFunction:
     @pytest.mark.asyncio
     async def test_get_model_info_known_model(self):
         """get_model_info_tool() should return info for known model."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.get_model_info_tool.fn(model_name="llama-3-70b")
 
@@ -395,7 +395,7 @@ class TestGetModelInfoFunction:
     @pytest.mark.asyncio
     async def test_get_model_info_coder_model(self):
         """get_model_info_tool() should detect coder models."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.get_model_info_tool.fn(model_name="deepseek-coder-33b")
 
@@ -406,7 +406,7 @@ class TestGetModelInfoFunction:
     @pytest.mark.asyncio
     async def test_get_model_info_moe_model(self):
         """get_model_info_tool() should detect MoE models."""
-        import mcp_server
+        from delia import mcp_server
 
         result = await mcp_server.get_model_info_tool.fn(model_name="mixtral-8x7b")
 
@@ -442,7 +442,7 @@ class TestDelegateModelSelection:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -450,7 +450,7 @@ class TestDelegateModelSelection:
     @pytest.mark.asyncio
     async def test_delegate_with_model_override(self):
         """delegate() should respect explicit model override."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         # Mock to avoid actual LLM call
@@ -495,7 +495,7 @@ class TestThinkDepthLevels:
             "routing": {"prefer_local": True}
         }
 
-        import paths
+        from delia import paths
         paths.ensure_directories()
         with open(paths.SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
@@ -503,7 +503,7 @@ class TestThinkDepthLevels:
     @pytest.mark.asyncio
     async def test_think_quick_depth(self):
         """think() with quick depth should work."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         with patch.object(mcp_server, 'call_llm', new_callable=AsyncMock) as mock_llm:
@@ -520,7 +520,7 @@ class TestThinkDepthLevels:
     @pytest.mark.asyncio
     async def test_think_deep_depth(self):
         """think() with deep depth should use thinking model."""
-        import mcp_server
+        from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
         with patch.object(mcp_server, 'call_llm', new_callable=AsyncMock) as mock_llm:

@@ -33,11 +33,13 @@ from pathlib import Path
 from typing import Optional, Tuple
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import context variables and mock implementations
-from mcp_server import current_client_id, current_username
+from delia.mcp_server import current_client_id, current_username
 
 
 # Mock _delegate_impl to capture context during execution
@@ -74,6 +76,7 @@ async def mock_delegate_impl(
     return f"Task {task} completed"
 
 
+@pytest.mark.asyncio
 async def test_context_propagation_single_task():
     """Test that context is available in a single batch task."""
     print("\n=== Test 1: Context Propagation - Single Task ===")
@@ -109,6 +112,7 @@ async def test_context_propagation_single_task():
     print("✓ Single task captured correct context")
 
 
+@pytest.mark.asyncio
 async def test_context_propagation_batch_tasks():
     """Test that context propagates to all tasks in a batch."""
     print("\n=== Test 2: Context Propagation - Batch Tasks ===")
@@ -162,6 +166,7 @@ async def test_context_propagation_batch_tasks():
     print(f"✓ All {len(results)} batch tasks captured correct context")
 
 
+@pytest.mark.asyncio
 async def test_concurrent_batches_isolated():
     """Test that concurrent batches don't mix user contexts."""
     print("\n=== Test 3: Concurrent Batches - Context Isolation ===")
@@ -228,6 +233,7 @@ async def test_concurrent_batches_isolated():
     print("✓ All concurrent batches maintained context isolation")
 
 
+@pytest.mark.asyncio
 async def test_context_with_none_values():
     """Test that None context values are properly propagated."""
     print("\n=== Test 4: Context Propagation - None Values ===")
@@ -260,6 +266,7 @@ async def test_context_with_none_values():
     print("✓ None context values properly propagated")
 
 
+@pytest.mark.asyncio
 async def test_nested_batch_operations():
     """Test context propagation in nested batch-like operations."""
     print("\n=== Test 5: Nested Batch Operations ===")
@@ -318,6 +325,7 @@ async def test_nested_batch_operations():
     print("✓ Nested batch operations maintained context throughout")
 
 
+@pytest.mark.asyncio
 async def test_context_error_handling():
     """Test context is maintained even when tasks raise errors."""
     print("\n=== Test 6: Context in Error Scenarios ===")

@@ -33,7 +33,7 @@ def setup_test_environment(tmp_path):
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
     # Clear cached modules
-    modules_to_clear = ["paths", "config", "mcp_server", "backend_manager", "multi_user_tracking"]
+    modules_to_clear = ["delia.paths", "delia.config", "delia.mcp_server", "delia.backend_manager", "delia.multi_user_tracking", "delia"]
     for mod in list(sys.modules.keys()):
         if any(mod.startswith(m) or mod == m for m in modules_to_clear):
             del sys.modules[mod]
@@ -48,10 +48,10 @@ class TestUsageStats:
 
     def test_model_usage_initialized(self):
         """MODEL_USAGE should be initialized with all tiers."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         assert hasattr(mcp_server, 'MODEL_USAGE')
         assert "quick" in mcp_server.MODEL_USAGE
@@ -60,10 +60,10 @@ class TestUsageStats:
 
     def test_model_usage_has_counters(self):
         """MODEL_USAGE should have calls and tokens counters."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         for tier in ["quick", "coder", "moe"]:
             assert "calls" in mcp_server.MODEL_USAGE[tier]
@@ -71,10 +71,10 @@ class TestUsageStats:
 
     def test_task_stats_initialized(self):
         """TASK_STATS should be initialized."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         assert hasattr(mcp_server, 'TASK_STATS')
         assert isinstance(mcp_server.TASK_STATS, dict)
@@ -85,10 +85,10 @@ class TestStatsLoadSave:
 
     def test_save_usage_stats_creates_file(self):
         """save_usage_stats() should create stats file."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         # Add some data
         mcp_server.MODEL_USAGE["quick"]["calls"] = 10
@@ -100,10 +100,10 @@ class TestStatsLoadSave:
 
     def test_save_usage_stats_content(self):
         """save_usage_stats() should save correct content."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         mcp_server.MODEL_USAGE["coder"]["calls"] = 25
         mcp_server.MODEL_USAGE["coder"]["tokens"] = 15000
@@ -118,7 +118,7 @@ class TestStatsLoadSave:
 
     def test_load_usage_stats(self):
         """load_usage_stats() should load from disk."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         # Create stats file manually
@@ -132,7 +132,7 @@ class TestStatsLoadSave:
         with open(paths.STATS_FILE, "w") as f:
             json.dump(stats_data, f)
 
-        import mcp_server
+        from delia import mcp_server
         # Reset stats before loading to avoid accumulation
         mcp_server.MODEL_USAGE = {
             "quick": {"calls": 0, "tokens": 0},
@@ -148,14 +148,14 @@ class TestStatsLoadSave:
 
     def test_load_usage_stats_missing_file(self):
         """load_usage_stats() should handle missing file gracefully."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         # Ensure no stats file
         if paths.STATS_FILE.exists():
             paths.STATS_FILE.unlink()
 
-        import mcp_server
+        from delia import mcp_server
         # Should not raise
         mcp_server.load_usage_stats()
 
@@ -168,28 +168,28 @@ class TestEnhancedStats:
 
     def test_recent_calls_exists(self):
         """RECENT_CALLS should be available."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         assert hasattr(mcp_server, 'RECENT_CALLS')
 
     def test_response_times_exists(self):
         """RESPONSE_TIMES should be available."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         assert hasattr(mcp_server, 'RESPONSE_TIMES')
 
     def test_save_enhanced_stats(self):
         """save_enhanced_stats() should save to disk."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         # Add some enhanced data
         mcp_server.TASK_STATS["summarize"] = 15
@@ -205,19 +205,19 @@ class TestLiveLogs:
 
     def test_live_logs_exists(self):
         """LIVE_LOGS should be available."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         assert hasattr(mcp_server, 'LIVE_LOGS')
 
     def test_save_live_logs(self):
         """Live logs should be saveable."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         # Add a log entry if the list exists
         if hasattr(mcp_server, 'LIVE_LOGS') and isinstance(mcp_server.LIVE_LOGS, list):
@@ -237,10 +237,10 @@ class TestCircuitBreakerStats:
 
     def test_save_circuit_breaker_stats(self):
         """save_circuit_breaker_stats() should save backend health."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         if hasattr(mcp_server, 'save_circuit_breaker_stats'):
             mcp_server.save_circuit_breaker_stats()
@@ -256,10 +256,10 @@ class TestStatsSnapshot:
 
     def test_snapshot_stats_function(self):
         """_snapshot_stats() should return deep copy of stats."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         if hasattr(mcp_server, '_snapshot_stats'):
             snapshot = mcp_server._snapshot_stats()
@@ -285,10 +285,10 @@ class TestAsyncStatsSave:
     @pytest.mark.asyncio
     async def test_save_all_stats_async(self):
         """save_all_stats_async() should save all stats."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         if hasattr(mcp_server, 'save_all_stats_async'):
             await mcp_server.save_all_stats_async()
@@ -307,7 +307,7 @@ class TestLegacyStatsMigration:
 
     def test_legacy_tier_names_migrated(self):
         """load_usage_stats() should migrate old tier names."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         # Create stats with old tier names
@@ -319,7 +319,7 @@ class TestLegacyStatsMigration:
         with open(paths.STATS_FILE, "w") as f:
             json.dump(legacy_stats, f)
 
-        import mcp_server
+        from delia import mcp_server
         mcp_server.load_usage_stats()
 
         # Should have migrated to new names
@@ -332,28 +332,28 @@ class TestStatsFilePaths:
 
     def test_stats_file_in_cache_dir(self):
         """STATS_FILE should be in CACHE_DIR."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         assert paths.STATS_FILE.parent == paths.CACHE_DIR
 
     def test_enhanced_stats_file_in_cache_dir(self):
         """ENHANCED_STATS_FILE should be in CACHE_DIR."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         assert paths.ENHANCED_STATS_FILE.parent == paths.CACHE_DIR
 
     def test_live_logs_file_in_cache_dir(self):
         """LIVE_LOGS_FILE should be in CACHE_DIR."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         assert paths.LIVE_LOGS_FILE.parent == paths.CACHE_DIR
 
     def test_circuit_breaker_file_in_cache_dir(self):
         """CIRCUIT_BREAKER_FILE should be in CACHE_DIR."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
         assert paths.CIRCUIT_BREAKER_FILE.parent == paths.CACHE_DIR
@@ -364,10 +364,10 @@ class TestAtomicWrites:
 
     def test_save_uses_temp_file(self):
         """Stats saving should use temp file for atomic writes."""
-        import paths
+        from delia import paths
         paths.ensure_directories()
 
-        import mcp_server
+        from delia import mcp_server
 
         # Save stats
         mcp_server.save_usage_stats()

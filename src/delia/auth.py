@@ -33,7 +33,7 @@ from pathlib import Path
 
 from fastapi import Depends, Request
 
-import paths
+from . import paths
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import (
     AuthenticationBackend,

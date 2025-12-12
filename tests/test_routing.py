@@ -16,8 +16,8 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-import config
-from backend_manager import BackendConfig
+from delia import config
+from delia.backend_manager import BackendConfig
 
 
 class TestRouting:
@@ -43,9 +43,9 @@ class TestRouting:
     @pytest.mark.asyncio
     async def test_select_model_defaults(self):
         """Test default model selection."""
-        from mcp_server import select_model
+        from delia.mcp_server import select_model
 
-        with patch("mcp_server.backend_manager") as mock_manager:
+        with patch("delia.mcp_server.backend_manager") as mock_manager:
             mock_manager.get_active_backend.return_value = self.mock_backend
 
             # Simple task -> quick
@@ -59,9 +59,9 @@ class TestRouting:
     @pytest.mark.asyncio
     async def test_select_model_tasks(self):
         """Test task-based routing."""
-        from mcp_server import select_model
+        from delia.mcp_server import select_model
 
-        with patch("mcp_server.backend_manager") as mock_manager:
+        with patch("delia.mcp_server.backend_manager") as mock_manager:
             mock_manager.get_active_backend.return_value = self.mock_backend
 
             # Plan -> moe
@@ -91,9 +91,9 @@ class Test:
     @pytest.mark.asyncio
     async def test_select_model_override(self):
         """Test explicit model overrides."""
-        from mcp_server import select_model
+        from delia.mcp_server import select_model
 
-        with patch("mcp_server.backend_manager") as mock_manager:
+        with patch("delia.mcp_server.backend_manager") as mock_manager:
             mock_manager.get_active_backend.return_value = self.mock_backend
 
             # Override with "moe"
@@ -110,7 +110,7 @@ class Test:
 
     def test_detect_model_tier(self):
         """Test model tier detection."""
-        from mcp_server import detect_model_tier
+        from delia.mcp_server import detect_model_tier
 
         # Known models
         known = {
@@ -133,7 +133,7 @@ class TestCircuitBreaker:
     """Test circuit breaker logic."""
 
     def test_circuit_breaker_logic(self):
-        from config import BackendHealth
+        from delia.config import BackendHealth
         import time
 
         health = BackendHealth("test")
