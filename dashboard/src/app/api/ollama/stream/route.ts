@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
       const response = await fetch(`${OLLAMA_BASE}/api/ps`)
       const data = await response.json()
       return Response.json(data)
-    } catch (error) {
+    } catch {
       return Response.json({ error: "Failed to connect to Ollama", models: [] }, { status: 500 })
     }
   }

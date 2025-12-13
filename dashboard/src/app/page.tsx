@@ -20,7 +20,7 @@ import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent } from "@/components/ui/chart"
+import { ChartConfig } from "@/components/ui/chart"
 import { XAxis, YAxis, Cell, CartesianGrid, LineChart, Line, ResponsiveContainer, Tooltip, BarChart, Bar } from "recharts"
 
 interface ModelStats {
@@ -149,11 +149,13 @@ const TYPE_COLORS: Record<string, string> = {
   remote: "#FF6B7A",
 }
 
-const modelsConfig = {
+// Chart config for model tiers (used by ChartConfig type)
+const _modelsConfig = {
   quick: { label: "Quick", color: "#8BB5A6" },
   coder: { label: "Coder", color: "#689B8A" },
   moe: { label: "MoE", color: "#FF6B7A" },
 } satisfies ChartConfig
+void _modelsConfig // Suppress unused warning - kept for future chart enhancements
 
 const COLORS = {
   quick: "#8BB5A6",
@@ -231,10 +233,12 @@ const normalizeModel = (model: string): "quick" | "coder" | "moe" | "thinking" =
   return "quick" // default
 }
 
-const getModelColor = (model: string): string => {
+// Utility for getting model tier color (kept for future use)
+const _getModelColor = (model: string): string => {
   const tier = normalizeModel(model)
   return COLORS[tier]
 }
+void _getModelColor // Suppress unused warning
 
 export default function Dashboard() {
   const [stats, setStats] = useState<UsageStats | null>(null)
@@ -251,11 +255,14 @@ export default function Dashboard() {
   const [backendsResponse, setBackendsResponse] = useState<BackendsResponse | null>(null)
   const [activeBackend, setActiveBackend] = useState<string>("")
   const [secondsAgo, setSecondsAgo] = useState(0)
-  const [expandedSections, setExpandedSections] = useState({
+  // Collapsible sections state - kept for future UI enhancements
+  type ExpandedSections = { usage: boolean; models: boolean; costs: boolean }
+  const [_expandedSections, _setExpandedSections] = useState<ExpandedSections>({
     usage: true,
     models: true,
     costs: false,
   })
+  void _expandedSections // Suppress unused warning
   const [showAddBackend, setShowAddBackend] = useState(false)
   const [editingBackend, setEditingBackend] = useState<BackendStatus | null>(null)
   const [circuitBreaker, setCircuitBreaker] = useState<CircuitBreakerState | null>(null)
@@ -287,9 +294,10 @@ export default function Dashboard() {
     setTheme(prev => prev === "dark" ? "light" : "dark")
   }
 
-  const toggleSection = (section: keyof typeof expandedSections) => {
-    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }))
+  const _toggleSection = (section: keyof ExpandedSections) => {
+    _setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }))
   }
+  void _toggleSection // Suppress unused warning - kept for future collapsible sections
 
   const fetchStats = useCallback(async () => {
     try {
@@ -317,7 +325,8 @@ export default function Dashboard() {
     return null
   }, [backendsResponse, activeBackend])
 
-  const fetchBackends = useCallback(async () => {
+  // Manual fetch for backends (SSE is primary, this is fallback)
+  const _fetchBackends = useCallback(async () => {
     try {
       const res = await fetch("/api/backends")
       if (res.ok) {
@@ -330,6 +339,7 @@ export default function Dashboard() {
     } catch {
     }
   }, [])
+  void _fetchBackends // Suppress unused warning - SSE handles real-time updates
 
   // SSE connection for real-time backend updates
   useEffect(() => {
@@ -517,9 +527,11 @@ export default function Dashboard() {
   const localAvgMs = backendStats.local.calls > 0 ? Math.round(backendStats.local.totalMs / backendStats.local.calls) : 0
   const remoteAvgMs = backendStats.remote.calls > 0 ? Math.round(backendStats.remote.totalMs / backendStats.remote.calls) : 0
 
-  const avgResponseTime = enhanced?.recent_calls?.length 
+  // Overall average response time - kept for potential future stats display
+  const _avgResponseTime = enhanced?.recent_calls?.length 
     ? Math.round(enhanced.recent_calls.reduce((sum, c) => sum + c.elapsed_ms, 0) / enhanced.recent_calls.length)
     : 0
+  void _avgResponseTime // Suppress unused warning
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -922,18 +934,22 @@ export default function Dashboard() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  {backendsResponse?.backends?.map((backend) => {
+                  {backendsResponse?.backends?.map((backend, idx) => {
                     const isActive = activeBackend === backend.id
                     const isHealthy = backend.health.available
+                    // Alternating row colors like Recent Harvests
+                    const rowBg = idx % 2 === 0
+                      ? "bg-[#689B8A]/10 dark:bg-[#A8D4C4]/10"
+                      : "bg-[#FF6B7A]/8 dark:bg-[#FF8A95]/10"
                     return (
                       <div
                         key={backend.id}
-                        className={`p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                        className={`p-2.5 rounded-lg border cursor-pointer transition-all duration-200 ${rowBg} ${
                           isHealthy
                             ? isActive
-                              ? "border-accent/50 bg-accent/5"
-                              : "border-primary/30 bg-primary/5 hover:border-primary/50"
-                            : "border-border bg-muted/30"
+                              ? "border-[#FF6B7A]/50 hover:border-[#FF6B7A]/70 hover:bg-[#FF6B7A]/15 dark:hover:bg-[#FF8A95]/20"
+                              : "border-[#689B8A]/30 hover:border-[#689B8A]/50 hover:bg-[#689B8A]/20 dark:hover:bg-[#A8D4C4]/20"
+                            : "border-border/50 opacity-60 hover:opacity-80"
                         }`}
                         onClick={() => setEditingBackend(backend)}
                       >

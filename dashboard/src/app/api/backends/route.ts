@@ -58,17 +58,24 @@ interface BackendStatus extends BackendConfig {
 // Full settings structure matches settings.json
 interface SettingsConfig {
   version: string
-  system?: any
+  system?: {
+    gpu_memory_limit_gb?: number
+    memory_buffer_gb?: number
+    max_concurrent_requests_per_backend?: number
+  }
   backends: BackendConfig[]
   routing: {
     prefer_local: boolean
     fallback_enabled: boolean
     load_balance: boolean
   }
-  models?: any
-  generation?: any
-  costs?: any
-  auth?: any
+  models?: Record<string, unknown>
+  generation?: Record<string, unknown>
+  costs?: Record<string, unknown>
+  auth?: {
+    enabled?: boolean
+    tracking_enabled?: boolean
+  }
 }
 
 // Provider-specific health check endpoints
