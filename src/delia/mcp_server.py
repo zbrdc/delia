@@ -125,21 +125,34 @@ from .validation import (
 # Import token counting utilities
 from .tokens import count_tokens, estimate_tokens
 
-# Import provider response models
+# Import provider response models and provider classes
 from .providers import (
+    GeminiProvider,
     LlamaCppChoice,
     LlamaCppError,
     LlamaCppMessage,
+    LlamaCppProvider,
     LlamaCppResponse,
     LlamaCppUsage,
+    OllamaProvider,
     OllamaResponse,
 )
 
 # Import model queue system
 from .queue import ModelQueue, QueuedRequest
 
-# Import routing utilities (content detection)
-from .routing import CODE_INDICATORS, detect_code_content
+# Import routing utilities (content detection, model override parsing)
+from .routing import CODE_INDICATORS, detect_code_content, parse_model_override
+
+# Import language detection (LANGUAGE_CONFIGS, detect_language, get_system_prompt, optimize_prompt)
+# Note: create_enhanced_prompt remains here due to read_file_safe dependency
+from .language import (
+    LANGUAGE_CONFIGS,
+    PYGMENTS_LANGUAGE_MAP,
+    detect_language,
+    get_system_prompt,
+    optimize_prompt,
+)
 
 # Conditional authentication imports (based on config.auth_enabled)
 AUTH_ENABLED = config.auth_enabled
@@ -707,312 +720,9 @@ def get_backend_client(backend_id: str | None = None) -> httpx.AsyncClient | Non
 
 # ============================================================
 # LANGUAGE DETECTION AND SYSTEM PROMPTS
+# (LANGUAGE_CONFIGS, detect_language, get_system_prompt, optimize_prompt
+#  are now imported from .language module)
 # ============================================================
-
-LANGUAGE_CONFIGS = {
-    "pytorch": {
-        "extensions": [".py"],
-        "keywords": ["torch", "nn.Module", "cuda", "tensor", "backward()", "optimizer"],
-        "system_prompt": """Role: Expert PyTorch ML engineer
-Style: Efficient GPU code, proper tensor ops
-Patterns: Training loops, model architecture
-Output: Optimized, trainable models""",
-    },
-    "sklearn": {
-        "extensions": [".py"],
-        "keywords": ["sklearn", "fit(", "predict(", "Pipeline", "cross_val", "train_test_split"],
-        "system_prompt": """Role: Expert ML engineer (scikit-learn)
-Style: Clean pipelines, proper preprocessing
-Patterns: Cross-validation, hyperparameter tuning
-Output: Validated, reproducible ML code""",
-    },
-    "react": {
-        "extensions": [".jsx", ".tsx"],
-        "keywords": ["useState", "useEffect", "import React", "export default", "<div", "className="],
-        "system_prompt": """Role: Expert React developer
-Style: Functional components, hooks, TypeScript
-Patterns: Custom hooks, proper state management
-Output: Type-safe, performant components""",
-    },
-    "react-native": {
-        "extensions": [".jsx", ".tsx"],
-        "keywords": ["react-native", "StyleSheet", "View", "Text", "TouchableOpacity", "Animated"],
-        "system_prompt": """Role: Expert React Native developer
-Style: Mobile-first, platform-aware
-Patterns: Performance optimization, proper styling
-Output: Cross-platform compatible code""",
-    },
-    "nextjs": {
-        "extensions": [".jsx", ".tsx", ".js", ".ts"],
-        "keywords": ["next/", "getServerSideProps", "getStaticProps", "useRouter", "app/page", "layout.tsx"],
-        "system_prompt": """Role: Expert Next.js developer
-Style: App Router, Server Components
-Patterns: RSC, data fetching, caching
-Output: Optimized full-stack code""",
-    },
-    "rust": {
-        "extensions": [".rs"],
-        "keywords": ["fn ", "impl ", "use std::", "println!", "let mut", "struct ", "enum "],
-        "system_prompt": """Role: Expert Rust developer
-Style: Memory-safe, zero-cost abstractions
-Patterns: Ownership, borrowing, lifetimes
-Output: Safe, performant systems code""",
-    },
-    "go": {
-        "extensions": [".go"],
-        "keywords": ["func ", "package ", "import ", "go ", "defer ", "goroutine", "chan "],
-        "system_prompt": """Role: Expert Go developer
-Style: Simple, concurrent, efficient
-Patterns: Goroutines, channels, interfaces
-Output: Scalable, concurrent systems""",
-    },
-    "java": {
-        "extensions": [".java"],
-        "keywords": ["public class", "import java", "System.out", "public static", "ArrayList", "HashMap"],
-        "system_prompt": """Role: Expert Java developer
-Style: OOP, JVM ecosystem
-Patterns: Design patterns, collections, concurrency
-Output: Robust, enterprise-grade applications""",
-    },
-    "cpp": {
-        "extensions": [".cpp", ".cc", ".cxx", ".hpp", ".hxx"],
-        "keywords": ["#include", "std::", "class ", "template", "virtual ", "override", "auto "],
-        "system_prompt": """Role: Expert C++ developer
-Style: Modern C++17/20, RAII, templates
-Patterns: STL, smart pointers, exceptions
-Output: High-performance, memory-efficient code""",
-    },
-    "csharp": {
-        "extensions": [".cs"],
-        "keywords": ["using System", "public class", "Console.Write", "async ", "Task<", "IEnumerable"],
-        "system_prompt": """Role: Expert C# developer
-Style: .NET, LINQ, async/await
-Patterns: Dependency injection, SOLID principles
-Output: Maintainable, scalable applications""",
-    },
-    "nodejs": {
-        "extensions": [".js", ".ts", ".mjs"],
-        "keywords": ["require(", "module.exports", "express", "async/await", "Buffer", "process."],
-        "system_prompt": """Role: Expert Node.js developer
-Style: Async/await, proper error handling
-Patterns: Scalable architecture, streams
-Output: Production-ready backend code""",
-    },
-    "python": {
-        "extensions": [".py", ".pyx", ".pyi"],
-        "keywords": ["def ", "import ", "class ", "async def", "from ", "if __name__"],
-        "system_prompt": """Role: Expert Python developer
-Style: PEP8, type hints, docstrings
-Version: Python 3.10+
-Output: Clean, production-ready code""",
-    },
-}
-
-# Pygments lexer name -> our language key mapping
-PYGMENTS_LANGUAGE_MAP = {
-    "python": "python",
-    "python 3": "python",
-    "python3": "python",
-    "javascript": "nodejs",
-    "typescript": "nodejs",
-    "jsx": "react",
-    "tsx": "react",
-    "go": "go",
-    "rust": "rust",
-    "java": "java",
-    "c": "c",
-    "c++": "cpp",
-    "c#": "csharp",
-    "ruby": "ruby",
-    "php": "php",
-    "swift": "swift",
-    "kotlin": "kotlin",
-    "scala": "scala",
-    "sql": "sql",
-    "bash": "bash",
-    "shell": "bash",
-    "yaml": "yaml",
-    "json": "json",
-    "html": "html",
-    "css": "css",
-}
-
-
-def detect_language(content: str, file_path: str = "") -> str:
-    """
-    Detect programming language/framework from content and file extension.
-
-    Priority:
-    1. Framework keyword detection (React, Next.js, PyTorch, etc. - ≥2 keyword matches)
-    2. Pygments get_lexer_for_filename() when file_path is available
-    3. Simple keyword fallback for content-only detection
-    """
-    content_lower = content.lower()
-
-    # Priority 1: Detect frameworks by keyword density (most specific first)
-    # This catches React, Next.js, PyTorch, etc. which need content analysis
-    for lang, lang_config in LANGUAGE_CONFIGS.items():
-        matches = sum(1 for kw in lang_config["keywords"] if kw.lower() in content_lower)
-        if matches >= 2:
-            log.debug("lang_keyword_detected", language=lang, matches=matches)
-            return lang
-
-    # Priority 2: Use Pygments for reliable extension-based detection
-    if file_path:
-        ext = Path(file_path).suffix
-        if ext:
-            try:
-                # Only pass extension to Pygments (privacy: don't expose full paths)
-                lexer = get_lexer_for_filename(f"file{ext}", content)
-                pygments_name = lexer.name.lower()
-                # Map Pygments name to our language keys
-                if pygments_name in PYGMENTS_LANGUAGE_MAP:
-                    detected = PYGMENTS_LANGUAGE_MAP[pygments_name]
-                    log.debug("lang_pygments_extension", pygments_name=pygments_name, detected=detected)
-                    return detected
-                # Direct name matching for common languages
-                for our_lang in [
-                    "python",
-                    "go",
-                    "rust",
-                    "java",
-                    "cpp",
-                    "csharp",
-                    "ruby",
-                    "php",
-                    "swift",
-                    "kotlin",
-                    "scala",
-                ]:
-                    if our_lang in pygments_name:
-                        log.debug("lang_pygments_name", pygments_name=pygments_name, our_lang=our_lang)
-                        return our_lang
-                # JavaScript/TypeScript family
-                if "script" in pygments_name or "type" in pygments_name:
-                    log.debug("lang_pygments_script", pygments_name=pygments_name, detected="nodejs")
-                    return "nodejs"
-            except ClassNotFound:
-                pass  # Extension not recognized - fall through to keyword fallback
-            except Exception as e:
-                log.debug("lang_pygments_error", error=str(e))
-
-    # Priority 3: Simple keyword fallback for content-only detection
-    if "fn " in content or "impl " in content or "use std::" in content:
-        return "rust"
-    if "func " in content or "package " in content:
-        return "go"
-    if "public class" in content or "import java" in content:
-        return "java"
-    if "#include" in content or "std::" in content:
-        return "cpp"
-    if "using System" in content or "Console.Write" in content:
-        return "csharp"
-    if "require(" in content or "module.exports" in content:
-        return "nodejs"
-    if "def " in content or "import " in content or "class " in content:
-        return "python"
-    if "function " in content or "const " in content or "let " in content:
-        return "nodejs"
-    if "React" in content or "useState" in content or "jsx" in content_lower:
-        return "react"
-
-    return "python"  # Default fallback
-
-
-def get_system_prompt(language: str, task_type: str) -> str:
-    """Get structured system prompt optimized for LLM-to-LLM communication."""
-    base: str = str(LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["python"])["system_prompt"])
-
-    # Aggressive LLM-to-LLM optimization - eliminate all fluff
-    llm_prefix = """CRITICAL: Your output is consumed by another LLM (Claude/Copilot), NOT a human.
-RULES:
-- NO preamble ("Sure", "I'd be happy to", "Let me", "Here's")
-- NO sign-offs ("Hope this helps", "Let me know", "Feel free to ask")
-- NO filler phrases or pleasantries
-- NO restating the question
-- START with the answer/content directly
-- Be DENSE: every token must add information
-- Use structured format (bullets, numbered lists) for clarity
-"""
-
-    task_instructions = {
-        "review": """
-TASK: CODE REVIEW
-OUTPUT FORMAT:
-[CRITICAL] issue description (if any)
-[MAJOR] issue description (if any)
-[MINOR] issue description (if any)
-[GOOD] positive aspects (brief)
-[SUGGEST] improvements (actionable)""",
-        "generate": """
-TASK: CODE GENERATION
-OUTPUT: Code only. Minimal inline comments. No explanation unless critical.""",
-        "analyze": """
-TASK: ANALYSIS
-OUTPUT FORMAT:
-PURPOSE: one line
-FINDINGS:
-- finding 1
-- finding 2
-RECOMMENDATIONS:
-- recommendation 1""",
-        "summarize": """
-TASK: SUMMARIZE
-OUTPUT: 3-5 bullet points maximum. No introduction.""",
-        "critique": """
-TASK: CRITIQUE
-OUTPUT FORMAT:
-STRENGTHS: bullet list
-WEAKNESSES: bullet list
-PRIORITY FIXES: numbered list""",
-        "plan": """
-TASK: PLANNING
-OUTPUT FORMAT:
-OVERVIEW: one paragraph max
-STEPS:
-1. step
-2. step
-RISKS: bullet list (if any)""",
-        "quick": """
-TASK: QUICK ANSWER
-OUTPUT: Direct answer first. One sentence explanation if needed.""",
-    }
-
-    return llm_prefix + base + task_instructions.get(task_type, "")
-
-
-def optimize_prompt(content: str, task_type: str) -> str:
-    """
-    Strip natural language triggers and structure prompt for LLM consumption.
-
-    Removes conversational phrases and formats for optimal LLM processing.
-    """
-    # Remove trigger phrases (case insensitive)
-    triggers = [
-        r"\s*,?\s*locally\s*$",
-        r"\s*,?\s*ask\s+(ollama|locally|local|coder|moe|qwen)\s*$",
-        r"\s*,?\s*use\s+(ollama|local|coder|moe|quick)\s*$",
-        r"\s*,?\s*on\s+my\s+(gpu|machine|device)\s*$",
-        r"\s*,?\s*(privately|offline)\s*$",
-        r"\s*,?\s*without\s+(api|cloud)\s*$",
-        r"\s*,?\s*via\s+ollama\s*$",
-        r"\s*,?\s*no\s+cloud\s*$",
-        r"^\s*(please|can you|could you|i want you to|i need you to)\s+",
-        r"^\s*(hey|hi|hello),?\s*",
-    ]
-
-    cleaned = content
-    for pattern in triggers:
-        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
-
-    cleaned = cleaned.strip()
-
-    # For certain tasks, add structure if not already present
-    # Ensure questions have question marks
-    if task_type == "quick" and "?" not in cleaned and cleaned and not cleaned.endswith("."):
-        cleaned = cleaned.rstrip(".,!;") + "?"
-
-    return cleaned
 
 
 def create_enhanced_prompt(
@@ -1177,53 +887,7 @@ def get_model_info(model_name: str) -> dict:
     return {"vram_gb": vram_gb, "context_tokens": context_tokens, "tier": "unknown"}
 
 
-def parse_model_override(model_hint: str | None, content: str) -> str | None:
-    """Parse explicit model request from content or hint.
 
-    Recognizes tier keywords (moe, coder, quick, thinking) and natural language model references.
-    Supports size-based hints (7b, 14b, 30b), capability hints (coder, reasoning), and descriptive terms.
-    """
-    # Check explicit hint first (tier names and natural language)
-    if model_hint:
-        hint = model_hint.lower().strip()
-
-        # Direct tier names
-        if "moe" in hint or "30b" in hint or "large" in hint or "complex" in hint or "reasoning" in hint:
-            return "moe"
-        if "coder" in hint or "code" in hint or "programming" in hint or "14b" in hint:
-            return "coder"
-        if "quick" in hint or "7b" in hint or "small" in hint or "fast" in hint:
-            return "quick"
-        if "thinking" in hint or "think" in hint or "chain" in hint:
-            return "thinking"
-
-        # Pass through other hints as-is (might be specific model name)
-        return model_hint
-
-    # Scan content for tier keywords and natural language using word boundaries
-    if content:
-        content_lower = content.lower()
-
-        # Size and capability-based patterns
-        if re.search(r"\b(30b|large|big|complex|reasoning|deep|planning|critique)\b", content_lower) or re.search(
-            r"\bmoe\b", content_lower
-        ):
-            log.info("model_override_detected", tier="moe", source="content", pattern="size/capability")
-            return "moe"
-
-        if re.search(r"\b(14b|coder|code|programming|development|review|analyze)\b", content_lower):
-            log.info("model_override_detected", tier="coder", source="content", pattern="size/capability")
-            return "coder"
-
-        if re.search(r"\b(7b|small|fast|quick|simple|basic|summarize)\b", content_lower):
-            log.info("model_override_detected", tier="quick", source="content", pattern="size/capability")
-            return "quick"
-
-        if re.search(r"\b(thinking|think|chain|reason|step.*by.*step)\b", content_lower):
-            log.info("model_override_detected", tier="thinking", source="content", pattern="capability")
-            return "thinking"
-
-    return None
 
 
 async def select_model(
@@ -1387,216 +1051,68 @@ def log_thinking_and_response(response_text: str, model_tier: str, tokens: int) 
     )
 
 
-# Retry decorator for transient failures (connection issues, timeouts on model load)
-def _should_retry_ollama(exception: BaseException) -> bool:
-    """Determine if Ollama call should be retried."""
-    if isinstance(exception, httpx.ConnectError):
-        return True  # Retry connection issues
-    if isinstance(exception, httpx.TimeoutException):
-        return False  # Don't retry timeouts (model loading can take long)
-    return False
+# ============================================================
+# PROVIDER FACTORY (lazy initialization)
+# ============================================================
+
+# Cache for provider instances (created lazily on first use)
+_provider_cache: dict[str, OllamaProvider | LlamaCppProvider | GeminiProvider] = {}
+
+# Provider name to class mapping (includes aliases)
+_PROVIDER_CLASS_MAP: dict[str, type[OllamaProvider | LlamaCppProvider | GeminiProvider]] = {
+    "ollama": OllamaProvider,
+    "llamacpp": LlamaCppProvider,
+    "llama.cpp": LlamaCppProvider,
+    "lmstudio": LlamaCppProvider,
+    "vllm": LlamaCppProvider,
+    "openai": LlamaCppProvider,
+    "custom": LlamaCppProvider,
+    "gemini": GeminiProvider,
+}
 
 
-async def call_ollama(
-    model: str,
-    prompt: str,
-    system: str | None = None,
-    enable_thinking: bool = False,
-    task_type: str = "unknown",
-    original_task: str = "unknown",
-    language: str = "unknown",
-    content_preview: str = "",
-    backend_obj: BackendConfig | None = None,
-    max_tokens: int | None = None,
-) -> dict:
-    """Call Ollama API with Pydantic validation, retry logic, and circuit breaker."""
-    start_time = time.time()
+def _save_stats_background() -> None:
+    """Schedule stats saving as a background task (non-blocking)."""
+    _schedule_background_task(save_all_stats_async())
 
-    # Resolve backend
-    if not backend_obj:
-        # Find first enabled Ollama backend
-        for b in backend_manager.get_enabled_backends():
-            if b.provider == "ollama":
-                backend_obj = b
-                break
 
-    if not backend_obj:
-        return {"success": False, "error": "No enabled Ollama backend found"}
+def _get_provider(provider_name: str) -> OllamaProvider | LlamaCppProvider | GeminiProvider | None:
+    """Get or create a provider instance for the given provider name.
 
-    # Circuit breaker check
-    health = get_backend_health(backend_obj.id)
-    if not health.is_available():
-        wait_time = health.time_until_available()
-        log.warning("circuit_open", backend=backend_obj.id, wait_seconds=round(wait_time, 1))
-        return {
-            "success": False,
-            "error": f"Ollama circuit breaker open. Too many failures. Retry in {wait_time:.0f}s.",
-            "circuit_breaker": True,
-        }
+    Uses lazy initialization - providers are created on first use and cached.
+    This avoids circular dependency issues with _update_stats_sync.
 
-    # Context size check and potential reduction
-    content_size = len(prompt) + len(system or "")
-    should_reduce, recommended_size = health.should_reduce_context(content_size)
-    if should_reduce:
-        log.info(
-            "context_reduction",
-            backend=backend_obj.id,
-            original_kb=content_size // 1024,
-            recommended_kb=recommended_size // 1024,
-        )
-        # Truncate prompt if too large (keep beginning which usually has instructions)
-        if len(prompt) > recommended_size:
-            prompt = prompt[:recommended_size] + "\n\n[Content truncated due to previous timeout]"
+    Args:
+        provider_name: Provider type (ollama, llamacpp, gemini, etc.)
 
-    if enable_thinking and "qwen" in model.lower():
-        prompt = f"/think\n{prompt}"
+    Returns:
+        Provider instance or None if provider not found
+    """
+    if provider_name not in _PROVIDER_CLASS_MAP:
+        return None
 
-    # Auto-select context size based on model tier (uses centralized detection)
-    model_tier = detect_model_tier(model)
-    if model_tier == "moe":
-        num_ctx = config.model_moe.num_ctx
-    elif model_tier == "coder":
-        num_ctx = config.model_coder.num_ctx
-    else:
-        num_ctx = config.model_quick.num_ctx
+    # Return cached instance if available
+    if provider_name in _provider_cache:
+        return _provider_cache[provider_name]
 
-    # Temperature based on thinking mode (from config)
-    temperature = config.temperature_thinking if enable_thinking else config.temperature_normal
-
-    options: dict[str, float | int] = {
-        "temperature": temperature,
-        "num_ctx": num_ctx,
-    }
-    # Add max_tokens limit if specified (Ollama uses num_predict)
-    if max_tokens:
-        options["num_predict"] = max_tokens
-
-    payload: dict[str, Any] = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": options,
-    }
-    if system:
-        payload["system"] = system
-
-    # Get client from backend object
-    client = backend_obj.get_client()
-
-    # Inner function with retry logic
-    @retry(
-        stop=stop_after_attempt(2),
-        wait=wait_exponential(multiplier=1, min=1, max=5),
-        retry=retry_if_exception_type(httpx.ConnectError),
-        reraise=True,
+    # Create new instance with dependencies
+    # Note: save_stats_callback is wrapped to schedule async task properly
+    provider_class = _PROVIDER_CLASS_MAP[provider_name]
+    provider = provider_class(
+        config=config,
+        backend_manager=backend_manager,
+        stats_callback=_update_stats_sync,
+        save_stats_callback=_save_stats_background,
     )
-    async def _make_request():
-        return await client.post("/api/generate", json=payload)
+    _provider_cache[provider_name] = provider
+    return provider
 
-    data: dict[str, Any] = {}
-    try:
-        # Log start of request
-        log.info(
-            get_display_event("model_starting"),
-            log_type="MODEL",
-            model=model,
-            task=task_type,
-            thinking=enable_thinking,
-            backend=backend_obj.name,
-            status_msg=get_tier_message(model_tier, "start"),
-        )
 
-        response = await _make_request()
-        elapsed_ms = int((time.time() - start_time) * 1000)
+# Retry decorator for transient failures (connection issues, timeouts on model load)
 
-        if response.status_code == 200:
-            try:
-                data = response.json()
-                # Validate with Pydantic
-                validated = OllamaResponse.model_validate(data)
-            except json.JSONDecodeError:
-                return {"success": False, "error": "Ollama returned non-JSON response"}
-            except ValidationError as e:
-                log.warning("ollama_validation_failed", error=str(e))
-                # Fall back to raw dict access if validation fails
-                validated = None
 
-            # Use validated data or fall back to raw
-            if validated:
-                tokens = validated.eval_count
-                response_text = validated.response
-            else:
-                tokens = data.get("eval_count", 0)
-                response_text = data.get("response", "")
 
-            # Thread-safe stats update
-            _update_stats_sync(
-                model_tier=model_tier,
-                task_type=task_type,
-                original_task=original_task,
-                tokens=tokens,
-                elapsed_ms=elapsed_ms,
-                content_preview=content_preview,
-                enable_thinking=enable_thinking,
-                backend="ollama",
-            )
 
-            # Log thinking and response using helper
-            log_thinking_and_response(response_text, model_tier, tokens)
-
-            # Log completion
-            log.info(
-                get_display_event("model_completed"),
-                log_type="INFO",
-                elapsed=humanize.naturaldelta(elapsed_ms / 1000),
-                elapsed_ms=elapsed_ms,
-                tokens=humanize.intcomma(tokens),
-                model=model_tier,
-                backend="ollama",
-                status_msg=format_completion_stats(tokens, elapsed_ms, model_tier),
-            )
-
-            # Record success for circuit breaker
-            health.record_success(content_size)
-
-            # Persist stats to disk (async with lock, non-blocking)
-            _schedule_background_task(save_all_stats_async())
-
-            return {
-                "success": True,
-                "response": response_text,
-                "tokens": tokens,
-                "elapsed_ms": elapsed_ms,
-            }
-        # Improved HTTP error handling with more context
-        error_msg = f"Ollama HTTP {response.status_code}"
-        if response.status_code == 404:
-            error_msg += f": Model '{model}' not found. Run: ollama pull {model}"
-        elif response.status_code == 500:
-            error_msg += ": Internal server error. Check Ollama logs."
-        elif response.status_code == 503:
-            error_msg += ": Ollama service unavailable. Is it running?"
-        else:
-            # Truncate long error responses
-            error_text = response.text[:500] if len(response.text) > 500 else response.text
-            error_msg += f": {error_text}"
-        health.record_failure("http_error", content_size)
-        return {"success": False, "error": error_msg}
-    except httpx.TimeoutException:
-        log.error("ollama_timeout", model=model, timeout_seconds=config.ollama_timeout_seconds)
-        health.record_failure("timeout", content_size)
-        return {
-            "success": False,
-            "error": f"Ollama timeout after {config.ollama_timeout_seconds}s. Model may be loading or prompt too large.",
-        }
-    except httpx.ConnectError:
-        log.error("ollama_connection_refused", base_url=backend_obj.url)
-        health.record_failure("connection", content_size)
-        return {"success": False, "error": f"Cannot connect to Ollama at {backend_obj.url}. Is Ollama running?"}
-    except Exception as e:
-        log.error("ollama_error", model=model, error=str(e))
-        health.record_failure("exception", content_size)
-        return {"success": False, "error": f"Ollama error: {e!s}"}
 
 
 # ============================================================
@@ -1604,223 +1120,7 @@ async def call_ollama(
 # ============================================================
 
 
-async def call_llamacpp(
-    model: str,
-    prompt: str,
-    system: str | None = None,
-    enable_thinking: bool = False,
-    task_type: str = "unknown",
-    original_task: str = "unknown",
-    language: str = "unknown",
-    content_preview: str = "",
-    backend_obj: BackendConfig | None = None,
-    max_tokens: int | None = None,
-) -> dict:
-    """Call OpenAI-compatible API (llama.cpp, vLLM, etc.) with Pydantic validation, retry, and circuit breaker."""
-    start_time = time.time()
 
-    # Resolve backend
-    if not backend_obj:
-        # Find first enabled OpenAI-compatible backend
-        for b in backend_manager.get_enabled_backends():
-            if b.provider in ("llamacpp", "lmstudio", "vllm", "openai", "custom"):
-                backend_obj = b
-                break
-
-    if not backend_obj:
-        return {"success": False, "error": "No enabled OpenAI-compatible backend found"}
-
-    # Circuit breaker check
-    health = get_backend_health(backend_obj.id)
-    if not health.is_available():
-        wait_time = health.time_until_available()
-        log.warning("circuit_open", backend=backend_obj.id, wait_seconds=round(wait_time, 1))
-        return {
-            "success": False,
-            "error": f"Backend circuit breaker open. Too many failures. Retry in {wait_time:.0f}s.",
-            "circuit_breaker": True,
-        }
-
-    # Context size check and potential reduction
-    content_size = len(prompt) + len(system or "")
-    should_reduce, recommended_size = health.should_reduce_context(content_size)
-    if should_reduce:
-        log.info(
-            "context_reduction",
-            backend=backend_obj.id,
-            original_kb=content_size // 1024,
-            recommended_kb=recommended_size // 1024,
-        )
-        if len(prompt) > recommended_size:
-            prompt = prompt[:recommended_size] + "\n\n[Content truncated due to previous timeout]"
-
-    # For thinking mode with qwen models, add /think prefix
-    if enable_thinking and "qwen" in model.lower():
-        prompt = f"/think\n{prompt}"
-
-    # Auto-select context size based on model tier
-    model_tier = detect_model_tier(model)
-    if model_tier == "moe":
-        num_ctx = config.model_moe.num_ctx
-    elif model_tier == "coder":
-        num_ctx = config.model_coder.num_ctx
-    else:
-        num_ctx = config.model_quick.num_ctx
-
-    # Temperature based on thinking mode
-    temperature = config.temperature_thinking if enable_thinking else config.temperature_normal
-
-    # Build messages for OpenAI-compatible API
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-
-    # OpenAI-compatible payload
-    # Note: Some backends ignore 'model' in payload if they only host one, but we send it anyway
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens if max_tokens else num_ctx,  # Use explicit limit or context size
-        "stream": False,
-    }
-
-    # Get client
-    client = backend_obj.get_client()
-
-    # Inner function with retry logic
-    @retry(
-        stop=stop_after_attempt(2),
-        wait=wait_exponential(multiplier=1, min=1, max=5),
-        retry=retry_if_exception_type(httpx.ConnectError),
-        reraise=True,
-    )
-    async def _make_request():
-        return await client.post(backend_obj.chat_endpoint, json=payload)
-
-    data: dict[str, Any] = {}
-    try:
-        # Log start of request
-        log.info(
-            get_display_event("model_starting"),
-            log_type="MODEL",
-            backend=backend_obj.name,
-            task=task_type,
-            thinking=enable_thinking,
-            model=model_tier,
-            status_msg=get_tier_message(model_tier, "start"),
-        )
-
-        response = await _make_request()
-        elapsed_ms = int((time.time() - start_time) * 1000)
-
-        if response.status_code == 200:
-            try:
-                data = response.json()
-                # Validate with Pydantic
-                validated = LlamaCppResponse.model_validate(data)
-
-                # Extract from validated model
-                if not validated.choices:
-                    return {"success": False, "error": "Backend returned no choices"}
-
-                response_text = validated.choices[0].message.content
-
-                # Token counting from usage
-                if validated.usage:
-                    tokens = validated.usage.completion_tokens + validated.usage.prompt_tokens
-                else:
-                    # Fallback: use tiktoken for accurate estimation
-                    tokens = count_tokens(response_text)
-
-            except json.JSONDecodeError:
-                return {"success": False, "error": "Backend returned non-JSON response"}
-            except ValidationError as e:
-                log.warning("llamacpp_validation_failed", error=str(e))
-                # Fall back to raw dict access
-                choices = data.get("choices", [])
-                if not choices:
-                    return {"success": False, "error": "Backend returned no choices"}
-                response_text = choices[0].get("message", {}).get("content", "")
-                usage = data.get("usage", {})
-                tokens = usage.get("completion_tokens", 0) + usage.get("prompt_tokens", 0)
-                if tokens == 0:
-                    tokens = count_tokens(response_text)
-
-            # Thread-safe stats update
-            _update_stats_sync(
-                model_tier=model_tier,
-                task_type=task_type,
-                original_task=original_task,
-                tokens=tokens,
-                elapsed_ms=elapsed_ms,
-                content_preview=content_preview,
-                enable_thinking=enable_thinking,
-                backend="llamacpp",
-            )
-
-            # Log thinking and response using helper
-            log_thinking_and_response(response_text, model_tier, tokens)
-
-            # Log completion
-            log.info(
-                get_display_event("model_completed"),
-                log_type="INFO",
-                elapsed=humanize.naturaldelta(elapsed_ms / 1000),
-                elapsed_ms=elapsed_ms,
-                tokens=humanize.intcomma(tokens),
-                model=model_tier,
-                backend="llamacpp",
-                status_msg=format_completion_stats(tokens, elapsed_ms, model_tier),
-            )
-
-            # Record success for circuit breaker
-            health.record_success(content_size)
-
-            # Persist stats to disk
-            _schedule_background_task(save_all_stats_async())
-
-            return {
-                "success": True,
-                "response": response_text,
-                "tokens": tokens,
-                "elapsed_ms": elapsed_ms,
-            }
-        # Improved HTTP error handling with context-specific messages
-        error_msg = f"HTTP {response.status_code}"
-        try:
-            error_data = response.json()
-            if "error" in error_data:
-                try:
-                    err = LlamaCppError.model_validate(error_data["error"])
-                    if err.type == "exceed_context_size_error":
-                        error_msg = f"Context exceeded: {err.n_prompt_tokens} tokens > limit."
-                    else:
-                        error_msg += f": {err.message}"
-                except ValidationError:
-                    err = error_data["error"]
-                    error_msg += f": {err.get('message', str(err))}"
-        except (json.JSONDecodeError, KeyError):
-            error_text = response.text[:500] if len(response.text) > 500 else response.text
-            error_msg += f": {error_text}"
-        health.record_failure("http_error", content_size)
-        return {"success": False, "error": error_msg}
-    except httpx.TimeoutException:
-        log.error("llamacpp_timeout", timeout_seconds=config.llamacpp_timeout_seconds)
-        health.record_failure("timeout", content_size)
-        return {
-            "success": False,
-            "error": f"Timeout after {config.llamacpp_timeout_seconds}s. Model may be loading or prompt too large.",
-        }
-    except httpx.ConnectError:
-        log.error("llamacpp_connection_refused", base_url=backend_obj.url)
-        health.record_failure("connection", content_size)
-        return {"success": False, "error": f"Cannot connect to {backend_obj.url}. Is the server running?"}
-    except Exception as e:
-        log.error("llamacpp_error", error=str(e))
-        health.record_failure("exception", content_size)
-        return {"success": False, "error": f"Error: {e!s}"}
 
 
 # ============================================================
@@ -1828,145 +1128,7 @@ async def call_llamacpp(
 # ============================================================
 
 
-async def call_gemini(
-    model: str,
-    prompt: str,
-    system: str | None = None,
-    enable_thinking: bool = False,
-    task_type: str = "unknown",
-    original_task: str = "unknown",
-    language: str = "unknown",
-    content_preview: str = "",
-    backend_obj: BackendConfig | None = None,
-) -> dict:
-    """Call Google Gemini API with stats tracking and circuit breaker."""
-    start_time = time.time()
 
-    # 1. Dependency Check
-    try:
-        import google.generativeai as genai
-        from google.api_core import exceptions as google_exceptions
-    except ImportError:
-        return {"success": False, "error": "Gemini dependency missing. Please run: uv add google-generativeai"}
-
-    # 2. Resolve Backend
-    if not backend_obj:
-        for b in backend_manager.get_enabled_backends():
-            if b.provider == "gemini":
-                backend_obj = b
-                break
-
-    if not backend_obj:
-        return {"success": False, "error": "No enabled Gemini backend found"}
-
-    # 3. Circuit Breaker Check
-    health = get_backend_health(backend_obj.id)
-    if not health.is_available():
-        wait_time = health.time_until_available()
-        return {
-            "success": False,
-            "error": f"Gemini circuit breaker open. Retry in {wait_time:.0f}s.",
-            "circuit_breaker": True,
-        }
-
-    # 4. Configuration (API Key)
-    import os
-
-    api_key = backend_obj.api_key or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return {"success": False, "error": "Missing GEMINI_API_KEY"}
-
-    genai.configure(api_key=api_key)
-
-    # 5. Model Configuration
-    # Strip tier prefix if present (e.g. "gemini:gemini-2.0-flash" -> "gemini-2.0-flash")
-    model_name = model.split(":")[-1] if ":" in model else model
-    # Default to flash if tier name passed directly
-    if model_name in ["quick", "coder", "moe", "thinking"]:
-        model_name = "gemini-2.0-flash"
-
-    # Generation Config (typed dict for Gemini)
-    generation_config: dict[str, Any] = {
-        "temperature": config.temperature_thinking if enable_thinking else config.temperature_normal,
-    }
-
-    # Add thinking/reasoning config if supported by model and requested
-    # Note: 2.0 Flash Thinking is a separate model, not a param, usually.
-    # If user wants thinking, we might map to a specific thinking model if configured.
-
-    try:
-        log.info(
-            get_display_event("model_starting"),
-            log_type="MODEL",
-            backend="gemini",
-            task=task_type,
-            model=model_name,
-            status_msg="Sending request to Gemini...",
-        )
-
-        # Instantiate model
-        gen_model = genai.GenerativeModel(model_name=model_name, system_instruction=system)
-
-        # Run in thread executor because the SDK is synchronous
-        response = await asyncio.to_thread(
-            gen_model.generate_content,
-            prompt,
-            generation_config=generation_config,  # type: ignore[arg-type]
-        )
-
-        elapsed_ms = int((time.time() - start_time) * 1000)
-
-        # Extract text and usage
-        response_text = response.text
-
-        # Estimate usage (Gemini SDK might not return exact tokens in all responses easily without metadata)
-        # Usage metadata is in response.usage_metadata
-        prompt_tokens = 0
-        completion_tokens = 0
-        if hasattr(response, "usage_metadata"):
-            prompt_tokens = response.usage_metadata.prompt_token_count
-            completion_tokens = response.usage_metadata.candidates_token_count
-
-        total_tokens = prompt_tokens + completion_tokens
-        if total_tokens == 0:
-            total_tokens = count_tokens(prompt) + count_tokens(response_text)
-
-        # Thread-safe stats update
-        _update_stats_sync(
-            model_tier="moe",  # Treat Gemini as MoE/High-end tier for stats
-            task_type=task_type,
-            original_task=original_task,
-            tokens=total_tokens,
-            elapsed_ms=elapsed_ms,
-            content_preview=content_preview,
-            enable_thinking=enable_thinking,
-            backend="gemini",
-        )
-
-        # Log completion
-        log.info(
-            get_display_event("model_completed"),
-            log_type="INFO",
-            elapsed=humanize.naturaldelta(elapsed_ms / 1000),
-            elapsed_ms=elapsed_ms,
-            tokens=humanize.intcomma(total_tokens),
-            model=model_name,
-            backend="gemini",
-            status_msg=format_completion_stats(total_tokens, elapsed_ms, "moe"),
-        )
-
-        health.record_success(len(prompt))
-        _schedule_background_task(save_all_stats_async())
-
-        return {"success": True, "response": response_text, "tokens": total_tokens, "elapsed_ms": elapsed_ms}
-
-    except google_exceptions.ResourceExhausted:
-        health.record_failure("rate_limit", len(prompt))
-        return {"success": False, "error": "Gemini rate limit exceeded (429)."}
-    except Exception as e:
-        log.error("gemini_error", error=str(e))
-        health.record_failure("exception", len(prompt))
-        return {"success": False, "error": f"Gemini error: {e!s}"}
 
 
 async def call_llm(
@@ -2052,49 +1214,25 @@ async def call_llm(
             await model_queue.release_model(model, success=False)
             return {"success": False, "error": "No active backend found"}
 
-        # Dispatch based on provider type
-        # lmstudio uses OpenAI-compatible API, same as llamacpp/vllm
-        if active_backend.provider in ("llama.cpp", "llamacpp", "lmstudio", "vllm", "openai", "custom"):
-            result = await call_llamacpp(
-                model,
-                prompt,
-                system,
-                enable_thinking,
-                task_type,
-                original_task,
-                language,
-                content_preview,
-                backend_obj=active_backend,
-                max_tokens=max_tokens,
-            )
-        elif active_backend.provider == "ollama":
-            result = await call_ollama(
-                model,
-                prompt,
-                system,
-                enable_thinking,
-                task_type,
-                original_task,
-                language,
-                content_preview,
-                backend_obj=active_backend,
-                max_tokens=max_tokens,
-            )
-        elif active_backend.provider == "gemini":
-            result = await call_gemini(
-                model,
-                prompt,
-                system,
-                enable_thinking,
-                task_type,
-                original_task,
-                language,
-                content_preview,
-                backend_obj=active_backend,
-            )
-        else:
+        # Dispatch using provider factory (lazy initialization, cached)
+        provider = _get_provider(active_backend.provider)
+        if not provider:
             await model_queue.release_model(model, success=False)
             return {"success": False, "error": f"Unsupported provider: {active_backend.provider}"}
+
+        response = await provider.call(
+            model=model,
+            prompt=prompt,
+            system=system,
+            enable_thinking=enable_thinking,
+            task_type=task_type,
+            original_task=original_task,
+            language=language,
+            content_preview=content_preview,
+            backend_obj=active_backend,
+            max_tokens=max_tokens,
+        )
+        result = response.to_dict()
 
         # Release model on success
         await model_queue.release_model(model, success=result.get("success", False))
