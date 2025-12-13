@@ -9,14 +9,15 @@ Delia is an MCP (Model Context Protocol) server that routes prompts to local LLM
 ## Build and Development Commands
 
 ```bash
-# Install dependencies
+# Install Delia and dependencies
 uv sync
+uv pip install -e .
 
 # Run the MCP server (STDIO mode - default)
-uv run python src/delia/mcp_server.py
+delia serve
 
 # Run in HTTP/SSE mode
-uv run python src/delia/mcp_server.py --transport sse --port 8200
+delia serve --transport sse --port 8200
 
 # Run all tests
 uv run pytest

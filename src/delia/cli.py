@@ -388,13 +388,13 @@ def generate_client_config(client_id: str, delia_root: Path) -> dict[str, Any]:
         # Use installed command
         server_config = {
             "command": "delia",
-            "args": [],
+            "args": ["serve"],
         }
     else:
         # Run from source with uv
         server_config = {
             "command": "uv",
-            "args": ["run", "--directory", str(delia_root), "delia"],
+            "args": ["run", "--directory", str(delia_root), "python", "-m", "delia.mcp_server"],
         }
 
     return server_config
@@ -791,6 +791,20 @@ def run(
 
 
 @app.command()
+def serve(
+    transport: str = typer.Option("stdio", "--transport", "-t", help="Transport: stdio, sse, http"),
+    port: int = typer.Option(8200, "--port", "-p", help="Port for HTTP/SSE"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host to bind"),
+) -> None:
+    """
+    Start the Delia MCP server (alias for 'run').
+
+    Use this command in MCP client configurations.
+    """
+    run(transport=transport, port=port, host=host)
+
+
+@app.command()
 def config(
     show: bool = typer.Option(False, "--show", "-s", help="Show current configuration"),
     edit: bool = typer.Option(False, "--edit", "-e", help="Open configuration in editor"),
@@ -831,41 +845,101 @@ def config(
 
 @app.command()
 def uninstall(
-    client: str = typer.Argument(..., help="Client to uninstall from"),
+    client: str = typer.Argument(None, help="Client to uninstall from (or 'all' for all clients)"),
+    full: bool = typer.Option(False, "--full", "-f", help="Also uninstall the delia package"),
 ) -> None:
     """
-    Remove Delia from an MCP client's configuration.
+    Remove Delia from MCP client configuration(s).
+
+    Examples:
+        delia uninstall claude      # Remove from Claude Code only
+        delia uninstall all         # Remove from all configured clients
+        delia uninstall all --full  # Remove from all clients AND uninstall package
     """
-    client_lower = client.lower()
-    if client_lower not in MCP_CLIENTS:
-        print_error(f"Unknown client: {client}")
+    clients_to_uninstall: list[tuple[str, dict[str, Any]]] = []
+
+    if client and client.lower() == "all":
+        # Uninstall from all clients
+        clients_to_uninstall = list(MCP_CLIENTS.items())
+    elif client:
+        # Uninstall from specific client
+        client_lower = client.lower()
+        if client_lower not in MCP_CLIENTS:
+            print_error(f"Unknown client: {client}")
+            print_info("Use 'delia install --list' to see available clients")
+            raise typer.Exit(1)
+        clients_to_uninstall = [(client_lower, MCP_CLIENTS[client_lower])]
+    elif full:
+        # --full without client means uninstall from all + package
+        clients_to_uninstall = list(MCP_CLIENTS.items())
+    else:
+        print_error("Please specify a client or use 'all'")
+        print_info("Examples:")
+        print_info("  delia uninstall claude      # Remove from Claude Code")
+        print_info("  delia uninstall all         # Remove from all clients")
+        print_info("  delia uninstall all --full  # Full uninstall")
         raise typer.Exit(1)
 
-    client_info = MCP_CLIENTS[client_lower]
     plat = get_platform()
-    config_path = client_info["paths"].get(plat)
+    removed_count = 0
 
-    if not config_path or not config_path.exists():
-        print_error(f"No configuration found for {client_info['name']}")
-        raise typer.Exit(1)
+    for client_id, client_info in clients_to_uninstall:
+        config_path = client_info["paths"].get(plat)
 
-    try:
-        with open(config_path) as f:
-            config = json.load(f)
+        if not config_path or not config_path.exists():
+            continue
 
-        config_key = client_info["config_key"]
-        if config_key in config and "delia" in config[config_key]:
-            del config[config_key]["delia"]
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
 
-            with open(config_path, "w") as f:
-                json.dump(config, f, indent=2)
+            config_key = client_info["config_key"]
+            if config_key in config and "delia" in config[config_key]:
+                del config[config_key]["delia"]
 
-            print_success(f"Delia removed from {client_info['name']}")
-        else:
-            print_info(f"Delia not configured in {client_info['name']}")
-    except Exception as e:
-        print_error(f"Failed to update configuration: {e}")
-        raise typer.Exit(1) from None
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+
+                print_success(f"Removed from {client_info['name']}")
+                removed_count += 1
+        except Exception as e:
+            print_error(f"Failed to update {client_info['name']}: {e}")
+
+    if removed_count == 0 and not full:
+        print_info("Delia was not configured in any clients")
+
+    # Full uninstall: also remove the package
+    if full:
+        print_header("Uninstalling delia package...")
+
+        try:
+            result = subprocess.run(
+                ["uv", "pip", "uninstall", "delia"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                print_success("Delia package uninstalled")
+            else:
+                # Try pip as fallback
+                result = subprocess.run(
+                    ["pip", "uninstall", "-y", "delia"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    print_success("Delia package uninstalled")
+                else:
+                    print_warning("Package may not have been installed globally")
+        except FileNotFoundError:
+            print_warning("Could not find uv or pip to uninstall package")
+
+        print()
+        print_info("To completely remove Delia, also delete:")
+        print_info(f"  • Data: ~/.cache/delia/")
+        print_info(f"  • Source: {get_delia_root()}")
 
 
 # Default command: run the server if no command specified

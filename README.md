@@ -42,10 +42,13 @@ A Model Context Protocol (MCP) server that cultivates your local LLM garden. Pla
 ### Installation
 
 ```bash
-# Clone and install dependencies
+# Clone the repository
 git clone https://github.com/zbrdc/delia.git
 cd delia
+
+# Install Delia and dependencies
 uv sync
+uv pip install -e .
 
 # Pull at least one model (choose based on your VRAM)
 ollama pull qwen3:14b           # 8GB+ VRAM - general purpose
@@ -56,8 +59,10 @@ ollama pull qwen3:30b-a3b       # 16GB+ VRAM - complex reasoning
 curl http://localhost:11434/api/tags
 
 # Run the setup wizard
-uv run delia init
+delia init
 ```
+
+The `uv pip install -e .` step installs the `delia` command to your PATH. This is required for MCP clients to spawn Delia.
 
 The setup wizard will:
 - Detect available backends (Ollama, llama.cpp, vLLM)
@@ -68,7 +73,7 @@ See [Configuration](#configuration) to customize further.
 
 ## Integration
 
-Delia works with AI coding assistants via MCP. Choose your tool:
+Delia works with AI coding assistants via MCP. The setup wizard (`delia init`) can configure these automatically, or use the examples below.
 
 ### VS Code / GitHub Copilot
 
@@ -77,8 +82,8 @@ Add to `~/.config/Code/User/mcp.json`:
 {
   "servers": {
     "delia": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/delia", "python", "mcp_server.py"],
+      "command": "delia",
+      "args": ["serve"],
       "type": "stdio"
     }
   }
@@ -93,8 +98,8 @@ Create `~/.claude/mcp.json`:
 {
   "mcpServers": {
     "delia": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/delia", "python", "mcp_server.py"]
+      "command": "delia",
+      "args": ["serve"]
     }
   }
 }
@@ -106,7 +111,7 @@ Then run `claude` and use `@delia` to delegate tasks.
 **Option 1: HTTP Mode (Recommended)**
 ```bash
 # Start server
-uv run python mcp_server.py --transport sse --port 8200
+delia serve --transport sse --port 8200
 ```
 
 Add to `~/.gemini/settings.json`:
@@ -128,8 +133,8 @@ Add to `~/.gemini/settings.json`:
 {
   "mcpServers": {
     "delia": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/delia", "python", "mcp_server.py"]
+      "command": "delia",
+      "args": ["serve"]
     }
   }
 }
@@ -142,12 +147,29 @@ Create `~/.copilot-cli/mcp.json`:
 {
   "servers": {
     "delia": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/delia", "python", "mcp_server.py"]
+      "command": "delia",
+      "args": ["serve"]
     }
   }
 }
 ```
+
+### Manual Configuration
+
+If you prefer not to install Delia globally, or encounter `ENOENT` errors, use explicit paths:
+
+```json
+{
+  "mcpServers": {
+    "delia": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/delia", "python", "-m", "delia.mcp_server"]
+    }
+  }
+}
+```
+
+Replace `/path/to/delia` with your actual installation path (e.g., `~/git/delia`).
 
 ## Configuration
 
@@ -247,13 +269,13 @@ Supports username/password and Microsoft 365 OAuth.
 
 ```bash
 # STDIO (default) - for VS Code, Claude Code, Copilot CLI
-uv run python mcp_server.py
+delia serve
 
 # HTTP/SSE - for Gemini CLI, web clients, remote access
-uv run python mcp_server.py --transport sse --port 8200
+delia serve --transport sse --port 8200
 
 # View all options
-uv run python mcp_server.py --help
+delia serve --help
 ```
 
 ## Tools
@@ -293,17 +315,27 @@ Override automatic selection with: `model="quick"`, `model="coder"`, `model="moe
 
 ## Troubleshooting
 
+### "Error spawn delia ENOENT"
+This means the `delia` command isn't in your PATH. Fix with:
+```bash
+cd /path/to/delia
+uv pip install -e .
+```
+Verify installation: `which delia` should return a path.
+
+Alternatively, use the [Manual Configuration](#manual-configuration) approach.
+
 ### Server won't start
 ```bash
 # Check Ollama is running
 curl http://localhost:11434/api/tags
 
 # Test server import
-uv run python -c "import mcp_server; print('OK')"
+delia doctor
 ```
 
 ### MCP not connecting
-- Verify path in config points to correct directory
+- Run `delia doctor` to check configuration
 - Reload VS Code / restart Claude Code
 - Check logs: `~/.cache/delia/live_logs.json`
 
