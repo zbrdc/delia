@@ -3762,7 +3762,7 @@ async def _delegate_impl(
         file_path=file,
         language=language,
         symbols=symbols.split(",") if symbols else None,
-        context_files=None,  # TODO: Parse context parameter for file names if needed
+        context_files=context.split(",") if context else None,
     )
 
     # Detect language and get system prompt
