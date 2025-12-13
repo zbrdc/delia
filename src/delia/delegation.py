@@ -33,6 +33,7 @@ from .config import config
 from .file_helpers import read_files, read_serena_memory
 from .language import detect_language, get_system_prompt
 from .prompt_templates import create_structured_prompt
+from .tokens import count_tokens
 from .validation import (
     VALID_MODELS,
     validate_content,
@@ -454,3 +455,121 @@ async def delegate_impl(
         tier,
         include_metadata=include_metadata,
     )
+
+
+async def get_delegate_signals(
+    ctx: DelegateContext,
+    task: str,
+    content: str,
+    file: str | None = None,
+    model: str | None = None,
+    language: str | None = None,
+    context: str | None = None,
+    symbols: str | None = None,
+    include_references: bool = False,
+    files: str | None = None,
+) -> dict[str, Any]:
+    """Get estimation signals for a delegate request without executing.
+
+    Returns token counts, recommended model/tier, backend availability,
+    and context fit information. Useful for agents to make cost/quality
+    decisions before committing to an LLM call.
+
+    Args:
+        ctx: Delegate context with runtime dependencies
+        task: Task type (review, analyze, generate, etc.)
+        content: Content to process
+        file: Optional file path for context
+        model: Optional model tier override
+        language: Optional language hint
+        context: Comma-separated Serena memory names
+        symbols: Comma-separated symbol names to focus on
+        include_references: If True, indicates references are included
+        files: Comma-separated file paths
+
+    Returns:
+        Dict with estimation signals:
+        - estimated_tokens: Token count for prepared content
+        - recommended_tier: Model tier (quick/coder/moe/thinking)
+        - recommended_model: Specific model name
+        - backend_id: Backend that would be used
+        - backend_available: Whether backend is healthy
+        - context_limit_tokens: Max tokens for recommended tier
+        - content_fits: Whether content fits in context window
+        - detected_language: Detected programming language
+        - task_type: Internal task type mapping
+    """
+    # Validate request
+    valid, error = await validate_delegate_request(task, content, file, model)
+    if not valid:
+        return {"error": error, "valid": False}
+
+    # Prepare content (same as delegate_impl)
+    prepared_content = await prepare_delegate_content(
+        content, context, symbols, include_references, files
+    )
+
+    # Map task to internal type
+    task_type = determine_task_type(task)
+
+    # Create structured prompt (same as delegate_impl)
+    prepared_content = create_structured_prompt(
+        task_type=task_type,
+        content=prepared_content,
+        file_path=file,
+        language=language,
+        symbols=symbols.split(",") if symbols else None,
+        context_files=context.split(",") if context else None,
+    )
+
+    # Detect language
+    detected_language = language or detect_language(prepared_content, file or "")
+
+    # Select model and backend (without executing)
+    selected_model, tier, target_backend = await select_delegate_model(
+        ctx, task_type, prepared_content, model, None, None
+    )
+
+    # Count tokens
+    estimated_tokens = count_tokens(prepared_content)
+
+    # Get context limit for the tier
+    tier_config = {
+        "quick": config.model_quick,
+        "coder": config.model_coder,
+        "moe": config.model_moe,
+        "thinking": config.model_thinking,
+    }.get(tier, config.model_quick)
+
+    context_limit = tier_config.context_tokens
+    max_input_kb = tier_config.max_input_kb
+
+    # Check if content fits (leave room for output)
+    # Use max_input_kb as practical limit, not full context window
+    content_bytes = len(prepared_content.encode("utf-8"))
+    content_fits = content_bytes <= (max_input_kb * 1024)
+
+    # Get backend info
+    backend_id = None
+    backend_available = False
+    if hasattr(target_backend, "id"):
+        backend_id = target_backend.id
+        backend_available = getattr(target_backend, "enabled", True)
+    elif target_backend:
+        backend_id = str(target_backend)
+        backend_available = True
+
+    return {
+        "valid": True,
+        "estimated_tokens": estimated_tokens,
+        "recommended_tier": tier,
+        "recommended_model": selected_model,
+        "backend_id": backend_id,
+        "backend_available": backend_available,
+        "context_limit_tokens": context_limit,
+        "max_input_kb": max_input_kb,
+        "content_fits": content_fits,
+        "content_size_kb": round(content_bytes / 1024, 1),
+        "detected_language": detected_language,
+        "task_type": task_type,
+    }

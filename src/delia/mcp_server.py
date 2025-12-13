@@ -161,6 +161,7 @@ from .delegation import (
     DelegateContext,
     delegate_impl,
     determine_task_type,
+    get_delegate_signals,
     prepare_delegate_content,
     select_delegate_model as _select_delegate_model_impl,
     validate_delegate_request,
@@ -1171,6 +1172,7 @@ async def delegate(
     files: str | None = None,
     include_metadata: bool = True,
     max_tokens: int | None = None,
+    dry_run: bool = False,
 ) -> str:
     """
     Execute a task on local/remote GPU with intelligent 3-tier model selection.
@@ -1198,6 +1200,8 @@ async def delegate(
         files: Comma-separated file paths - Delia reads directly from disk (efficient, no serialization)
         include_metadata: If False, skip the metadata footer (saves ~30 tokens). Default: True
         max_tokens: Limit response length to N tokens (forces concise output). Default: None (unlimited)
+        dry_run: If True, return estimation signals without executing LLM call. Default: False
+            Returns: estimated_tokens, recommended_tier, recommended_model, backend info, context fit
 
     ROUTING LOGIC:
     1. Content > 32K tokens → Uses backend with largest context window
@@ -1207,6 +1211,7 @@ async def delegate(
 
     Returns:
         LLM response optimized for orchestrator processing, with optional metadata footer
+        If dry_run=True: JSON with estimation signals (tokens, tier, model, backend, context fit)
 
     Examples:
         delegate(task="review", content="<code>", language="python")
@@ -1214,7 +1219,26 @@ async def delegate(
         delegate(task="plan", content="Design caching strategy", model="moe")
         delegate(task="review", files="src/main.py,src/utils.py", content="Review these files")
         delegate(task="quick", content="...", max_tokens=500)  # Limit response
+        delegate(task="review", content="<large code>", dry_run=True)  # Get estimates first
     """
+    # Dry run mode: return estimation signals without executing
+    if dry_run:
+        import json
+        ctx = _get_delegate_context()
+        signals = await get_delegate_signals(
+            ctx,
+            task,
+            content,
+            file,
+            model,
+            language,
+            context,
+            symbols,
+            include_references,
+            files,
+        )
+        return json.dumps(signals, indent=2)
+
     # Smart backend selection using backend_manager
     backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
     return await _delegate_impl(

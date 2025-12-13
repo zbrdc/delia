@@ -117,6 +117,115 @@ class TestBatchFunction:
         assert "array" in result.lower() or "error" in result.lower()
 
 
+class TestDryRunFunction:
+    """Test the delegate() dry_run parameter."""
+
+    @pytest.fixture(autouse=True)
+    def setup_environment(self, tmp_path):
+        """Set up test environment."""
+        os.environ["DELIA_DATA_DIR"] = str(tmp_path)
+
+        # Clear cached modules
+        modules_to_clear = ["delia.paths", "delia.config", "delia.mcp_server", "delia.delegation", "delia"]
+        for mod in list(sys.modules.keys()):
+            if any(mod.startswith(m) or mod == m for m in modules_to_clear):
+                del sys.modules[mod]
+
+        from delia import paths
+        paths.ensure_directories()
+
+        settings = {
+            "version": "1.0",
+            "backends": [
+                {
+                    "id": "test-local",
+                    "name": "Test Local",
+                    "provider": "ollama",
+                    "type": "local",
+                    "url": "http://localhost:11434",
+                    "enabled": True,
+                    "priority": 1,
+                    "models": {"quick": "test:7b", "coder": "test:14b", "moe": "test:30b"}
+                }
+            ]
+        }
+        with open(paths.SETTINGS_FILE, "w") as f:
+            json.dump(settings, f)
+
+        yield
+
+        os.environ.pop("DELIA_DATA_DIR", None)
+
+    @pytest.mark.asyncio
+    async def test_dry_run_returns_json(self):
+        """dry_run=True should return JSON with estimation signals."""
+        from delia import mcp_server
+
+        result = await mcp_server.delegate.fn(
+            task="review",
+            content="def hello(): pass",
+            dry_run=True
+        )
+
+        # Should be valid JSON
+        data = json.loads(result)
+        assert isinstance(data, dict)
+
+    @pytest.mark.asyncio
+    async def test_dry_run_contains_required_fields(self):
+        """dry_run should return all required estimation fields."""
+        from delia import mcp_server
+
+        result = await mcp_server.delegate.fn(
+            task="analyze",
+            content="class Foo:\n    def bar(self): pass",
+            language="python",
+            dry_run=True
+        )
+
+        data = json.loads(result)
+
+        # Check required fields
+        assert "valid" in data
+        assert "estimated_tokens" in data
+        assert "recommended_tier" in data
+        assert "recommended_model" in data
+        assert "content_fits" in data
+        assert "task_type" in data
+
+    @pytest.mark.asyncio
+    async def test_dry_run_token_estimation(self):
+        """dry_run should provide reasonable token estimates."""
+        from delia import mcp_server
+
+        content = "x" * 1000  # ~250 tokens
+        result = await mcp_server.delegate.fn(
+            task="quick",
+            content=content,
+            dry_run=True
+        )
+
+        data = json.loads(result)
+
+        # Token count should be reasonable (accounting for prompt template overhead)
+        assert data["estimated_tokens"] > 100
+        assert data["estimated_tokens"] < 5000
+
+    @pytest.mark.asyncio
+    async def test_dry_run_invalid_task(self):
+        """dry_run should report validation errors."""
+        from delia import mcp_server
+
+        result = await mcp_server.delegate.fn(
+            task="invalid_task_type",
+            content="test",
+            dry_run=True
+        )
+
+        data = json.loads(result)
+        assert data.get("valid") is False or "error" in data
+
+
 class TestHealthFunction:
     """Test the health() function."""
 
