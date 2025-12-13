@@ -170,6 +170,15 @@ from .delegation import (
 # Import stats service for usage tracking
 from .stats import StatsService
 
+# Import tools module for agentic capabilities
+from .tools import (
+    AgentConfig,
+    AgentResult,
+    get_default_tools,
+    run_agent_loop,
+    ToolRegistry,
+)
+
 # Conditional authentication imports (based on config.auth_enabled)
 AUTH_ENABLED = config.auth_enabled
 TRACKING_ENABLED = config.tracking_enabled
@@ -1547,6 +1556,155 @@ async def batch(
 
 ---
 _Total tasks: {len(task_list)} | Total time: {elapsed_ms}ms | {routing_info}_"""
+
+
+@mcp.tool()
+async def agent(
+    prompt: str,
+    system_prompt: str | None = None,
+    model: str | None = None,
+    max_iterations: int = 10,
+    tools: str | None = None,
+    backend_type: str | None = None,
+) -> str:
+    """
+    Run an autonomous agent that can use tools to complete tasks.
+    The agent loops: understand task -> call tools -> process results -> respond.
+
+    WHEN TO USE:
+    - Tasks requiring file exploration or code search
+    - Multi-step tasks that need to gather information
+    - Any task where the LLM needs to read files or search code
+
+    Args:
+        prompt: The task for the agent to complete (required)
+        system_prompt: Optional system prompt to guide behavior
+        model: Force specific tier - "quick" | "coder" | "moe" | "thinking"
+        max_iterations: Maximum tool call iterations (default: 10)
+        tools: Comma-separated tool names to enable. Options:
+            - "read_file" - Read file contents
+            - "list_directory" - List files in directories
+            - "search_code" - Search code with regex
+            - "web_fetch" - Fetch URL contents
+            If not specified, all tools are enabled.
+        backend_type: Force backend type - "local" | "remote"
+
+    AVAILABLE TOOLS:
+    - read_file(path, start_line?, end_line?) - Read file with line numbers
+    - list_directory(path?, recursive?, pattern?) - List directory contents
+    - search_code(pattern, path?, file_pattern?, context_lines?) - Grep for code
+    - web_fetch(url, extract_text?) - Fetch web content
+
+    AGENT BEHAVIOR:
+    1. Receives the task/prompt
+    2. Decides which tools to use
+    3. Calls tools and receives results
+    4. Continues until task is complete or max_iterations reached
+
+    Returns:
+        Agent's final response after completing the task
+
+    Examples:
+        agent(prompt="What files are in the src directory?")
+        agent(prompt="Read config.py and explain the main class")
+        agent(prompt="Search for all usages of 'async def' in .py files")
+        agent(prompt="Analyze the error handling patterns in this codebase", model="moe")
+    """
+    import json as json_module
+
+    start_time = time.time()
+
+    # Select backend
+    backend_provider, backend_obj = await _select_optimal_backend_v2(
+        prompt, None, "analyze", backend_type
+    )
+
+    # Select model based on task
+    selected_model, tier, model_source = select_model(
+        task="analyze",
+        prompt_length=len(prompt),
+        model_hint=model,
+        backend_obj=backend_obj,
+    )
+
+    # Set up tool registry
+    registry = get_default_tools()
+    if tools:
+        tool_list = [t.strip() for t in tools.split(",") if t.strip()]
+        registry = registry.filter(tool_list)
+
+    # Create LLM callable wrapper for the agent loop
+    async def agent_llm_call(
+        messages: list[dict[str, Any]],
+        system: str | None,
+    ) -> str:
+        # Convert messages to a single prompt
+        # The agent loop uses a messages list, but call_llm expects a single prompt
+        prompt_parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "user":
+                prompt_parts.append(f"User: {content}")
+            elif role == "assistant":
+                prompt_parts.append(f"Assistant: {content}")
+            elif role == "tool":
+                tool_name = msg.get("name", "tool")
+                prompt_parts.append(f"[Tool Result - {tool_name}]\n{content}")
+
+        combined_prompt = "\n\n".join(prompt_parts)
+
+        result = await call_llm(
+            model=selected_model,
+            prompt=combined_prompt,
+            system=system,
+            task_type="agent",
+            original_task="agent",
+            language="unknown",
+            backend_obj=backend_obj,
+        )
+
+        if result.get("success"):
+            return result.get("response", "")
+        else:
+            raise RuntimeError(result.get("error", "LLM call failed"))
+
+    # Create agent config
+    config = AgentConfig(
+        max_iterations=max_iterations,
+        timeout_per_tool=30.0,
+        total_timeout=300.0,
+        parallel_tools=True,
+        native_tool_calling=False,  # Use text-based XML format
+    )
+
+    # Run the agent loop
+    try:
+        result = await run_agent_loop(
+            call_llm=agent_llm_call,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            registry=registry,
+            model=selected_model,
+            config=config,
+        )
+    except Exception as e:
+        log.error("agent_error", error=str(e))
+        return f"Agent error: {e}"
+
+    elapsed_ms = int((time.time() - start_time) * 1000)
+
+    # Format response with metadata
+    tool_summary = ""
+    if result.tool_calls:
+        tool_names = [tc.name for tc in result.tool_calls]
+        tool_summary = f"\nTools used: {', '.join(tool_names)}"
+
+    status = "✓" if result.success else "⚠"
+    return f"""{result.response}
+
+---
+_{status} Agent completed | Iterations: {result.iterations} | Time: {elapsed_ms}ms | Model: {selected_model}{tool_summary}_"""
 
 
 @mcp.tool()
