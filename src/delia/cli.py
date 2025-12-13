@@ -120,6 +120,7 @@ MCP_CLIENTS: dict[str, dict[str, Any]] = {
 BACKEND_ENDPOINTS = [
     ("ollama", "http://localhost:11434", "/api/tags"),
     ("llamacpp", "http://localhost:8080", "/health"),
+    ("lmstudio", "http://localhost:1234", "/v1/models"),
     ("vllm", "http://localhost:8000", "/v1/models"),
 ]
 
@@ -250,7 +251,7 @@ def detect_backends() -> list[DetectedBackend]:
                     if models_resp.status_code == 200:
                         data = models_resp.json()
                         models = [m.get("name", "") for m in data.get("models", [])]
-                elif provider in ("llamacpp", "vllm"):
+                elif provider in ("llamacpp", "lmstudio", "vllm"):
                     models_resp = client.get(f"{base_url}/v1/models")
                     if models_resp.status_code == 200:
                         data = models_resp.json()
@@ -540,6 +541,7 @@ def init(
         print_error("No LLM backends found!")
         print_info("Please install and start one of:")
         print_info("  • Ollama: https://ollama.ai")
+        print_info("  • LM Studio: https://lmstudio.ai")
         print_info("  • llama.cpp: https://github.com/ggerganov/llama.cpp")
         print()
         print_info("Then run 'delia init' again.")

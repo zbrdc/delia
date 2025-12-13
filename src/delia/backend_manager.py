@@ -328,6 +328,13 @@ class BackendManager:
                 "models": "/v1/models",
             },
             {
+                "url": "http://localhost:1234",
+                "provider": "lmstudio",
+                "name": "Local LM Studio",
+                "health": "/v1/models",
+                "models": "/v1/models",
+            },
+            {
                 "url": "http://localhost:11434",
                 "provider": "ollama",
                 "name": "Local Ollama",
