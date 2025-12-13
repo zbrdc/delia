@@ -1002,53 +1002,10 @@ async def select_model(
 # ============================================================
 
 
-def extract_thinking_content(response_text: str) -> str | None:
-    """
-    Extract thinking content from LLM response.
-
-    Returns the content between <think> and </think> tags, or None if not present.
-    Optimized with early exit to avoid unnecessary string operations.
-    """
-    if "<think>" not in response_text:
-        return None
-
-    start = response_text.find("<think>") + 7
-    end = response_text.find("</think>")
-
-    if end < start:
-        return None
-
-    return response_text[start:end].strip()
 
 
-def log_thinking_and_response(response_text: str, model_tier: str, tokens: int) -> None:
-    """
-    Log thinking content and response preview.
 
-    Extracted helper to avoid duplicated code in call_ollama and call_llamacpp.
-    """
-    # Log thinking if present
-    thinking = extract_thinking_content(response_text)
-    if thinking:
-        thinking_preview = thinking[:200] + "..." if len(thinking) > 200 else thinking
-        log.info(
-            get_display_event("model_thinking"),
-            log_type="THINK",
-            preview=thinking_preview.replace("\n", " "),
-            model=model_tier,
-            status_msg=get_status_message(StatusEvent.PROCESSING),
-        )
 
-    # Log LLM response (first 300 chars)
-    response_preview = response_text[:300] + "..." if len(response_text) > 300 else response_text
-    log.info(
-        get_display_event("model_response"),
-        log_type="RESPONSE",
-        preview=response_preview.replace("\n", " ").strip(),
-        model=model_tier,
-        tokens=tokens,
-        status_msg=get_status_message(StatusEvent.COMPLETED),
-    )
 
 
 # ============================================================
