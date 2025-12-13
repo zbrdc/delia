@@ -332,6 +332,7 @@ def detect_clients() -> list[DetectedClient]:
     """Detect installed MCP clients by checking for their executables."""
     detected: list[DetectedClient] = []
     plat = get_platform()
+    delia_root = get_delia_root()
 
     for client_id, client_info in MCP_CLIENTS.items():
         # Check if client executable exists in PATH
@@ -357,7 +358,10 @@ def detect_clients() -> list[DetectedClient]:
                     config = json.load(f)
                 config_key = client_info["config_key"]
                 if config_key in config and "delia" in config[config_key]:
-                    configured = True
+                    # Treat mismatched configs as unconfigured so init can repair them
+                    expected_config = generate_client_config(client_id, delia_root)
+                    existing_config = config[config_key]["delia"]
+                    configured = existing_config == expected_config
             except Exception:  # noqa: S110  # Expected: optional config check
                 pass
 
