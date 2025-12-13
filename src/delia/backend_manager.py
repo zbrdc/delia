@@ -77,6 +77,7 @@ class BackendConfig:
     timeout_seconds: float = 300.0
     connect_timeout: float = 10.0
     api_key: str | None = None
+    supports_native_tool_calling: bool = False
 
     # Runtime state (not persisted)
     _available: bool = False
@@ -101,6 +102,7 @@ class BackendConfig:
             timeout_seconds=data.get("timeout_seconds", 300.0),
             connect_timeout=data.get("connect_timeout", 10.0),
             api_key=data.get("api_key"),
+            supports_native_tool_calling=data.get("supports_native_tool_calling", False),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -121,6 +123,28 @@ class BackendConfig:
             "timeout_seconds": self.timeout_seconds,
             "connect_timeout": self.connect_timeout,
             "api_key": self.api_key,
+            "supports_native_tool_calling": self.supports_native_tool_calling,
+        }
+
+    @classmethod
+    def detect_capabilities(cls, provider: str) -> dict[str, Any]:
+        """
+        Detect capabilities for a given provider.
+
+        Returns a dictionary of capability flags based on the provider type.
+
+        Args:
+            provider: Backend provider name ("llamacpp", "lmstudio", "openai", "ollama", "gemini")
+
+        Returns:
+            Dictionary with capability flags:
+            - supports_native_tool_calling: Whether the provider supports native tool/function calling
+        """
+        # Providers that support native tool calling via OpenAI-compatible API
+        tool_calling_providers = {"llamacpp", "lmstudio", "openai"}
+
+        return {
+            "supports_native_tool_calling": provider.lower() in tool_calling_providers,
         }
 
     def get_client(self) -> httpx.AsyncClient:
@@ -385,6 +409,9 @@ class BackendManager:
                 # Assign models to tiers
                 tier_assignments = self._assign_models_to_tiers(available_models)
 
+                # Detect capabilities for this provider
+                capabilities = BackendConfig.detect_capabilities(endpoint["provider"])
+
                 backend_id = f"{endpoint['provider']}-local"
                 return {
                     "id": backend_id,
@@ -397,6 +424,7 @@ class BackendManager:
                     "models": tier_assignments,
                     "health_endpoint": endpoint["health"],
                     "models_endpoint": endpoint["models"],
+                    "supports_native_tool_calling": capabilities["supports_native_tool_calling"],
                 }
 
         except (httpx.ConnectError, httpx.TimeoutException):

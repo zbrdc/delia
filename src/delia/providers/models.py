@@ -25,11 +25,20 @@ class OllamaResponse(BaseModel):
     done: bool = True
 
 
+class ToolCall(BaseModel):
+    """OpenAI-compatible tool call."""
+
+    id: str
+    type: str = "function"
+    function: dict[str, str]  # Contains "name" and "arguments" keys
+
+
 class LlamaCppMessage(BaseModel):
     """OpenAI-compatible message."""
 
     role: str = "assistant"
-    content: str = ""
+    content: str | None = ""
+    tool_calls: list[ToolCall] | None = None
 
 
 class LlamaCppChoice(BaseModel):

@@ -121,6 +121,8 @@ class LLMProvider(Protocol):
         content_preview: str = "",
         backend_obj: BackendConfig | None = None,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> LLMResponse:
         """Call the LLM provider with the given parameters.
 
@@ -135,9 +137,12 @@ class LLMProvider(Protocol):
             content_preview: Short preview of content for logging
             backend_obj: Backend configuration to use (or None to auto-select)
             max_tokens: Optional limit on response length
+            tools: Optional list of OpenAI-format tool schemas for native tool calling
+            tool_choice: Optional tool choice strategy ("auto", "none", or specific tool name)
 
         Returns:
-            LLMResponse with success status, response text, tokens, timing, and metadata
+            LLMResponse with success status, response text, tokens, timing, and metadata.
+            If tools were used, metadata will include a "tool_calls" field with the calls.
 
         Raises:
             This method should NOT raise exceptions - all errors should be captured

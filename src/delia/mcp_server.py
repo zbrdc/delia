@@ -1633,6 +1633,12 @@ async def agent(
         tool_list = [t.strip() for t in tools.split(",") if t.strip()]
         registry = registry.filter(tool_list)
 
+    # Detect native tool calling support
+    use_native = backend_obj.supports_native_tool_calling if backend_obj else False
+
+    # Get tool schemas for native mode (even if not immediately used)
+    tools_schemas = registry.get_openai_schemas() if use_native else None
+
     # Create LLM callable wrapper for the agent loop
     async def agent_llm_call(
         messages: list[dict[str, Any]],
@@ -1654,6 +1660,8 @@ async def agent(
 
         combined_prompt = "\n\n".join(prompt_parts)
 
+        # TODO: When provider interface supports tools parameter, pass tools_schemas here
+        # for native tool calling mode
         result = await call_llm(
             model=selected_model,
             prompt=combined_prompt,
@@ -1669,13 +1677,13 @@ async def agent(
         else:
             raise RuntimeError(result.get("error", "LLM call failed"))
 
-    # Create agent config
+    # Create agent config with auto-detected native tool calling
     config = AgentConfig(
         max_iterations=max_iterations,
         timeout_per_tool=30.0,
         total_timeout=300.0,
         parallel_tools=True,
-        native_tool_calling=False,  # Use text-based XML format
+        native_tool_calling=use_native,
     )
 
     # Run the agent loop

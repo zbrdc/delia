@@ -95,6 +95,8 @@ class LlamaCppProvider:
         content_preview: str = "",
         backend_obj: BackendConfig | None = None,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> LLMResponse:
         """Call OpenAI-compatible API with Pydantic validation, retry, and circuit breaker."""
         start_time = time.time()
@@ -162,6 +164,11 @@ class LlamaCppProvider:
             "stream": False,
         }
 
+        # Add tool calling support if tools are provided
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
+
         client = backend_obj.get_client()
 
         @retry(
@@ -196,7 +203,9 @@ class LlamaCppProvider:
                     if not validated.choices:
                         return create_error_response("Backend returned no choices")
 
-                    response_text = validated.choices[0].message.content
+                    message = validated.choices[0].message
+                    response_text = message.content or ""
+                    tool_calls = message.tool_calls
 
                     if validated.usage:
                         tokens = validated.usage.completion_tokens + validated.usage.prompt_tokens
@@ -247,11 +256,16 @@ class LlamaCppProvider:
                 if self.save_stats_callback:
                     self.save_stats_callback()
 
+                # Build metadata, including tool_calls if present
+                metadata = {"backend": "llamacpp", "model": model, "tier": model_tier}
+                if tool_calls:
+                    metadata["tool_calls"] = [tc.model_dump() for tc in tool_calls]
+
                 return create_success_response(
                     response_text=response_text,
                     tokens=tokens,
                     elapsed_ms=elapsed_ms,
-                    metadata={"backend": "llamacpp", "model": model, "tier": model_tier},
+                    metadata=metadata,
                 )
 
             # HTTP error handling with context-specific messages

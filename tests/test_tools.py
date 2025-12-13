@@ -531,6 +531,191 @@ class TestAgentLoop:
         assert result.tool_calls[0].id == "call_abc123"
 
 
+    @pytest.mark.asyncio
+    async def test_agent_auto_detects_native_support(self):
+        """Test that agent auto-detects native tool calling support from backend."""
+        from delia.backend_manager import BackendConfig
+
+        # Backend that supports native tool calling
+        backend = BackendConfig(
+            id="test-backend",
+            name="Test Backend",
+            provider="llamacpp",
+            type="local",
+            url="http://localhost:8080",
+            supports_native_tool_calling=True,
+        )
+
+        # Mock LLM that returns OpenAI format
+        async def mock_llm(messages, system):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": "Task completed.",
+                        "tool_calls": None
+                    }
+                }]
+            }
+
+        registry = get_default_tools()
+
+        # Config should detect native support is enabled
+        config = AgentConfig(native_tool_calling=backend.supports_native_tool_calling)
+
+        result = await run_agent_loop(
+            call_llm=mock_llm,
+            prompt="Test task",
+            system_prompt=None,
+            registry=registry,
+            model="test-model",
+            config=config,
+        )
+
+        assert result.success
+        assert config.native_tool_calling is True
+
+    @pytest.mark.asyncio
+    async def test_agent_falls_back_to_text_format(self):
+        """Test that agent uses XML format when backend doesn't support native."""
+        from delia.backend_manager import BackendConfig
+
+        # Backend that doesn't support native tool calling
+        backend = BackendConfig(
+            id="test-backend",
+            name="Test Backend",
+            provider="ollama",
+            type="local",
+            url="http://localhost:11434",
+            supports_native_tool_calling=False,
+        )
+
+        call_count = 0
+
+        async def mock_llm(messages, system):
+            nonlocal call_count
+            call_count += 1
+
+            if call_count == 1:
+                # Should use XML format
+                return '''<tool_call>{"name": "read_file", "arguments": {"path": "/tmp/test.txt"}}</tool_call>'''
+            else:
+                return "File processed successfully."
+
+        registry = ToolRegistry()
+
+        async def mock_read_file(path: str, **kwargs) -> str:
+            return "file content"
+
+        registry.register(ToolDefinition(
+            name="read_file",
+            description="Read a file",
+            parameters={"type": "object", "properties": {"path": {"type": "string"}}},
+            handler=mock_read_file,
+        ))
+
+        # Config uses text format when native not supported
+        config = AgentConfig(native_tool_calling=backend.supports_native_tool_calling)
+
+        result = await run_agent_loop(
+            call_llm=mock_llm,
+            prompt="Read the file",
+            system_prompt=None,
+            registry=registry,
+            model="test-model",
+            config=config,
+        )
+
+        assert result.success
+        assert config.native_tool_calling is False
+        assert len(result.tool_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_provider_includes_tools_in_payload(self):
+        """Test that llama.cpp provider includes tools array in request."""
+        from unittest.mock import AsyncMock, patch
+        from delia.backend_manager import BackendConfig
+        import httpx
+
+        # Backend configured for native tool calling
+        backend = BackendConfig(
+            id="llamacpp-local",
+            name="Local llama.cpp",
+            provider="llamacpp",
+            type="local",
+            url="http://localhost:8080",
+            supports_native_tool_calling=True,
+        )
+
+        # Mock response
+        mock_response_data = {
+            "choices": [{
+                "message": {
+                    "content": "Done.",
+                    "tool_calls": None
+                }
+            }]
+        }
+
+        # Track the request payload
+        captured_payload = None
+
+        async def mock_post(url, **kwargs):
+            nonlocal captured_payload
+            captured_payload = kwargs.get("json", {})
+
+            # Create a regular mock for response
+            class MockResponse:
+                status_code = 200
+                def json(self):
+                    return mock_response_data
+
+            return MockResponse()
+
+        registry = get_default_tools()
+
+        async def mock_llm(messages, system):
+            # Simulate llama.cpp backend call
+            client = AsyncMock()
+            client.post = mock_post
+
+            # Build request like mcp_server would
+            payload = {
+                "model": "test-model",
+                "messages": messages,
+            }
+
+            # Add tools if native mode
+            if backend.supports_native_tool_calling:
+                payload["tools"] = registry.get_openai_schemas()
+
+            response = await client.post(f"{backend.url}/v1/chat/completions", json=payload)
+            return response.json()
+
+        config = AgentConfig(native_tool_calling=backend.supports_native_tool_calling)
+
+        result = await run_agent_loop(
+            call_llm=mock_llm,
+            prompt="Test native tools",
+            system_prompt=None,
+            registry=registry,
+            model="test-model",
+            config=config,
+        )
+
+        # Verify tools were included in payload
+        assert captured_payload is not None
+        assert "tools" in captured_payload
+        assert len(captured_payload["tools"]) == 4  # read_file, list_directory, search_code, web_fetch
+        assert all(t["type"] == "function" for t in captured_payload["tools"])
+
+        # Verify expected tool names
+        tool_names = {t["function"]["name"] for t in captured_payload["tools"]}
+        assert "read_file" in tool_names
+        assert "list_directory" in tool_names
+        assert "search_code" in tool_names
+        assert "web_fetch" in tool_names
+
+
 class TestToolPrompt:
     """Tests for tool prompt generation."""
 
