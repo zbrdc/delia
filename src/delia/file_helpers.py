@@ -1,0 +1,129 @@
+# Copyright (C) 2023 the project owner
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""
+File helper functions for reading files and Serena memories.
+
+This module provides utilities for safely reading files from disk,
+including size limits, error handling, and Serena memory integration.
+"""
+
+import re
+from pathlib import Path
+
+import structlog
+
+from . import paths
+from .config import config
+
+log = structlog.get_logger()
+
+# Directory for Serena memory files
+MEMORY_DIR = paths.MEMORIES_DIR
+
+
+def read_file_safe(file_path: str, max_size: int | None = None) -> tuple[str | None, str | None]:
+    """
+    Safely read file with size limit.
+
+    Args:
+        file_path: Path to file (absolute or relative, ~ expanded)
+        max_size: Maximum file size in bytes (defaults to config.max_file_size)
+
+    Returns:
+        Tuple of (content, error) - one will be None
+    """
+    if max_size is None:
+        max_size = config.max_file_size
+    try:
+        path = Path(file_path).expanduser().resolve()
+        if not path.exists():
+            return None, f"File not found: {file_path}"
+        if path.stat().st_size > max_size:
+            return None, f"File too large: {path.stat().st_size} > {max_size}"
+        return path.read_text(encoding="utf-8", errors="replace"), None
+    except Exception as e:
+        return None, f"Error reading file: {e}"
+
+
+def read_serena_memory(name: str) -> str | None:
+    """
+    Read a Serena memory file.
+
+    Memory files are markdown files stored in the memories directory.
+    Names are sanitized to prevent path traversal.
+
+    Args:
+        name: Memory name (will be sanitized)
+
+    Returns:
+        Memory content or None if not found
+    """
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+    memory_path = MEMORY_DIR / f"{safe_name}.md"
+
+    if memory_path.exists():
+        return memory_path.read_text()
+    return None
+
+
+def read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[str, str]]:
+    """
+    Read multiple files from disk efficiently.
+
+    Args:
+        file_paths: Comma-separated file paths (absolute or relative to cwd)
+        max_size_bytes: Maximum file size to read (default 500KB)
+
+    Returns:
+        List of (path, content) tuples for successfully read files.
+        Files that don't exist or are too large are skipped with a warning.
+    """
+    results = []
+    paths_list = [p.strip() for p in file_paths.split(",") if p.strip()]
+
+    for path_str in paths_list:
+        file_path = Path(path_str)
+
+        # Try relative to cwd if not absolute
+        if not file_path.is_absolute():
+            file_path = Path.cwd() / file_path
+
+        if not file_path.exists():
+            log.warning("file_read_skipped", path=path_str, reason="not_found")
+            continue
+
+        if not file_path.is_file():
+            log.warning("file_read_skipped", path=path_str, reason="not_a_file")
+            continue
+
+        try:
+            size = file_path.stat().st_size
+            if size > max_size_bytes:
+                log.warning(
+                    "file_read_skipped",
+                    path=path_str,
+                    reason="too_large",
+                    size_kb=size // 1024,
+                    max_kb=max_size_bytes // 1024,
+                )
+                continue
+
+            content = file_path.read_text(encoding="utf-8")
+            results.append((path_str, content))
+            log.info("file_read_success", path=path_str, size_kb=size // 1024)
+        except Exception as e:
+            log.warning("file_read_failed", path=path_str, error=str(e))
+
+    return results

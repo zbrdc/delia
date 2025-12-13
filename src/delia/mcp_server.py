@@ -145,7 +145,6 @@ from .queue import ModelQueue, QueuedRequest
 from .routing import CODE_INDICATORS, detect_code_content, parse_model_override
 
 # Import language detection (LANGUAGE_CONFIGS, detect_language, get_system_prompt, optimize_prompt)
-# Note: create_enhanced_prompt remains here due to read_file_safe dependency
 from .language import (
     LANGUAGE_CONFIGS,
     PYGMENTS_LANGUAGE_MAP,
@@ -153,6 +152,9 @@ from .language import (
     get_system_prompt,
     optimize_prompt,
 )
+
+# Import file helpers (read_files, read_serena_memory, read_file_safe, MEMORY_DIR)
+from .file_helpers import MEMORY_DIR, read_file_safe, read_files, read_serena_memory
 
 # Import stats service for usage tracking
 from .stats import StatsService
@@ -412,18 +414,6 @@ def load_live_logs():
             LIVE_LOGS[:] = []  # Reset to empty on corrupt file
         except Exception as e:
             log.warning("logs_load_failed", error=str(e))
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def save_circuit_breaker_stats():
@@ -738,21 +728,6 @@ async def select_model(
 
 
 # ============================================================
-# OLLAMA API CALLS (with retry and Pydantic validation)
-# ============================================================
-
-# ============================================================
-# RESPONSE HELPERS
-# ============================================================
-
-
-
-
-
-
-
-
-# ============================================================
 # PROVIDER FACTORY (lazy initialization)
 # ============================================================
 
@@ -807,28 +782,6 @@ def _get_provider(provider_name: str) -> OllamaProvider | LlamaCppProvider | Gem
     )
     _provider_cache[provider_name] = provider
     return provider
-
-
-# Retry decorator for transient failures (connection issues, timeouts on model load)
-
-
-
-
-
-
-# ============================================================
-# LLAMA.CPP API CALLS (OpenAI-compatible, with retry and Pydantic)
-# ============================================================
-
-
-
-
-
-# ============================================================
-# GEMINI API CALLS (Google Generative AI)
-# ============================================================
-
-
 
 
 
@@ -942,26 +895,6 @@ async def call_llm(
         # Release model on failure
         await model_queue.release_model(model, success=False)
         raise
-
-
-# ============================================================
-# FILE HANDLING
-# ============================================================
-
-
-def read_file_safe(file_path: str, max_size: int | None = None) -> tuple[str | None, str | None]:
-    """Safely read file with size limit."""
-    if max_size is None:
-        max_size = config.max_file_size
-    try:
-        path = Path(file_path).expanduser().resolve()
-        if not path.exists():
-            return None, f"File not found: {file_path}"
-        if path.stat().st_size > max_size:
-            return None, f"File too large: {path.stat().st_size} > {max_size}"
-        return path.read_text(encoding="utf-8", errors="replace"), None
-    except Exception as e:
-        return None, f"Error reading file: {e}"
 
 
 # ============================================================
@@ -1313,7 +1246,7 @@ async def prepare_delegate_content(
 
     # Load files directly from disk (efficient - no Claude serialization)
     if files:
-        file_contents = _read_files(files)
+        file_contents = read_files(files)
         if file_contents:
             for path, file_content in file_contents:
                 # Detect language from extension for syntax highlighting hint
@@ -1326,7 +1259,7 @@ async def prepare_delegate_content(
     if context:
         memory_names = [m.strip() for m in context.split(",")]
         for mem_name in memory_names:
-            mem_content = _read_serena_memory(mem_name)
+            mem_content = read_serena_memory(mem_name)
             if mem_content:
                 parts.append(f"### Context from '{mem_name}':\n{mem_content}")
                 log.info("context_memory_loaded", memory=mem_name)
@@ -2274,79 +2207,6 @@ async def get_model_info_tool(model_name: str) -> str:
 - VRAM estimates are approximate and depend on quantization
 - Context windows may vary by model version
 - Tier classification is based on configured models or size estimates"""
-
-
-# ============================================================
-# SERENA MEMORY INTEGRATION (Internal helpers, not exposed as tools)
-# Use Serena's memory tools directly - these are for internal Delia use
-# ============================================================
-
-# Memory directory - uses Serena's format for compatibility
-MEMORY_DIR = paths.MEMORIES_DIR
-
-
-def _read_serena_memory(name: str) -> str | None:
-    """
-    Internal: Read a Serena memory file.
-    Returns content or None if not found.
-    """
-    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
-    memory_path = MEMORY_DIR / f"{safe_name}.md"
-
-    if memory_path.exists():
-        return memory_path.read_text()
-    return None
-
-
-def _read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[str, str]]:
-    """
-    Read multiple files from disk efficiently.
-
-    Args:
-        file_paths: Comma-separated file paths (absolute or relative to cwd)
-        max_size_bytes: Maximum file size to read (default 500KB)
-
-    Returns:
-        List of (path, content) tuples for successfully read files.
-        Files that don't exist or are too large are skipped with a warning.
-    """
-    results = []
-    paths = [p.strip() for p in file_paths.split(",") if p.strip()]
-
-    for path_str in paths:
-        file_path = Path(path_str)
-
-        # Try relative to cwd if not absolute
-        if not file_path.is_absolute():
-            file_path = Path.cwd() / file_path
-
-        if not file_path.exists():
-            log.warning("file_read_skipped", path=path_str, reason="not_found")
-            continue
-
-        if not file_path.is_file():
-            log.warning("file_read_skipped", path=path_str, reason="not_a_file")
-            continue
-
-        try:
-            size = file_path.stat().st_size
-            if size > max_size_bytes:
-                log.warning(
-                    "file_read_skipped",
-                    path=path_str,
-                    reason="too_large",
-                    size_kb=size // 1024,
-                    max_kb=max_size_bytes // 1024,
-                )
-                continue
-
-            content = file_path.read_text(encoding="utf-8")
-            results.append((path_str, content))
-            log.info("file_read_success", path=path_str, size_kb=size // 1024)
-        except Exception as e:
-            log.warning("file_read_failed", path=path_str, error=str(e))
-
-    return results
 
 
 # ============================================================
