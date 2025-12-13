@@ -18,18 +18,20 @@ Structured request schemas for LLM-to-LLM communication.
 These schemas replace natural language inference with explicit typed fields,
 optimized for consumption by AI assistants like Claude.
 """
-from typing import Optional, Literal
+
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from .enums import (
-    TaskType,
-    ModelTier,
+    AnalysisType,
+    BackendPreference,
     ContentType,
     Language,
-    BackendPreference,
-    Severity,
-    AnalysisType,
+    ModelTier,
     ReasoningDepth,
+    Severity,
+    TaskType,
 )
 
 
@@ -44,11 +46,11 @@ class StructuredRequest(BaseModel):
         default=ContentType.MIXED,
         description="Type of content being processed",
     )
-    language: Optional[Language] = Field(
+    language: Language | None = Field(
         default=None,
         description="Programming language (explicit, not inferred)",
     )
-    model_tier: Optional[ModelTier] = Field(
+    model_tier: ModelTier | None = Field(
         default=None,
         description="Force specific model tier (quick/coder/moe/thinking)",
     )
@@ -56,16 +58,16 @@ class StructuredRequest(BaseModel):
         default=BackendPreference.AUTO,
         description="Backend routing preference",
     )
-    file_path: Optional[str] = Field(
+    file_path: str | None = Field(
         default=None,
         description="Path to file being processed (for context)",
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None,
         ge=1,
         description="Maximum output tokens (optional limit)",
     )
-    timeout_ms: Optional[int] = Field(
+    timeout_ms: int | None = Field(
         default=None,
         ge=1000,
         description="Request timeout in milliseconds",
@@ -79,19 +81,19 @@ class CodeReviewRequest(StructuredRequest):
         default=TaskType.REVIEW,
         description="Task type (always 'review' for this schema)",
     )
-    focus_areas: Optional[list[str]] = Field(
+    focus_areas: list[str] | None = Field(
         default=None,
         description="Specific areas to focus on (e.g., ['security', 'performance', 'style'])",
     )
-    symbols: Optional[list[str]] = Field(
+    symbols: list[str] | None = Field(
         default=None,
         description="Specific symbols/functions to review",
     )
-    line_range: Optional[tuple[int, int]] = Field(
+    line_range: tuple[int, int] | None = Field(
         default=None,
         description="Line range to focus on as (start, end)",
     )
-    severity_threshold: Optional[Severity] = Field(
+    severity_threshold: Severity | None = Field(
         default=None,
         description="Minimum severity to report",
     )
@@ -108,15 +110,15 @@ class CodeGenerateRequest(StructuredRequest):
         default=TaskType.GENERATE,
         description="Task type (always 'generate' for this schema)",
     )
-    output_format: Optional[str] = Field(
+    output_format: str | None = Field(
         default=None,
         description="Expected output format (e.g., 'function', 'class', 'module')",
     )
-    requirements: Optional[list[str]] = Field(
+    requirements: list[str] | None = Field(
         default=None,
         description="List of requirements the generated code must satisfy",
     )
-    style_guide: Optional[str] = Field(
+    style_guide: str | None = Field(
         default=None,
         description="Coding style to follow (e.g., 'PEP8', 'Google')",
     )
@@ -128,7 +130,7 @@ class CodeGenerateRequest(StructuredRequest):
         default=True,
         description="Whether to include documentation",
     )
-    target_framework: Optional[str] = Field(
+    target_framework: str | None = Field(
         default=None,
         description="Target framework (e.g., 'fastapi', 'react', 'django')",
     )
@@ -153,7 +155,7 @@ class AnalyzeRequest(StructuredRequest):
         default=False,
         description="Include quantitative metrics where applicable",
     )
-    symbols: Optional[list[str]] = Field(
+    symbols: list[str] | None = Field(
         default=None,
         description="Specific symbols to analyze",
     )
@@ -166,11 +168,11 @@ class ThinkRequest(BaseModel):
         ...,
         description="The problem to reason about",
     )
-    context: Optional[str] = Field(
+    context: str | None = Field(
         default=None,
         description="Supporting context information",
     )
-    constraints: Optional[list[str]] = Field(
+    constraints: list[str] | None = Field(
         default=None,
         description="Constraints to consider in reasoning",
     )
@@ -178,7 +180,7 @@ class ThinkRequest(BaseModel):
         default=ReasoningDepth.NORMAL,
         description="Reasoning depth (quick/normal/deep)",
     )
-    model_tier: Optional[ModelTier] = Field(
+    model_tier: ModelTier | None = Field(
         default=None,
         description="Force specific model tier",
     )
@@ -195,7 +197,7 @@ class SummarizeRequest(StructuredRequest):
         default=TaskType.SUMMARIZE,
         description="Task type (always 'summarize' for this schema)",
     )
-    max_length: Optional[int] = Field(
+    max_length: int | None = Field(
         default=None,
         description="Maximum summary length in words",
     )
@@ -203,7 +205,7 @@ class SummarizeRequest(StructuredRequest):
         default="paragraph",
         description="Output format for summary",
     )
-    focus: Optional[str] = Field(
+    focus: str | None = Field(
         default=None,
         description="Specific aspect to focus summary on",
     )
@@ -216,7 +218,7 @@ class CritiqueRequest(StructuredRequest):
         default=TaskType.CRITIQUE,
         description="Task type (always 'critique' for this schema)",
     )
-    critique_aspects: Optional[list[str]] = Field(
+    critique_aspects: list[str] | None = Field(
         default=None,
         description="Specific aspects to critique (e.g., ['design', 'scalability', 'maintainability'])",
     )
@@ -237,11 +239,11 @@ class PlanRequest(StructuredRequest):
         default=TaskType.PLAN,
         description="Task type (always 'plan' for this schema)",
     )
-    scope: Optional[str] = Field(
+    scope: str | None = Field(
         default=None,
         description="Scope of the plan (e.g., 'feature', 'refactor', 'migration')",
     )
-    constraints: Optional[list[str]] = Field(
+    constraints: list[str] | None = Field(
         default=None,
         description="Constraints to consider in planning",
     )
@@ -267,7 +269,7 @@ class BatchRequest(BaseModel):
         default=False,
         description="Stop on first failure",
     )
-    max_parallel: Optional[int] = Field(
+    max_parallel: int | None = Field(
         default=None,
         ge=1,
         description="Maximum parallel requests",

@@ -18,58 +18,50 @@ Structured MCP tools for LLM-to-LLM communication.
 These tools accept and return JSON with typed schemas, optimized for
 AI assistants to communicate with Delia programmatically.
 """
+
 import asyncio
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Optional, Any
+from datetime import UTC, datetime
 
-from .schemas import (
-    # Enums
-    TaskType,
-    ModelTier,
-    BackendPreference,
-    ReasoningDepth,
-    # Requests
-    StructuredRequest,
-    CodeReviewRequest,
-    CodeGenerateRequest,
-    AnalyzeRequest,
-    ThinkRequest,
-    SummarizeRequest,
-    CritiqueRequest,
-    PlanRequest,
-    BatchRequest,
-    # Responses
-    UsageMetrics,
-    ExecutionInfo,
-    StructuredResponse,
-    CodeReviewResponse,
-    CodeGenerateResponse,
-    AnalyzeResponse,
-    ThinkResponse,
-    SummarizeResponse,
-    CritiqueResponse,
-    PlanResponse,
-    BatchResponse,
-    BatchResponseItem,
-)
+from .backend_manager import BackendConfig
 
 # Import from mcp_server - these are the core functions we'll reuse
 from .mcp_server import (
-    mcp,
-    validate_delegate_request,
-    prepare_delegate_content,
-    determine_task_type,
+    backend_manager,
+    call_llm,
+    config,
+    create_structured_prompt,
+    current_client_id,
     detect_language,
     get_system_prompt,
+    mcp,
+    prepare_delegate_content,
     select_delegate_model,
-    call_llm,
-    create_structured_prompt,
-    config,
-    current_client_id,
     tracker,
-    backend_manager,
+    validate_delegate_request,
+)
+from .schemas import (
+    AnalyzeRequest,
+    AnalyzeResponse,
+    BackendPreference,
+    BatchResponse,
+    BatchResponseItem,
+    CodeGenerateRequest,
+    CodeGenerateResponse,
+    CodeReviewRequest,
+    CodeReviewResponse,
+    ExecutionInfo,
+    ModelTier,
+    ReasoningDepth,
+    # Requests
+    StructuredRequest,
+    StructuredResponse,
+    TaskType,
+    ThinkRequest,
+    ThinkResponse,
+    # Responses
+    UsageMetrics,
 )
 
 
@@ -126,7 +118,7 @@ async def _execute_structured(
     )
 
     # Create structured prompt
-    symbols_list = getattr(request, 'symbols', None)
+    symbols_list = getattr(request, "symbols", None)
     prepared_content = create_structured_prompt(
         task_type=task_type_str,
         content=prepared_content,
@@ -199,7 +191,13 @@ async def _execute_structured(
         tracker.update_last_request(client_id, tokens=tokens, model_tier=tier)
 
     # Get backend info
-    active_backend = backend_manager.get_backend(target_backend)
+    active_backend: BackendConfig | None = None
+    if isinstance(target_backend, BackendConfig):
+        active_backend = target_backend
+    elif target_backend:
+        active_backend = backend_manager.get_backend(target_backend)
+    else:
+        active_backend = backend_manager.get_active_backend()
     provider = active_backend.provider if active_backend else "unknown"
     backend_type_str = active_backend.type if active_backend else "local"
 
@@ -219,7 +217,7 @@ async def _execute_structured(
             backend_id=target_backend,
             backend_type=backend_type_str,
             provider=provider,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         ),
         request_id=request_id,
     )
@@ -275,7 +273,7 @@ async def code_review(request_json: str) -> str:
     except Exception as e:
         return _create_error_response(f"Invalid request JSON: {e}", request_id)
 
-    base_response, raw_content, tier = await _execute_structured(
+    base_response, raw_content, _tier = await _execute_structured(
         request,
         TaskType.REVIEW.value,
     )
@@ -328,7 +326,7 @@ async def code_generate(request_json: str) -> str:
     except Exception as e:
         return _create_error_response(f"Invalid request JSON: {e}", request_id)
 
-    base_response, raw_content, tier = await _execute_structured(
+    base_response, raw_content, _tier = await _execute_structured(
         request,
         TaskType.GENERATE.value,
     )
@@ -381,7 +379,7 @@ async def code_analyze(request_json: str) -> str:
     except Exception as e:
         return _create_error_response(f"Invalid request JSON: {e}", request_id)
 
-    base_response, raw_content, tier = await _execute_structured(
+    base_response, raw_content, _tier = await _execute_structured(
         request,
         TaskType.ANALYZE.value,
     )
@@ -454,7 +452,7 @@ async def structured_think(request_json: str) -> str:
         backend=request.backend,
     )
 
-    base_response, raw_content, tier = await _execute_structured(
+    base_response, raw_content, _tier = await _execute_structured(
         wrapper_request,
         task_type,
     )
@@ -504,6 +502,7 @@ async def structured_delegate(request_json: str) -> str:
     try:
         # Parse as dict first to extract task_type
         import json
+
         data = json.loads(request_json)
         task_type_str = data.pop("task_type", "analyze")
         request = StructuredRequest.model_validate(data)
@@ -518,7 +517,7 @@ async def structured_delegate(request_json: str) -> str:
             request_id,
         )
 
-    base_response, raw_content, tier = await _execute_structured(
+    base_response, _raw_content, _tier = await _execute_structured(
         request,
         task_type_str,
     )
@@ -554,6 +553,7 @@ async def batch_structured(requests_json: str) -> str:
 
     try:
         import json
+
         data = json.loads(requests_json)
         requests_data = data.get("requests", [])
         fail_fast = data.get("fail_fast", False)
@@ -587,7 +587,7 @@ async def batch_structured(requests_json: str) -> str:
                 ),
             )
 
-        base_response, raw_content, tier = await _execute_structured(
+        base_response, _raw_content, _tier = await _execute_structured(
             request,
             task_type_str,
         )
@@ -659,7 +659,7 @@ async def prune_json(request_json: str) -> str:
     INPUT: JSON matching CodeReviewRequest schema
     OUTPUT: JSON matching CodeReviewResponse schema
     """
-    return await code_review(request_json)
+    return await code_review(request_json)  # type: ignore[operator]
 
 
 @mcp.tool()
@@ -673,7 +673,7 @@ async def grow_json(request_json: str) -> str:
     INPUT: JSON matching CodeGenerateRequest schema
     OUTPUT: JSON matching CodeGenerateResponse schema
     """
-    return await code_generate(request_json)
+    return await code_generate(request_json)  # type: ignore[operator]
 
 
 @mcp.tool()
@@ -687,7 +687,7 @@ async def tend_json(request_json: str) -> str:
     INPUT: JSON matching AnalyzeRequest schema
     OUTPUT: JSON matching AnalyzeResponse schema
     """
-    return await code_analyze(request_json)
+    return await code_analyze(request_json)  # type: ignore[operator]
 
 
 @mcp.tool()
@@ -701,7 +701,7 @@ async def ponder_json(request_json: str) -> str:
     INPUT: JSON matching ThinkRequest schema
     OUTPUT: JSON matching ThinkResponse schema
     """
-    return await structured_think(request_json)
+    return await structured_think(request_json)  # type: ignore[operator]
 
 
 @mcp.tool()
@@ -715,4 +715,4 @@ async def harvest_json(requests_json: str) -> str:
     INPUT: JSON matching BatchRequest schema
     OUTPUT: JSON matching BatchResponse schema
     """
-    return await batch_structured(requests_json)
+    return await batch_structured(requests_json)  # type: ignore[operator]

@@ -24,21 +24,23 @@ Provides:
 """
 
 import asyncio
+import hashlib
 import json
 import time
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
-from typing import Optional, Dict
+from asyncio import Task
 from contextlib import suppress
-import hashlib
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
 
 import structlog
-from limits import storage, strategies, parse
+from limits import parse, storage, strategies
 
 from . import paths
 
+
 # Lazy logger to handle STDIO reconfiguration
-def _get_log():
+def _get_log() -> structlog.stdlib.BoundLogger:
     return structlog.get_logger()
 
 
@@ -60,9 +62,11 @@ DATA_DIR = paths.USER_DATA_DIR
 # DATA MODELS (Simplified)
 # ============================================================
 
+
 @dataclass
 class ClientInfo:
     """Lightweight client identification."""
+
     client_id: str
     username: str
     ip_address: str = ""  # For HTTP mode
@@ -71,7 +75,7 @@ class ClientInfo:
     created_at: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
 
-    def touch(self):
+    def touch(self) -> None:
         """Update last activity."""
         self.last_seen = time.time()
 
@@ -79,21 +83,46 @@ class ClientInfo:
 @dataclass
 class UserStats:
     """Aggregated statistics per user."""
+
     username: str
     total_requests: int = 0
     total_tokens: int = 0
     successful_requests: int = 0
     failed_requests: int = 0
     total_time_ms: int = 0
-    task_counts: Dict[str, int] = field(default_factory=dict)
-    model_counts: Dict[str, int] = field(default_factory=dict)
+    task_counts: dict[str, int] = field(default_factory=dict)
+    model_counts: dict[str, int] = field(default_factory=dict)
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
+    # Hourly tracking (for quota display)
+    requests_this_hour: int = 0
+    tokens_this_hour: int = 0
+    hour_window_start: float = field(default_factory=time.time)
+
+    @property
+    def client_id(self) -> str:
+        """Alias for username for API compatibility."""
+        return self.username
+
+    @property
+    def first_request(self) -> Any | None:
+        """First request time as datetime."""
+        from datetime import datetime as dt
+
+        return dt.fromtimestamp(self.first_seen) if self.first_seen else None
+
+    @property
+    def last_request(self) -> Any | None:
+        """Last request time as datetime."""
+        from datetime import datetime as dt
+
+        return dt.fromtimestamp(self.last_seen) if self.last_seen else None
 
 
 @dataclass
 class QuotaConfig:
     """Per-user quota configuration."""
+
     max_requests_per_hour: int = DEFAULT_REQUESTS_PER_HOUR
     max_tokens_per_hour: int = DEFAULT_TOKENS_PER_HOUR
     max_concurrent: int = DEFAULT_CONCURRENT_REQUESTS
@@ -104,24 +133,25 @@ class QuotaConfig:
 # RATE LIMITER
 # ============================================================
 
+
 class RateLimiter:
     """
     Rate limiter using the 'limits' library with in-memory storage.
     Supports both request count and token-based limits.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # In-memory storage (fast, no I/O)
         self._storage = storage.MemoryStorage()
         self._strategy = strategies.MovingWindowRateLimiter(self._storage)
 
         # Per-client quota configs
-        self._quotas: Dict[str, QuotaConfig] = {}
+        self._quotas: dict[str, QuotaConfig] = {}
 
         # Concurrent request tracking
-        self._concurrent: Dict[str, int] = {}
+        self._concurrent: dict[str, int] = {}
 
-    def set_quota(self, client_id: str, quota: QuotaConfig):
+    def set_quota(self, client_id: str, quota: QuotaConfig) -> None:
         """Set quota for a client."""
         self._quotas[client_id] = quota
 
@@ -170,7 +200,7 @@ class RateLimiter:
 
         return True, "OK"
 
-    def record_tokens(self, client_id: str, tokens: int):
+    def record_tokens(self, client_id: str, tokens: int) -> None:
         """Record token usage after request completion."""
         quota = self.get_quota(client_id)
         token_limit = parse(f"{quota.max_tokens_per_hour}/hour")
@@ -182,16 +212,16 @@ class RateLimiter:
         for _ in range(min(tokens, 100)):  # Batch to avoid excessive calls
             self._strategy.hit(token_limit, token_key)
 
-    def start_request(self, client_id: str):
+    def start_request(self, client_id: str) -> None:
         """Mark request as started (for concurrent tracking)."""
         self._concurrent[client_id] = self._concurrent.get(client_id, 0) + 1
 
-    def end_request(self, client_id: str):
+    def end_request(self, client_id: str) -> None:
         """Mark request as completed."""
         if client_id in self._concurrent:
             self._concurrent[client_id] = max(0, self._concurrent[client_id] - 1)
 
-    def get_stats(self, client_id: str) -> dict:
+    def get_stats(self, client_id: str) -> dict[str, Any]:
         """Get current rate limit stats for a client."""
         quota = self.get_quota(client_id)
 
@@ -211,19 +241,20 @@ class RateLimiter:
 # MAIN TRACKER CLASS
 # ============================================================
 
+
 class SimpleTracker:
     """
     Simplified tracking with in-memory state and background persistence.
     No per-request I/O - saves periodically in background.
     """
 
-    def __init__(self, data_dir: Path = None):
+    def __init__(self, data_dir: Path | None = None) -> None:
         self.data_dir = data_dir or DATA_DIR
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         # In-memory state
-        self._clients: Dict[str, ClientInfo] = {}
-        self._stats: Dict[str, UserStats] = {}
+        self._clients: dict[str, ClientInfo] = {}
+        self._stats: dict[str, UserStats] = {}
 
         # Rate limiter
         self.rate_limiter = RateLimiter()
@@ -232,7 +263,7 @@ class SimpleTracker:
         self._clients_file = self.data_dir / "clients.json"
         self._stats_file = self.data_dir / "user_stats.json"
         self._dirty = False  # Track if we need to save
-        self._save_task: Optional[asyncio.Task] = None
+        self._save_task: Task[None] | None = None
         self._shutdown = False
 
         # Load existing data
@@ -246,7 +277,7 @@ class SimpleTracker:
         self,
         username: str,
         ip_address: str = "",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         transport: str = "stdio",
     ) -> ClientInfo:
         """Get existing client or create new one."""
@@ -278,14 +309,11 @@ class SimpleTracker:
         self._clients[client_id] = client
         self._dirty = True
 
-        _get_log().info("client_registered",
-                       client_id=client_id,
-                       username=username,
-                       transport=transport)
+        _get_log().info("client_registered", client_id=client_id, username=username, transport=transport)
 
         return client
 
-    def get_client(self, client_id: str) -> Optional[ClientInfo]:
+    def get_client(self, client_id: str) -> ClientInfo | None:
         """Get client by ID."""
         return self._clients.get(client_id)
 
@@ -308,7 +336,7 @@ class SimpleTracker:
 
         return True, "OK"
 
-    def set_user_quota(self, client_id: str, quota: QuotaConfig):
+    def set_user_quota(self, client_id: str, quota: QuotaConfig) -> None:
         """Set quota for a user (called when auth provides user limits)."""
         self.rate_limiter.set_quota(client_id, quota)
 
@@ -316,7 +344,7 @@ class SimpleTracker:
     # Request Recording
     # ----------------------------------------------------------
 
-    def start_request(self, client_id: str):
+    def start_request(self, client_id: str) -> None:
         """Called when a request starts."""
         self.rate_limiter.start_request(client_id)
 
@@ -330,7 +358,7 @@ class SimpleTracker:
         backend: str = "ollama",
         success: bool = True,
         error: str = "",
-    ):
+    ) -> None:
         """Record completed request (updates stats, no I/O)."""
 
         # End concurrent tracking
@@ -373,13 +401,9 @@ class SimpleTracker:
 
         self._dirty = True
 
-        _get_log().debug("request_recorded",
-                        client_id=client_id,
-                        task=task_type,
-                        tokens=tokens,
-                        success=success)
+        _get_log().debug("request_recorded", client_id=client_id, task=task_type, tokens=tokens, success=success)
 
-    def update_request_tokens(self, client_id: str, tokens: int, model_tier: str = ""):
+    def update_request_tokens(self, client_id: str, tokens: int, model_tier: str = "") -> None:
         """Update token count for most recent request (called after LLM response)."""
         client = self._clients.get(client_id)
         if not client:
@@ -404,11 +428,11 @@ class SimpleTracker:
     # Stats Access
     # ----------------------------------------------------------
 
-    def get_user_stats(self, username: str) -> Optional[UserStats]:
+    def get_user_stats(self, username: str) -> UserStats | None:
         """Get stats for a user."""
         return self._stats.get(username)
 
-    def get_all_stats(self) -> Dict[str, UserStats]:
+    def get_all_stats(self) -> dict[str, UserStats]:
         """Get all user stats."""
         return self._stats.copy()
 
@@ -417,7 +441,7 @@ class SimpleTracker:
         now = time.time()
         return [c for c in self._clients.values() if (now - c.last_seen) < idle_timeout]
 
-    def get_rate_limit_stats(self, client_id: str) -> dict:
+    def get_rate_limit_stats(self, client_id: str) -> dict[str, Any]:
         """Get rate limit stats for a client."""
         return self.rate_limiter.get_stats(client_id)
 
@@ -425,20 +449,20 @@ class SimpleTracker:
     # Persistence (Background)
     # ----------------------------------------------------------
 
-    async def start_background_save(self):
+    async def start_background_save(self) -> None:
         """Start background save task."""
         if self._save_task is None:
             self._save_task = asyncio.create_task(self._background_save_loop())
             _get_log().info("background_save_started", interval=SAVE_INTERVAL_SECONDS)
 
-    async def _background_save_loop(self):
+    async def _background_save_loop(self) -> None:
         """Periodically save to disk."""
         while not self._shutdown:
             await asyncio.sleep(SAVE_INTERVAL_SECONDS)
             if self._dirty:
                 await self._save_to_disk_async()
 
-    async def shutdown(self):
+    async def shutdown(self) -> None:
         """Shutdown tracker, saving final state."""
         self._shutdown = True
 
@@ -453,11 +477,11 @@ class SimpleTracker:
 
         _get_log().info("tracker_shutdown")
 
-    def save_sync(self):
+    def save_sync(self) -> None:
         """Synchronous save for atexit handler."""
         self._save_to_disk_sync()
 
-    async def _save_to_disk_async(self):
+    async def _save_to_disk_async(self) -> None:
         """Save state to disk (async)."""
         try:
             # Run sync I/O in thread pool to not block event loop
@@ -468,20 +492,16 @@ class SimpleTracker:
         except Exception as e:
             _get_log().error("save_error", error=str(e))
 
-    def _save_to_disk_sync(self):
+    def _save_to_disk_sync(self) -> None:
         """Save state to disk (sync)."""
         try:
             # Save clients
-            clients_data = {
-                cid: asdict(c) for cid, c in self._clients.items()
-            }
+            clients_data = {cid: asdict(c) for cid, c in self._clients.items()}
             with open(self._clients_file, "w") as f:
                 json.dump(clients_data, f, indent=2)
 
             # Save stats
-            stats_data = {
-                uname: asdict(s) for uname, s in self._stats.items()
-            }
+            stats_data = {uname: asdict(s) for uname, s in self._stats.items()}
             with open(self._stats_file, "w") as f:
                 json.dump(stats_data, f, indent=2)
 
@@ -489,7 +509,7 @@ class SimpleTracker:
         except Exception as e:
             _get_log().error("save_error", error=str(e))
 
-    def _load_from_disk(self):
+    def _load_from_disk(self) -> None:
         """Load state from disk on startup."""
         try:
             if self._clients_file.exists():
@@ -514,6 +534,7 @@ class SimpleTracker:
 # BACKWARDS COMPATIBILITY LAYER
 # ============================================================
 
+
 class MultiUserTracker(SimpleTracker):
     """
     Backwards-compatible wrapper providing the old API.
@@ -526,7 +547,7 @@ class MultiUserTracker(SimpleTracker):
         hostname: str = "",
         ip_address: str = "",
         user_agent: str = "",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
     ) -> ClientInfo:
         """Legacy method - creates new client."""
         transport = "http" if ip_address else "stdio"
@@ -537,7 +558,7 @@ class MultiUserTracker(SimpleTracker):
             transport=transport,
         )
 
-    def get_client_info(self, client_id: str) -> Optional[ClientInfo]:
+    def get_client_info(self, client_id: str) -> ClientInfo | None:
         """Legacy alias."""
         return self.get_client(client_id)
 
@@ -545,12 +566,12 @@ class MultiUserTracker(SimpleTracker):
         """Legacy method - returns list of stats."""
         return list(self._stats.values())
 
-    def get_recent_requests(self, limit: int = 100, username: str = None) -> list:
+    def get_recent_requests(self, limit: int = 100, username: str | None = None) -> list[Any]:
         """Legacy method - no longer tracks individual requests."""
         # Return empty list - we no longer track individual requests
         return []
 
-    def update_last_request(self, client_id: str, tokens: int = 0, model_tier: str = None):
+    def update_last_request(self, client_id: str, tokens: int = 0, model_tier: str | None = None) -> None:
         """Legacy method - now just updates tokens."""
         self.update_request_tokens(client_id, tokens, model_tier or "")
 

@@ -18,33 +18,39 @@ Backend Manager - Unified configuration from settings.json
 Handles loading, managing, and health-checking backends defined in settings.json.
 The WebGUI and CLI tools update this file directly.
 """
+
+import asyncio
 import json
 import os
-import httpx
-import asyncio
 import time
-from pathlib import Path
-from typing import Optional, Any
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import httpx
 import structlog
 
 # Optional dependency - imported lazily in check_health()
+genai: Any = None
+GEMINI_AVAILABLE = False
 try:
     import google.generativeai as genai
+
     GEMINI_AVAILABLE = True
 except ImportError:
-    genai = None
-    GEMINI_AVAILABLE = False
+    pass
 
 from . import paths
 
 # Health check cache TTL in seconds
 HEALTH_CHECK_TTL = 30
 
+
 # Get logger lazily each time to ensure we use the current configuration
 # (important for STDIO transport where logging is reconfigured after import)
-def _get_log():
+def _get_log() -> structlog.stdlib.BoundLogger:
     return structlog.get_logger()
+
 
 log = None  # Will be set to actual logger on first use
 
@@ -55,6 +61,7 @@ SETTINGS_FILE = paths.SETTINGS_FILE
 @dataclass
 class BackendConfig:
     """Configuration for a single backend."""
+
     id: str
     name: str
     provider: str  # "ollama", "llamacpp", "openai", etc.
@@ -69,14 +76,14 @@ class BackendConfig:
     context_limit: int = 4096
     timeout_seconds: float = 300.0
     connect_timeout: float = 10.0
-    api_key: Optional[str] = None
+    api_key: str | None = None
 
     # Runtime state (not persisted)
     _available: bool = False
-    _client: Optional[httpx.AsyncClient] = None
+    _client: httpx.AsyncClient | None = None
 
     @classmethod
-    def from_dict(cls, data: dict) -> "BackendConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "BackendConfig":
         """Create a BackendConfig from a dictionary."""
         return cls(
             id=data.get("id", "unknown"),
@@ -96,7 +103,7 @@ class BackendConfig:
             api_key=data.get("api_key"),
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "id": self.id,
@@ -122,7 +129,7 @@ class BackendConfig:
             self._client = httpx.AsyncClient(
                 base_url=self.url,
                 timeout=httpx.Timeout(self.timeout_seconds, connect=self.connect_timeout),
-                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
             )
         return self._client
 
@@ -171,7 +178,9 @@ class BackendConfig:
             # Gemini-specific health check
             if self.provider == "gemini":
                 if not GEMINI_AVAILABLE:
-                    _get_log().warning("gemini_dependency_missing", instruction="Run 'uv add google-generativeai' to enable")
+                    _get_log().warning(
+                        "gemini_dependency_missing", instruction="Run 'uv add google-generativeai' to enable"
+                    )
                     self._available = False
                     return False
 
@@ -218,10 +227,10 @@ class BackendManager:
     def __init__(self, settings_file: Path = SETTINGS_FILE):
         self.settings_file = settings_file
         self.backends: dict[str, BackendConfig] = {}
-        self.routing_config: dict = {}
-        self.system_config: dict = {}
-        self.models_config: dict = {}
-        self._active_backend_id: Optional[str] = None
+        self.routing_config: dict[str, Any] = {}
+        self.system_config: dict[str, Any] = {}
+        self.models_config: dict[str, Any] = {}
+        self._active_backend_id: str | None = None
 
         # Health check cache with TTL
         self._health_cache: dict[str, bool] = {}
@@ -257,17 +266,19 @@ class BackendManager:
                 enabled.sort(key=lambda b: b.priority)
                 self._active_backend_id = enabled[0].id
 
-            _get_log().info("settings_loaded",
-                     backends=len(self.backends),
-                     enabled=[b.id for b in self.backends.values() if b.enabled])
+            _get_log().info(
+                "settings_loaded",
+                backends=len(self.backends),
+                enabled=[b.id for b in self.backends.values() if b.enabled],
+            )
 
         except Exception as e:
             _get_log().error("settings_load_failed", error=str(e))
             self._create_default_settings()
 
     def _create_default_settings(self) -> None:
-        """Create default settings file."""
-        default = {
+        """Create default settings file with auto-detected backends."""
+        default: dict[str, Any] = {
             "version": "1.0",
             "system": {
                 "gpu_memory_limit_gb": 8,
@@ -284,11 +295,185 @@ class BackendManager:
             "auth": {
                 "enabled": False,
                 "tracking_enabled": True,
-            }
+            },
         }
+
+        # Try to auto-detect available backends
+        detected = self._detect_available_backends()
+        if detected:
+            default["backends"] = detected
+            _get_log().info("backends_auto_detected", count=len(detected))
+
         self.save_settings(default)
 
-    def save_settings(self, data: Optional[dict] = None) -> bool:
+    def _detect_available_backends(self) -> list[dict[str, Any]]:
+        """
+        Auto-detect available LLM backends on common ports.
+
+        Probes:
+        - localhost:8080 (llama.cpp default)
+        - localhost:11434 (Ollama default)
+
+        Returns list of backend config dicts ready for settings.json.
+        """
+        detected = []
+
+        # Common endpoints to probe
+        endpoints = [
+            {
+                "url": "http://localhost:8080",
+                "provider": "llamacpp",
+                "name": "Local llama.cpp",
+                "health": "/health",
+                "models": "/v1/models",
+            },
+            {
+                "url": "http://localhost:11434",
+                "provider": "ollama",
+                "name": "Local Ollama",
+                "health": "/api/tags",
+                "models": "/api/tags",
+            },
+        ]
+
+        for endpoint in endpoints:
+            try:
+                backend = self._probe_endpoint(endpoint)
+                if backend:
+                    detected.append(backend)
+            except Exception as e:
+                _get_log().debug("endpoint_probe_failed", url=endpoint["url"], error=str(e))
+
+        return detected
+
+    def _probe_endpoint(self, endpoint: dict[str, Any]) -> dict[str, Any] | None:
+        """
+        Probe a single endpoint and return backend config if available.
+
+        Queries the models endpoint to discover available models and
+        intelligently assigns them to tiers.
+        """
+        import httpx
+
+        url = endpoint["url"]
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                # Check if server is responding
+                health_resp = client.get(f"{url}{endpoint['health']}")
+                if health_resp.status_code != 200:
+                    return None
+
+                # Get available models
+                models_resp = client.get(f"{url}{endpoint['models']}")
+                if models_resp.status_code != 200:
+                    return None
+
+                data = models_resp.json()
+                available_models = self._parse_models_response(data, endpoint["provider"])
+
+                if not available_models:
+                    return None
+
+                # Assign models to tiers
+                tier_assignments = self._assign_models_to_tiers(available_models)
+
+                backend_id = f"{endpoint['provider']}-local"
+                return {
+                    "id": backend_id,
+                    "name": endpoint["name"],
+                    "provider": endpoint["provider"],
+                    "type": "local",
+                    "url": url,
+                    "enabled": True,
+                    "priority": 0 if endpoint["provider"] == "llamacpp" else 1,
+                    "models": tier_assignments,
+                    "health_endpoint": endpoint["health"],
+                    "models_endpoint": endpoint["models"],
+                }
+
+        except (httpx.ConnectError, httpx.TimeoutException):
+            return None
+        except Exception as e:
+            _get_log().debug("probe_error", url=url, error=str(e))
+            return None
+
+    def _parse_models_response(self, data: dict[str, Any], provider: str) -> list[str]:
+        """Parse models from API response based on provider format."""
+        models = []
+
+        if provider == "ollama":
+            # Ollama format: {"models": [{"name": "model:tag", ...}]}
+            for model in data.get("models", []):
+                name = model.get("name", "")
+                if name:
+                    models.append(name.replace(":latest", ""))
+        else:
+            # OpenAI-compatible format: {"data": [{"id": "model-name", ...}]}
+            for model in data.get("data", []):
+                model_id = model.get("id", "")
+                # Only include loaded models if status is available
+                status = model.get("status", {})
+                if isinstance(status, dict) and status.get("value") == "loaded":
+                    models.append(model_id)
+                elif not status or not isinstance(status, dict):
+                    # No status info - include all
+                    models.append(model_id)
+
+        return models
+
+    def _assign_models_to_tiers(self, available_models: list[str]) -> dict[str, str]:
+        """
+        Intelligently assign available models to tiers.
+
+        If only one model is available, use it for ALL tiers.
+        Otherwise, try to match models to appropriate tiers based on their names.
+        """
+        from .config import detect_model_tier
+
+        # Filter out vocab/test files
+        real_models = [m for m in available_models if not m.startswith("ggml-vocab")]
+
+        if not real_models:
+            return {"quick": "", "coder": "", "moe": "", "thinking": ""}
+
+        # CRITICAL FIX: If only one model, use it for ALL tiers
+        if len(real_models) == 1:
+            model = real_models[0]
+            _get_log().info("single_model_detected", model=model, action="assigning_to_all_tiers")
+            return {
+                "quick": model,
+                "coder": model,
+                "moe": model,
+                "thinking": model,
+            }
+
+        # Multiple models - try to classify each
+        tier_candidates: dict[str, list[str]] = {
+            "quick": [],
+            "coder": [],
+            "moe": [],
+            "thinking": [],
+        }
+
+        for model in real_models:
+            tier = detect_model_tier(model)
+            tier_candidates[tier].append(model)
+
+            # Check for thinking/reasoning models
+            model_lower = model.lower()
+            if any(x in model_lower for x in ["think", "reason", "r1", "o1"]):
+                tier_candidates["thinking"].append(model)
+
+        # Assign best candidate for each tier, falling back to first available
+        first_model = real_models[0]
+        return {
+            "quick": tier_candidates["quick"][0] if tier_candidates["quick"] else first_model,
+            "coder": tier_candidates["coder"][0] if tier_candidates["coder"] else first_model,
+            "moe": tier_candidates["moe"][0] if tier_candidates["moe"] else first_model,
+            "thinking": tier_candidates["thinking"][0] if tier_candidates["thinking"] else first_model,
+        }
+
+    def save_settings(self, data: dict[str, Any] | None = None) -> bool:
         """Save current settings to the JSON file."""
         if data is None:
             data = {
@@ -318,10 +503,7 @@ class BackendManager:
         Must be awaited to ensure all clients are cleaned up before reload completes.
         """
         # Close all existing clients and wait for cleanup
-        close_tasks = [
-            backend.close_client()
-            for backend in self.backends.values()
-        ]
+        close_tasks = [backend.close_client() for backend in self.backends.values()]
         if close_tasks:
             await asyncio.gather(*close_tasks, return_exceptions=True)
 
@@ -334,11 +516,11 @@ class BackendManager:
         enabled.sort(key=lambda b: b.priority)
         return enabled
 
-    def get_backend(self, backend_id: str) -> Optional[BackendConfig]:
+    def get_backend(self, backend_id: str) -> BackendConfig | None:
         """Get a specific backend by ID."""
         return self.backends.get(backend_id)
 
-    def get_active_backend(self) -> Optional[BackendConfig]:
+    def get_active_backend(self) -> BackendConfig | None:
         """Get the currently active backend."""
         if self._active_backend_id:
             return self.backends.get(self._active_backend_id)
@@ -380,13 +562,13 @@ class BackendManager:
         tasks = [backend.check_health() for backend in enabled]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        health = {}
-        for backend, result in zip(enabled, results):
+        health: dict[str, bool] = {}
+        for backend, result in zip(enabled, results, strict=True):
             if isinstance(result, Exception):
                 health[backend.id] = False
                 _get_log().warning("health_check_exception", backend_id=backend.id, error=str(result))
             else:
-                health[backend.id] = result
+                health[backend.id] = bool(result)
 
         # Update cache
         self._health_cache = health.copy()
@@ -399,22 +581,24 @@ class BackendManager:
         self._health_cache = {}
         self._health_cache_time = 0.0
 
-    async def get_health_status(self) -> dict:
+    async def get_health_status(self) -> dict[str, Any]:
         """Get comprehensive health status for all backends."""
         health = await self.check_all_health()
 
         backends_status = []
         for backend in self.backends.values():
-            backends_status.append({
-                "id": backend.id,
-                "name": backend.name,
-                "provider": backend.provider,
-                "type": backend.type,
-                "url": backend.url,
-                "enabled": backend.enabled,
-                "available": health.get(backend.id, False) if backend.enabled else False,
-                "models": backend.models,
-            })
+            backends_status.append(
+                {
+                    "id": backend.id,
+                    "name": backend.name,
+                    "provider": backend.provider,
+                    "type": backend.type,
+                    "url": backend.url,
+                    "enabled": backend.enabled,
+                    "available": health.get(backend.id, False) if backend.enabled else False,
+                    "models": backend.models,
+                }
+            )
 
         # Determine overall status
         active = self.get_active_backend()
@@ -435,7 +619,7 @@ class BackendManager:
             "routing": self.routing_config,
         }
 
-    def add_backend(self, backend_data: dict) -> BackendConfig:
+    def add_backend(self, backend_data: dict[str, Any]) -> BackendConfig:
         """Add a new backend from the WebGUI."""
         backend = BackendConfig.from_dict(backend_data)
         self.backends[backend.id] = backend
@@ -443,7 +627,7 @@ class BackendManager:
         _get_log().info("backend_added", backend_id=backend.id, name=backend.name)
         return backend
 
-    async def update_backend(self, backend_id: str, updates: dict) -> Optional[BackendConfig]:
+    async def update_backend(self, backend_id: str, updates: dict[str, Any]) -> BackendConfig | None:
         """
         Update an existing backend.
 
@@ -526,7 +710,7 @@ async def shutdown_backends() -> None:
     results = await asyncio.gather(*close_tasks, return_exceptions=True)
 
     # Log any errors but don't fail
-    for backend, result in zip(backends, results):
+    for backend, result in zip(backends, results, strict=True):
         if isinstance(result, Exception):
             _get_log().warning("backend_close_failed", backend_id=backend.id, error=str(result))
 

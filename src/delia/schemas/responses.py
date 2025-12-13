@@ -18,11 +18,12 @@ Structured response schemas for LLM-to-LLM communication.
 These schemas provide typed, predictable responses that AI assistants
 can reliably parse and act upon.
 """
-from datetime import datetime, timezone
-from typing import Optional
+
+from datetime import UTC, datetime
+
 from pydantic import BaseModel, Field
 
-from .enums import ModelTier, Severity, Language
+from .enums import Language, ModelTier, Severity
 
 
 class UsageMetrics(BaseModel):
@@ -48,7 +49,7 @@ class UsageMetrics(BaseModel):
         ge=0,
         description="Total request time in milliseconds",
     )
-    queue_wait_ms: Optional[int] = Field(
+    queue_wait_ms: int | None = Field(
         default=None,
         description="Time waiting in queue (if queued)",
     )
@@ -78,7 +79,7 @@ class ExecutionInfo(BaseModel):
         description="Provider name (ollama, llamacpp, gemini)",
     )
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="Request timestamp (UTC)",
     )
 
@@ -94,7 +95,7 @@ class StructuredResponse(BaseModel):
         default="",
         description="The main response content (raw LLM output)",
     )
-    error: Optional[str] = Field(
+    error: str | None = Field(
         default=None,
         description="Error message if request failed",
     )
@@ -110,7 +111,7 @@ class StructuredResponse(BaseModel):
         default="",
         description="Unique request identifier",
     )
-    warnings: Optional[list[str]] = Field(
+    warnings: list[str] | None = Field(
         default=None,
         description="Non-fatal warnings about the response",
     )
@@ -131,26 +132,26 @@ class CodeFinding(BaseModel):
         ...,
         description="Description of the issue",
     )
-    line_start: Optional[int] = Field(
+    line_start: int | None = Field(
         default=None,
         ge=1,
         description="Starting line number",
     )
-    line_end: Optional[int] = Field(
+    line_end: int | None = Field(
         default=None,
         ge=1,
         description="Ending line number",
     )
-    column: Optional[int] = Field(
+    column: int | None = Field(
         default=None,
         ge=1,
         description="Column number",
     )
-    code_snippet: Optional[str] = Field(
+    code_snippet: str | None = Field(
         default=None,
         description="Relevant code snippet",
     )
-    suggestion: Optional[str] = Field(
+    suggestion: str | None = Field(
         default=None,
         description="Suggested fix",
     )
@@ -167,11 +168,11 @@ class CodeReviewResponse(StructuredResponse):
         default="",
         description="Brief summary of review",
     )
-    metrics: Optional[dict[str, int]] = Field(
+    metrics: dict[str, int] | None = Field(
         default=None,
         description="Counts by severity: {'error': 2, 'warning': 5}",
     )
-    reviewed_lines: Optional[int] = Field(
+    reviewed_lines: int | None = Field(
         default=None,
         description="Lines of code reviewed",
     )
@@ -188,11 +189,11 @@ class GeneratedCode(BaseModel):
         ...,
         description="Programming language",
     )
-    file_path: Optional[str] = Field(
+    file_path: str | None = Field(
         default=None,
         description="Suggested file path",
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         description="Description of what this code does",
     )
@@ -205,15 +206,15 @@ class CodeGenerateResponse(StructuredResponse):
         default_factory=list,
         description="List of generated code blocks",
     )
-    imports_needed: Optional[list[str]] = Field(
+    imports_needed: list[str] | None = Field(
         default=None,
         description="Required imports",
     )
-    dependencies: Optional[list[str]] = Field(
+    dependencies: list[str] | None = Field(
         default=None,
         description="Package dependencies",
     )
-    tests: Optional[list[GeneratedCode]] = Field(
+    tests: list[GeneratedCode] | None = Field(
         default=None,
         description="Generated tests (if requested)",
     )
@@ -243,11 +244,11 @@ class AnalyzeResponse(StructuredResponse):
         default_factory=list,
         description="Analysis sections",
     )
-    metrics: Optional[dict[str, float | int | str]] = Field(
+    metrics: dict[str, float | int | str] | None = Field(
         default=None,
         description="Quantitative metrics",
     )
-    recommendations: Optional[list[str]] = Field(
+    recommendations: list[str] | None = Field(
         default=None,
         description="Recommendations based on analysis",
     )
@@ -265,7 +266,7 @@ class ReasoningStep(BaseModel):
         ...,
         description="The reasoning thought",
     )
-    conclusion: Optional[str] = Field(
+    conclusion: str | None = Field(
         default=None,
         description="Conclusion from this step",
     )
@@ -282,11 +283,11 @@ class ThinkResponse(StructuredResponse):
         default="",
         description="Final answer/conclusion",
     )
-    alternatives_considered: Optional[list[str]] = Field(
+    alternatives_considered: list[str] | None = Field(
         default=None,
         description="Alternative approaches considered",
     )
-    confidence_explanation: Optional[str] = Field(
+    confidence_explanation: str | None = Field(
         default=None,
         description="Explanation of confidence level",
     )
@@ -299,11 +300,11 @@ class SummarizeResponse(StructuredResponse):
         default="",
         description="The summary",
     )
-    key_points: Optional[list[str]] = Field(
+    key_points: list[str] | None = Field(
         default=None,
         description="Key points extracted",
     )
-    word_count: Optional[int] = Field(
+    word_count: int | None = Field(
         default=None,
         description="Word count of summary",
     )
@@ -324,7 +325,7 @@ class CritiqueResponse(StructuredResponse):
         default_factory=list,
         description="Improvement suggestions",
     )
-    alternatives: Optional[list[str]] = Field(
+    alternatives: list[str] | None = Field(
         default=None,
         description="Alternative approaches",
     )
@@ -350,7 +351,7 @@ class PlanStep(BaseModel):
         ...,
         description="Step description",
     )
-    dependencies: Optional[list[int]] = Field(
+    dependencies: list[int] | None = Field(
         default=None,
         description="Dependent step numbers",
     )
@@ -363,11 +364,11 @@ class PlanResponse(StructuredResponse):
         default_factory=list,
         description="Plan steps",
     )
-    risks: Optional[list[str]] = Field(
+    risks: list[str] | None = Field(
         default=None,
         description="Identified risks",
     )
-    assumptions: Optional[list[str]] = Field(
+    assumptions: list[str] | None = Field(
         default=None,
         description="Assumptions made",
     )

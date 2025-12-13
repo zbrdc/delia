@@ -22,14 +22,15 @@ Run this script to generate the necessary environment variables.
 
 import os
 import secrets
-import uuid
 from pathlib import Path
 
-def generate_jwt_secret():
+
+def generate_jwt_secret() -> str:
     """Generate a secure JWT secret."""
     return secrets.token_urlsafe(32)
 
-def setup_oauth():
+
+def setup_oauth() -> None:
     """Interactive OAuth setup for Microsoft 365."""
     print("Delia Microsoft 365 OAuth Setup")
     print("=" * 50)
@@ -43,7 +44,7 @@ def setup_oauth():
     if os.getenv("MICROSOFT_CLIENT_ID"):
         print("WARNING: Microsoft OAuth appears to already be configured.")
         overwrite = input("Overwrite existing configuration? (y/N): ").lower().strip()
-        if overwrite != 'y':
+        if overwrite != "y":
             print("Setup cancelled.")
             return
 
@@ -95,7 +96,7 @@ MICROSOFT_REDIRECT_URL={redirect_url}
 """
 
     env_file.write_text(env_content)
-    print(f"Created .env file with configuration")
+    print("Created .env file with configuration")
     print()
 
     print("Next steps:")
@@ -111,7 +112,8 @@ MICROSOFT_REDIRECT_URL={redirect_url}
     print("   - Use HTTPS in production")
     print()
 
-def setup_basic_auth():
+
+def setup_basic_auth() -> None:
     """Setup basic username/password authentication."""
     print("Delia Basic Authentication Setup")
     print("=" * 50)
@@ -140,13 +142,14 @@ DELIA_JWT_SECRET={jwt_secret}
     print("   2. Start the server: uv run python mcp_server.py --transport http --port 8000")
     print("   3. Register a user: curl -X POST http://localhost:8000/auth/register \\")
     print("       -H 'Content-Type: application/json' \\")
-    print("       -d '{\"email\": \"admin@example.com\", \"password\": \"securepassword\"}'")
+    print('       -d \'{"email": "admin@example.com", "password": "securepassword"}\'')
     print("   4. Login: curl -X POST http://localhost:8000/auth/jwt/login \\")
     print("       -H 'Content-Type: application/json' \\")
-    print("       -d '{\"username\": \"admin@example.com\", \"password\": \"securepassword\"}'")
+    print('       -d \'{"username": "admin@example.com", "password": "securepassword"}\'')
     print()
 
-def main():
+
+def main() -> None:
     print("Delia Authentication Setup")
     print("=" * 40)
     print()
@@ -163,6 +166,7 @@ def main():
         setup_basic_auth()
     else:
         print("Invalid choice. Please run again.")
+
 
 if __name__ == "__main__":
     main()

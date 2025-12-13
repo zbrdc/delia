@@ -18,11 +18,13 @@ Typed enums for structured tool interfaces.
 These enums provide explicit type safety for LLM-to-LLM communication,
 replacing natural language inference with typed fields.
 """
+
 from enum import Enum
 
 
 class TaskType(str, Enum):
     """Task types with explicit semantics."""
+
     REVIEW = "review"
     ANALYZE = "analyze"
     GENERATE = "generate"
@@ -35,14 +37,16 @@ class TaskType(str, Enum):
 
 class ModelTier(str, Enum):
     """Explicit model tier selection."""
-    QUICK = "quick"       # 7B models - fast responses
-    CODER = "coder"       # 14B code-specialized
-    MOE = "moe"           # 30B+ mixture of experts
-    THINKING = "thinking" # Extended reasoning models
+
+    QUICK = "quick"  # 7B models - fast responses
+    CODER = "coder"  # 14B code-specialized
+    MOE = "moe"  # 30B+ mixture of experts
+    THINKING = "thinking"  # Extended reasoning models
 
 
 class ContentType(str, Enum):
     """Explicit content classification."""
+
     CODE = "code"
     TEXT = "text"
     MIXED = "mixed"
@@ -53,6 +57,7 @@ class ContentType(str, Enum):
 
 class Language(str, Enum):
     """Programming language specification."""
+
     PYTHON = "python"
     TYPESCRIPT = "typescript"
     JAVASCRIPT = "javascript"
@@ -79,13 +84,15 @@ class Language(str, Enum):
 
 class BackendPreference(str, Enum):
     """Backend routing preference."""
-    AUTO = "auto"         # Let Delia choose
-    LOCAL = "local"       # Prefer local GPU
-    REMOTE = "remote"     # Prefer remote/cloud
+
+    AUTO = "auto"  # Let Delia choose
+    LOCAL = "local"  # Prefer local GPU
+    REMOTE = "remote"  # Prefer remote/cloud
 
 
 class Severity(str, Enum):
     """Issue severity levels for code review findings."""
+
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
@@ -94,6 +101,7 @@ class Severity(str, Enum):
 
 class AnalysisType(str, Enum):
     """Types of code analysis."""
+
     COMPLEXITY = "complexity"
     DEPENDENCIES = "dependencies"
     SECURITY = "security"
@@ -104,6 +112,7 @@ class AnalysisType(str, Enum):
 
 class ReasoningDepth(str, Enum):
     """Depth of reasoning for think tasks."""
+
     QUICK = "quick"
     NORMAL = "normal"
     DEEP = "deep"

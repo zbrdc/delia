@@ -238,8 +238,8 @@ class TestMainFunction:
         assert hasattr(mcp_server, 'main')
         assert callable(mcp_server.main)
 
-    def test_argparse_configuration(self):
-        """Main should use argparse with correct options."""
+    def test_typer_cli_configuration(self):
+        """Main should use typer with correct options."""
         # Test by running with --help
         result = subprocess.run(
             ["uv", "run", "python", "-m", "delia.mcp_server", "--help"],
@@ -254,8 +254,10 @@ class TestMainFunction:
         assert "-p" in result.stdout or "--port" in result.stdout
         assert "--host" in result.stdout
 
-        # Should have examples
-        assert "Example" in result.stdout or "example" in result.stdout.lower()
+        # Should show transport options
+        assert "stdio" in result.stdout
+        assert "sse" in result.stdout
+        assert "http" in result.stdout
 
 
 class TestPackageEntryPoints:
@@ -269,7 +271,7 @@ class TestPackageEntryPoints:
 
         scripts = config.get("project", {}).get("scripts", {})
         assert "delia" in scripts
-        assert "mcp_server:main" in scripts["delia"]
+        assert "delia.cli:app" in scripts["delia"]
 
     def test_pyproject_defines_setup_auth_script(self):
         """pyproject.toml should define 'delia-setup-auth' script."""

@@ -6,14 +6,14 @@ A Model Context Protocol (MCP) server that cultivates your local LLM garden. Pla
 
 ## Features
 
-- **Smart Vine Selection**: Routes seeds to the right vine - quick (7B), coder (14B+), moe (30B+), or thinking
-- **Multi-Garden Support**: Ollama, llama.cpp, and Gemini gardens with automatic failover
-- **Context-Aware Routing**: Handles large seeds with appropriate context windows
-- **Circuit Breaker**: Drought protection with graceful recovery
-- **Parallel Processing**: Tends multiple seeds simultaneously
-- **Authentication**: Optional greenhouse access control
-- **Usage Tracking**: Per-gardener quotas and harvest monitoring
-- **Dashboard**: Real-time garden status with watermelon-themed activity feed
+- **Smart Model Selection**: Automatically routes prompts to optimal model tier (quick/coder/moe/thinking)
+- **Multi-Backend Support**: Ollama, llama.cpp, Gemini, vLLM, OpenAI-compatible APIs with automatic failover
+- **Context-Aware Routing**: Routes large prompts to models with sufficient context windows
+- **Circuit Breaker**: Protects against cascading failures with automatic recovery
+- **Parallel Processing**: Batch multiple requests across backends simultaneously
+- **Authentication**: Optional user auth with per-user quotas (HTTP mode)
+- **Usage Tracking**: Token counts, cost estimates, and performance metrics
+- **Dashboard**: Real-time status monitoring with activity feed
 
 ## Requirements
 
@@ -34,20 +34,37 @@ A Model Context Protocol (MCP) server that cultivates your local LLM garden. Pla
 
 ## Quick Start
 
+### Prerequisites
+
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
+2. Install [Ollama](https://ollama.ai/download) and ensure it's running (`ollama serve`)
+
+### Installation
+
 ```bash
-# Clone and install
+# Clone and install dependencies
 git clone https://github.com/zbrdc/delia.git
 cd delia
 uv sync
 
-# Pull models (examples - choose based on your hardware)
-ollama pull qwen3:14b           # General purpose
-ollama pull qwen2.5-coder:14b   # Code specialized
-ollama pull qwen3:30b-a3b       # Complex reasoning
+# Pull at least one model (choose based on your VRAM)
+ollama pull qwen3:14b           # 8GB+ VRAM - general purpose
+ollama pull qwen2.5-coder:14b   # 8GB+ VRAM - code specialized
+ollama pull qwen3:30b-a3b       # 16GB+ VRAM - complex reasoning
 
-# Run server
-uv run python mcp_server.py
+# Verify Ollama is running
+curl http://localhost:11434/api/tags
+
+# Run the setup wizard
+uv run delia init
 ```
+
+The setup wizard will:
+- Detect available backends (Ollama, llama.cpp, vLLM)
+- Auto-assign models to tiers based on capabilities
+- Optionally configure detected MCP clients (Claude Code, VS Code, etc.)
+
+See [Configuration](#configuration) to customize further.
 
 ## Integration
 
@@ -136,13 +153,24 @@ Create `~/.copilot-cli/mcp.json`:
 
 ### Backend Configuration
 
-Copy the example configuration and customize for your setup:
+Delia stores configuration in `settings.json` (created on first run). Copy the example to customize:
 
 ```bash
 cp settings.json.example settings.json
 ```
 
-Then edit `settings.json`:
+#### Configuration Fields
+
+| Field | Description |
+|-------|-------------|
+| `id` | Unique identifier for the backend |
+| `provider` | Backend type: `ollama`, `llamacpp`, `gemini`, `vllm`, `openai` |
+| `type` | `local` (GPU on this machine) or `remote` (cloud/network) |
+| `url` | API endpoint URL |
+| `priority` | Lower = preferred (used for failover ordering) |
+| `models` | Map of tier → model name for this backend |
+
+Example `settings.json`:
 
 ```json
 {
@@ -232,29 +260,36 @@ uv run python mcp_server.py --help
 
 Delia provides these MCP tools:
 
+### Core Tools
+
+| Tool | Description | Example |
+|------|-------------|---------|
+| `delegate` | Route a task to the optimal model tier | `delegate(task="review", content="<code>")` |
+| `think` | Deep reasoning with extended thinking | `think(problem="Design auth system", depth="deep")` |
+| `batch` | Process multiple tasks in parallel | `batch(tasks='[{"task":"review","content":"..."}]')` |
+
+### Management Tools
+
 | Tool | Description |
 |------|-------------|
-| `delegate` | Execute tasks with automatic model selection |
-| `think` | Extended reasoning for complex problems |
-| `batch` | Process multiple tasks in parallel |
-| `health` | Check backend status and statistics |
-| `models` | List available models and tiers |
-| `switch_backend` | Switch between backends at runtime |
-| `switch_model` | Change model for a tier |
-| `get_model_info` | Get model specifications |
+| `health` | Check backend availability, circuit breaker status, and usage statistics |
+| `models` | List configured models per tier and currently loaded models |
+| `switch_backend` | Change active backend at runtime (e.g., switch from Ollama to llama.cpp) |
+| `switch_model` | Swap the model for a specific tier without restart |
+| `get_model_info` | Get VRAM requirements and context window for any model |
 
-## Vine Selection
+## Model Tiers (Vine Selection)
 
-Delia picks the right vine for every seed:
+Delia automatically routes requests to the optimal model tier based on task complexity. In garden terminology: prompts are "seeds," model tiers are "vines," and responses are "melons."
 
-| Vine | Size | Best For |
-|------|------|----------|
-| Quick | 7B-14B | Summaries, simple questions |
-| Coder | 14B-30B | Generation, review, debugging |
-| MoE | 30B+ | Architecture, critique, analysis |
-| Thinking | Specialized | Extended reasoning, research |
+| Tier | Model Size | Task Types | Triggers |
+|------|------------|------------|----------|
+| **quick** | 7B-14B | Summaries, simple Q&A | `task="quick"`, `task="summarize"` |
+| **coder** | 14B-30B | Code generation, review, analysis | `task="generate"`, `task="review"`, `task="analyze"` |
+| **moe** | 30B+ | Architecture, planning, critique | `task="plan"`, `task="critique"` |
+| **thinking** | Specialized | Extended reasoning, research | `model="thinking"` or complex prompts |
 
-Override with hints in your prompt: "use the large model" or "quick answer".
+Override automatic selection with: `model="quick"`, `model="coder"`, `model="moe"`, or natural hints like "use the large model".
 
 ## Troubleshooting
 
@@ -284,10 +319,16 @@ uv run python -c "import mcp_server; print('OK')"
 
 ## Performance
 
-Typical harvest times (modern hardware):
-- Quick vine: 2-5 seconds
-- Coder vine: 5-15 seconds
-- MoE/Thinking vines: 30-60 seconds
+Typical response times on modern hardware (RTX 3090/4090):
+
+| Tier | Response Time | Use Case |
+|------|---------------|----------|
+| Quick | 2-5 seconds | Simple queries, summaries |
+| Coder | 5-15 seconds | Code review, generation |
+| MoE | 15-45 seconds | Complex analysis, planning |
+| Thinking | 30-90 seconds | Deep reasoning, research |
+
+Times vary based on prompt length, model size, and hardware.
 
 ## License
 

@@ -13,6 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """Delia's Watermelon-Themed Messages for dashboard display."""
+
 import random
 from enum import Enum
 

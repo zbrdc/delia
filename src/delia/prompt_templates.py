@@ -19,32 +19,32 @@ Provides structured prompt templates with JSON schema integration and task-speci
 """
 
 from jinja2 import Template
-from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
-import json
 
 
 class TaskContext(BaseModel):
     """Structured context for task execution."""
+
     task_type: str = Field(..., description="Type of task (quick, generate, review, etc.)")
     content: str = Field(..., description="Main content to process")
-    language: Optional[str] = Field(None, description="Programming language if applicable")
-    symbols: Optional[list[str]] = Field(default_factory=list, description="Code symbols to focus on")
-    file_path: Optional[str] = Field(None, description="File path if applicable")
-    context_files: Optional[list[str]] = Field(default_factory=list, description="Related files for context")
-    user_instructions: Optional[str] = Field(None, description="Additional user instructions")
+    language: str | None = Field(None, description="Programming language if applicable")
+    symbols: list[str] | None = Field(default_factory=list, description="Code symbols to focus on")
+    file_path: str | None = Field(None, description="File path if applicable")
+    context_files: list[str] | None = Field(default_factory=list, description="Related files for context")
+    user_instructions: str | None = Field(None, description="Additional user instructions")
 
 
 class PromptTemplateManager:
     """Manages structured prompt templates for different task types."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.templates = self._load_templates()
 
-    def _load_templates(self) -> Dict[str, Template]:
+    def _load_templates(self) -> dict[str, Template]:
         """Load Jinja2 templates for different task types."""
         return {
-            "quick": Template("""
+            "quick": Template(
+                """
 You are a helpful AI assistant. Answer the following question or request concisely and accurately.
 
 Context:
@@ -62,9 +62,10 @@ Focus areas: {{ symbols|join(', ') }}
 {% endif %}
 
 Provide a direct, helpful response.
-""".strip()),
-
-            "generate": Template("""
+""".strip()
+            ),
+            "generate": Template(
+                """
 You are an expert {{ language }} developer. Generate high-quality code based on the following requirements.
 
 Context:
@@ -85,9 +86,10 @@ Additional instructions: {{ user_instructions }}
 {% endif %}
 
 Generate complete, working {{ language }} code with proper error handling and documentation.
-""".strip()),
-
-            "review": Template("""
+""".strip()
+            ),
+            "review": Template(
+                """
 You are a senior {{ language }} code reviewer. Analyze the following code for quality, correctness, and best practices.
 
 Code to review:
@@ -115,9 +117,10 @@ Key symbols to focus on: {{ symbols|join(', ') }}
 {% endif %}
 
 Provide specific, actionable feedback with severity levels (Critical/Major/Minor).
-""".strip()),
-
-            "analyze": Template("""
+""".strip()
+            ),
+            "analyze": Template(
+                """
 You are a technical analyst specializing in {{ language }} code analysis.
 
 Code to analyze:
@@ -148,9 +151,10 @@ Specific analysis requirements: {{ user_instructions }}
 {% endif %}
 
 Provide a comprehensive analysis with specific findings and recommendations.
-""".strip()),
-
-            "plan": Template("""
+""".strip()
+            ),
+            "plan": Template(
+                """
 You are an expert software architect. Create a detailed implementation plan for the following requirements.
 
 Project requirements: {{ content }}
@@ -182,9 +186,10 @@ Additional constraints: {{ user_instructions }}
 {% endif %}
 
 Provide a structured plan with clear, actionable steps.
-""".strip()),
-
-            "critique": Template("""
+""".strip()
+            ),
+            "critique": Template(
+                """
 You are a technical lead conducting a thorough code review and critique.
 
 Code under review:
@@ -217,7 +222,8 @@ Review focus areas: {{ user_instructions }}
 {% endif %}
 
 Provide a balanced critique with strengths, weaknesses, and prioritized improvement recommendations.
-""".strip())
+""".strip()
+            ),
         }
 
     def render_prompt(self, task_context: TaskContext) -> str:
@@ -241,11 +247,11 @@ prompt_manager = PromptTemplateManager()
 def create_structured_prompt(
     task_type: str,
     content: str,
-    language: Optional[str] = None,
-    symbols: Optional[list[str]] = None,
-    file_path: Optional[str] = None,
-    context_files: Optional[list[str]] = None,
-    user_instructions: Optional[str] = None
+    language: str | None = None,
+    symbols: list[str] | None = None,
+    file_path: str | None = None,
+    context_files: list[str] | None = None,
+    user_instructions: str | None = None,
 ) -> str:
     """
     Create a structured prompt using the template system.
@@ -269,7 +275,7 @@ def create_structured_prompt(
         symbols=symbols or [],
         file_path=file_path,
         context_files=context_files or [],
-        user_instructions=user_instructions
+        user_instructions=user_instructions,
     )
 
     return prompt_manager.render_prompt(context)

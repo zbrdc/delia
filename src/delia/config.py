@@ -18,10 +18,11 @@ Delia Configuration
 All user-configurable values are defined here for easy customization.
 Values have been validated with Wolfram Alpha for mathematical accuracy.
 """
+
 import os
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from dataclasses import dataclass, field
 
 from . import paths
 
@@ -29,6 +30,7 @@ from . import paths
 @dataclass(frozen=True)
 class ModelConfig:
     """Model tier configuration."""
+
     name: str
     ollama_model: str
     vram_gb: float
@@ -50,86 +52,80 @@ class Config:
     # Options: "ollama", "llamacpp"
     # Default is "ollama" (recommended), can be overridden via DELIA_BACKEND
     # ============================================================
-    backend: str = field(
-        default_factory=lambda: os.getenv("DELIA_BACKEND", "ollama")
-    )
+    backend: str = field(default_factory=lambda: os.getenv("DELIA_BACKEND", "ollama"))
 
     # ============================================================
     # OLLAMA CONNECTION
     # ============================================================
-    ollama_base: str = field(
-        default_factory=lambda: os.getenv("OLLAMA_BASE", "http://localhost:11434")
-    )
+    ollama_base: str = field(default_factory=lambda: os.getenv("OLLAMA_BASE", "http://localhost:11434"))
     ollama_timeout_seconds: float = 300.0
     ollama_connect_timeout: float = 10.0
     # Backend type: "local" or "remote" - determines how it's referred to
-    ollama_type: str = field(
-        default_factory=lambda: os.getenv("OLLAMA_TYPE", "local")
-    )
+    ollama_type: str = field(default_factory=lambda: os.getenv("OLLAMA_TYPE", "local"))
 
     # ============================================================
     # LLAMA.CPP CONNECTION (OpenAI-compatible API)
     # ============================================================
-    llamacpp_base: str = field(
-        default_factory=lambda: os.getenv("LLAMACPP_BASE", "http://localhost:8080")
-    )
+    llamacpp_base: str = field(default_factory=lambda: os.getenv("LLAMACPP_BASE", "http://localhost:8080"))
     llamacpp_timeout_seconds: float = 300.0
     llamacpp_connect_timeout: float = 10.0
     # Default model name for llama.cpp (used when no specific model is loaded)
-    llamacpp_model: str = field(
-        default_factory=lambda: os.getenv("LLAMACPP_MODEL", "Qwen3-14B-Q4_K_M.gguf")
-    )
+    llamacpp_model: str = field(default_factory=lambda: os.getenv("LLAMACPP_MODEL", "Qwen3-14B-Q4_K_M.gguf"))
     # Context size limit for llama.cpp (in tokens) - used for context-aware routing
     # Set via LLAMACPP_CTX_SIZE env var or adjust based on your llama-server -c setting
-    llamacpp_context_tokens: int = field(
-        default_factory=lambda: int(os.getenv("LLAMACPP_CTX_SIZE", "8192"))
-    )
+    llamacpp_context_tokens: int = field(default_factory=lambda: int(os.getenv("LLAMACPP_CTX_SIZE", "8192")))
     # Backend type: "local" or "remote" - determines how it's referred to
-    llamacpp_type: str = field(
-        default_factory=lambda: os.getenv("LLAMACPP_TYPE", "remote")
-    )
+    llamacpp_type: str = field(default_factory=lambda: os.getenv("LLAMACPP_TYPE", "remote"))
 
     # ============================================================
     # MODEL CONFIGURATION
     # Validated: 40K tokens @ 4 chars/token @ 75% util = 117KB theoretical
     # We use 50KB practical limit for quality output headroom
     # ============================================================
-    model_quick: ModelConfig = field(default_factory=lambda: ModelConfig(
-        name="quick",
-        ollama_model="qwen3:14b",
-        vram_gb=9.0,
-        context_tokens=40_000,
-        num_ctx=8192,  # 8192 * 4 / 1024 = 32KB request context
-        max_input_kb=50,  # 50KB ≈ 12,500 tokens, leaves room for output
-    ))
+    model_quick: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            name="quick",
+            ollama_model="qwen3:14b",
+            vram_gb=9.0,
+            context_tokens=40_000,
+            num_ctx=8192,  # 8192 * 4 / 1024 = 32KB request context
+            max_input_kb=50,  # 50KB ≈ 12,500 tokens, leaves room for output
+        )
+    )
 
-    model_coder: ModelConfig = field(default_factory=lambda: ModelConfig(
-        name="coder",
-        ollama_model="qwen2.5-coder:14b",
-        vram_gb=9.0,
-        context_tokens=128_000,
-        num_ctx=16384,  # 16384 * 4 / 1024 = 64KB request context
-        max_input_kb=100,  # 100KB ≈ 25,000 tokens
-    ))
+    model_coder: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            name="coder",
+            ollama_model="qwen2.5-coder:14b",
+            vram_gb=9.0,
+            context_tokens=128_000,
+            num_ctx=16384,  # 16384 * 4 / 1024 = 64KB request context
+            max_input_kb=100,  # 100KB ≈ 25,000 tokens
+        )
+    )
 
-    model_moe: ModelConfig = field(default_factory=lambda: ModelConfig(
-        name="moe",
-        ollama_model="qwen3:30b-a3b",
-        vram_gb=17.0,
-        context_tokens=128_000,
-        num_ctx=16384,
-        max_input_kb=100,
-    ))
+    model_moe: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            name="moe",
+            ollama_model="qwen3:30b-a3b",
+            vram_gb=17.0,
+            context_tokens=128_000,
+            num_ctx=16384,
+            max_input_kb=100,
+        )
+    )
 
     # Dedicated thinking/reasoning model (uses chain-of-thought)
-    model_thinking: ModelConfig = field(default_factory=lambda: ModelConfig(
-        name="thinking",
-        ollama_model=os.getenv("THINKING_MODEL", "olmo3:7b-think"),  # or "qwen3-coder:30b" for deeper reasoning
-        vram_gb=9.0,  # Adjust based on your chosen model
-        context_tokens=128_000,
-        num_ctx=16384,
-        max_input_kb=100,
-    ))
+    model_thinking: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            name="thinking",
+            ollama_model=os.getenv("THINKING_MODEL", "olmo3:7b-think"),  # or "qwen3-coder:30b" for deeper reasoning
+            vram_gb=9.0,  # Adjust based on your chosen model
+            context_tokens=128_000,
+            num_ctx=16384,
+            max_input_kb=100,
+        )
+    )
 
     # ============================================================
     # MODEL SELECTION THRESHOLDS
@@ -143,19 +139,13 @@ class Config:
     medium_content_threshold: int = 30_000  # 30KB → 7,500 tokens
 
     # Tasks that require MoE model (complex multi-step reasoning)
-    moe_tasks: frozenset = field(
-        default_factory=lambda: frozenset({"plan", "critique"})
-    )
+    moe_tasks: frozenset[str] = field(default_factory=lambda: frozenset({"plan", "critique"}))
 
     # Tasks that benefit from coder model
-    coder_tasks: frozenset = field(
-        default_factory=lambda: frozenset({"generate", "review", "analyze"})
-    )
+    coder_tasks: frozenset[str] = field(default_factory=lambda: frozenset({"generate", "review", "analyze"}))
 
     # Tasks that enable thinking mode
-    thinking_tasks: frozenset = field(
-        default_factory=lambda: frozenset({"plan", "analyze", "critique"})
-    )
+    thinking_tasks: frozenset[str] = field(default_factory=lambda: frozenset({"plan", "analyze", "critique"}))
 
     # ============================================================
     # GENERATION PARAMETERS
@@ -182,9 +172,7 @@ class Config:
     # ============================================================
     # PERSISTENCE
     # ============================================================
-    stats_file: Path = field(
-        default_factory=lambda: paths.STATS_FILE
-    )
+    stats_file: Path = field(default_factory=lambda: paths.STATS_FILE)
 
     # ============================================================
     # AUTHENTICATION & MULTI-USER
@@ -268,6 +256,7 @@ config = Config()
 # Tracks failures and implements adaptive routing
 # ============================================================
 
+
 @dataclass
 class BackendHealth:
     """
@@ -282,6 +271,7 @@ class BackendHealth:
     - Tracks successful/failed context sizes
     - Recommends safe context sizes based on history
     """
+
     name: str
 
     # Failure tracking
@@ -306,6 +296,7 @@ class BackendHealth:
     def record_failure(self, error_type: str, context_size: int = 0) -> None:
         """Record a backend failure and potentially open circuit."""
         import time
+
         self.consecutive_failures += 1
         self.last_failure_time = time.time()
         self.last_error_type = error_type
@@ -322,7 +313,7 @@ class BackendHealth:
             # Exponential backoff: 30s, 60s, 120s, 240s, 300s (max)
             cooldown = min(
                 self.base_cooldown_seconds * (2 ** (self.consecutive_failures - self.failure_threshold)),
-                self.max_cooldown_seconds
+                self.max_cooldown_seconds,
             )
             self.circuit_open_until = time.time() + cooldown
 
@@ -339,19 +330,19 @@ class BackendHealth:
             if context_size > self.safe_context_estimate * 0.9:
                 self.safe_context_estimate = min(
                     int(context_size * 1.1),  # Allow 10% growth
-                    100_000  # Cap at 100KB
+                    100_000,  # Cap at 100KB
                 )
 
     def is_available(self) -> bool:
         """Check if backend is available (circuit not open)."""
         import time
-        if self.circuit_open_until > 0 and time.time() < self.circuit_open_until:
-            return False
-        return True
+
+        return not (self.circuit_open_until > 0 and time.time() < self.circuit_open_until)
 
     def time_until_available(self) -> float:
         """Seconds until circuit closes (0 if available)."""
         import time
+
         if not self.is_available():
             return max(0, self.circuit_open_until - time.time())
         return 0.0
@@ -369,9 +360,10 @@ class BackendHealth:
             return True, recommended
         return False, proposed_size
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, object]:
         """Get current health status as dict."""
         import time
+
         return {
             "available": self.is_available(),
             "consecutive_failures": self.consecutive_failures,
@@ -410,20 +402,20 @@ STATS_FILE = config.stats_file
 # ============================================================
 
 import re
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 # ============================================================
 # REGEX PATTERNS FOR MODEL NAME PARSING
 # ============================================================
 
 # Extract parameter count: "14B", "7b", "72B", "0.5B", "1.5b"
-_PARAM_REGEX = re.compile(r'(\d+(?:\.\d+)?)\s*[bB](?:illion)?(?![a-zA-Z])', re.IGNORECASE)
+_PARAM_REGEX = re.compile(r"(\d+(?:\.\d+)?)\s*[bB](?:illion)?(?![a-zA-Z])", re.IGNORECASE)
 
 # Extract version numbers: "v0.1", "2.5", "3.1", "-v3"
-_VERSION_REGEX = re.compile(r'(?:v?(\d+(?:\.\d+)*))', re.IGNORECASE)
+_VERSION_REGEX = re.compile(r"(?:v?(\d+(?:\.\d+)*))", re.IGNORECASE)
 
 # Detect MoE (Mixture of Experts) patterns: "-a3b", "MoE", "mixtral"
-_MOE_REGEX = re.compile(r'(-a\d+b|moe|mixtral)', re.IGNORECASE)
+_MOE_REGEX = re.compile(r"(-a\d+b|moe|mixtral)", re.IGNORECASE)
 
 # ============================================================
 # MODEL FAMILY DETECTION (HuggingFace top models)
@@ -455,31 +447,39 @@ MODEL_FAMILIES = {
 # ============================================================
 
 # Coder-specialized keywords
-CODER_KEYWORDS = frozenset([
-    "coder", "code", "codellama", "starcoder", "codegemma",
-    "wizardcoder", "magicoder", "deepseek-coder", "yi-coder",
-    "codestral", "granite-code", "stable-code"
-])
+CODER_KEYWORDS = frozenset(
+    [
+        "coder",
+        "code",
+        "codellama",
+        "starcoder",
+        "codegemma",
+        "wizardcoder",
+        "magicoder",
+        "deepseek-coder",
+        "yi-coder",
+        "codestral",
+        "granite-code",
+        "stable-code",
+    ]
+)
 
 # Instruction-tuned keywords
-INSTRUCT_KEYWORDS = frozenset([
-    "instruct", "chat", "-it", "assistant", "rlhf"
-])
+INSTRUCT_KEYWORDS = frozenset(["instruct", "chat", "-it", "assistant", "rlhf"])
 
 # Base model keywords
-BASE_KEYWORDS = frozenset([
-    "base", "foundation", "pretrain", "raw"
-])
+BASE_KEYWORDS = frozenset(["base", "foundation", "pretrain", "raw"])
 
 
 class ModelInfo(NamedTuple):
     """Parsed model information."""
-    params_b: float           # Parameter count in billions (0 if unknown)
-    family: Optional[str]     # Model family (qwen, llama, etc.)
-    is_coder: bool            # Is this a code-specialized model?
-    is_moe: bool              # Is this a Mixture of Experts model?
-    is_instruct: bool         # Is this instruction-tuned?
-    raw_name: str             # Original model name
+
+    params_b: float  # Parameter count in billions (0 if unknown)
+    family: str | None  # Model family (qwen, llama, etc.)
+    is_coder: bool  # Is this a code-specialized model?
+    is_moe: bool  # Is this a Mixture of Experts model?
+    is_instruct: bool  # Is this instruction-tuned?
+    raw_name: str  # Original model name
 
 
 @lru_cache(maxsize=256)
@@ -502,7 +502,7 @@ def parse_model_name(name: str) -> ModelInfo:
     params = float(param_match.group(1)) if param_match else 0.0
 
     # Handle MoE notation like "8x7b" → 56B total
-    moe_mult_match = re.search(r'(\d+)x(\d+)b', name_lower)
+    moe_mult_match = re.search(r"(\d+)x(\d+)b", name_lower)
     if moe_mult_match:
         experts = int(moe_mult_match.group(1))
         per_expert = int(moe_mult_match.group(2))
@@ -527,12 +527,7 @@ def parse_model_name(name: str) -> ModelInfo:
     is_instruct = any(kw in name_lower for kw in INSTRUCT_KEYWORDS)
 
     return ModelInfo(
-        params_b=params,
-        family=family,
-        is_coder=is_coder,
-        is_moe=is_moe,
-        is_instruct=is_instruct,
-        raw_name=name
+        params_b=params, family=family, is_coder=is_coder, is_moe=is_moe, is_instruct=is_instruct, raw_name=name
     )
 
 
@@ -565,7 +560,7 @@ def _detect_model_tier_cached(model_name: str) -> str:
     return "quick"
 
 
-def detect_model_tier(model_name: str, known_models: Optional[dict[str, str]] = None) -> str:
+def detect_model_tier(model_name: str, known_models: dict[str, str] | None = None) -> str:
     """
     Detect which tier a model belongs to based on parsed characteristics.
 
@@ -589,4 +584,3 @@ def detect_model_tier(model_name: str, known_models: Optional[dict[str, str]] = 
 
     # Priority 2: Use cached tier detection based on model parsing
     return _detect_model_tier_cached(model_name)
-

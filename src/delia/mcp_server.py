@@ -24,24 +24,25 @@ Usage:
     uv run mcp_server.py                    # stdio transport (default)
     uv run mcp_server.py --transport sse    # SSE transport on port 8200
 """
-import re
-import time
-import httpx
+
 import asyncio
-import logging
-import json
-import threading
-import uuid
 import contextvars
+import json
+import logging
+import re
+import threading
+import time
+import uuid
 from collections import deque
 from datetime import datetime
-from typing import Optional, Any, cast
 from pathlib import Path
+from typing import Any, cast
 
+import httpx
 import structlog
+from structlog.types import Processor
 
 from . import paths
-from structlog.types import Processor
 
 # ============================================================
 # EARLY LOGGING CONFIGURATION (must happen before other imports)
@@ -50,13 +51,19 @@ from structlog.types import Processor
 # This is critical for STDIO transport where stdout must be pure JSON-RPC.
 # The configuration may be adjusted later in main() based on transport type.
 
+
 def _early_configure_silent_logging():
     """Configure structlog to be silent on stdout before any imports log."""
+
     class SilentLoggerFactory:
         def __call__(self):
             class SilentLogger:
-                def msg(self, *args, **kwargs): pass
-                def __getattr__(self, name): return self.msg
+                def msg(self, *args, **kwargs):
+                    pass
+
+                def __getattr__(self, name):
+                    return self.msg
+
             return SilentLogger()
 
     structlog.reset_defaults()
@@ -72,50 +79,58 @@ def _early_configure_silent_logging():
         cache_logger_on_first_use=False,
     )
 
+
 _early_configure_silent_logging()
 # ============================================================
 
 import aiofiles
 import humanize
+import tiktoken
 from fastmcp import FastMCP
+from pydantic import BaseModel, ValidationError
 from pygments.lexers import get_lexer_for_filename
 from pygments.util import ClassNotFound
-from pydantic import BaseModel, ValidationError
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-import tiktoken
-
-# Import configuration (all tunable values in config.py)
-from .config import (
-    config, STATS_FILE,
-    detect_model_tier, get_backend_health, BackendHealth
-)
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 # Import unified backend manager (single source of truth from settings.json)
-from .backend_manager import backend_manager, BackendConfig
+from .backend_manager import BackendConfig, backend_manager
 
-# Import prompt templating system
-from .prompt_templates import create_structured_prompt
+# Import configuration (all tunable values in config.py)
+from .config import STATS_FILE, config, detect_model_tier, get_backend_health
 
 # Import watermelon-themed messages for fun logging
 from .melon_messages import (
-    GardenEvent, get_message, get_display_event, get_vine_message,
-    format_harvest_stats, get_backend_status_message, get_startup_message
+    GardenEvent,
+    format_harvest_stats,
+    get_display_event,
+    get_message,
+    get_vine_message,
 )
+
+# Import prompt templating system
+from .prompt_templates import create_structured_prompt
 
 # Conditional authentication imports (based on config.auth_enabled)
 AUTH_ENABLED = config.auth_enabled
 TRACKING_ENABLED = config.tracking_enabled
 
 if AUTH_ENABLED:
-    from .auth import (
-        create_db_and_tables, get_async_session, get_user_manager, get_user_db,
-        get_async_session_context, get_user_db_context, get_user_manager_context,
-        fastapi_users, auth_backend, current_active_user, current_user_optional,
-        User, UserRead, UserCreate, UserUpdate, JWT_SECRET
-    )
     import jose.jwt
+    from fastapi_users.authentication import JWTStrategy
 
-    def decode_jwt_token(token: str) -> Optional[dict]:
+    from .auth import (
+        JWT_SECRET,
+        User,
+        UserCreate,
+        auth_backend,
+        create_db_and_tables,
+        get_async_session_context,
+        get_user_db_context,
+        get_user_manager,
+        get_user_manager_context,
+    )
+
+    def decode_jwt_token(token: str) -> dict[str, Any] | None:
         """
         Decode and verify a JWT token.
 
@@ -133,35 +148,47 @@ if AUTH_ENABLED:
             The decoded payload dict, or None if decoding fails
         """
         try:
-            return jose.jwt.decode(
-                token,
-                JWT_SECRET,
-                algorithms=["HS256"],
-                options={"verify_aud": False}
-            )
+            return jose.jwt.decode(token, JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
         except jose.JWTError:
             return None
         except Exception:
             return None
+
 else:
     # Stubs for when auth is disabled
-    async def create_db_and_tables(): pass
-    JWT_SECRET = None
+    JWT_SECRET: str | None = None  # type: ignore[no-redef]
 
-    def decode_jwt_token(token: str) -> Optional[dict]:
+    async def create_db_and_tables() -> None:
+        pass
+
+    def decode_jwt_token(token: str) -> dict[str, Any] | None:
         return None
 
+
 from .multi_user_tracking import tracker
-
-
 
 LIVE_LOGS_FILE = paths.LIVE_LOGS_FILE
 MAX_LIVE_LOGS = 100
 LIVE_LOGS: list[dict] = []
 _live_logs_lock = threading.Lock()
 
-current_client_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_client_id', default=None)
-current_username: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('current_username', default=None)
+# Background tasks set to prevent garbage collection of fire-and-forget tasks
+_background_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _schedule_background_task(coro: Any) -> None:
+    """Schedule a fire-and-forget background task, preventing garbage collection."""
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(coro)
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+    except RuntimeError:
+        pass  # No running loop
+
+
+current_client_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_client_id", default=None)
+current_username: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_username", default=None)
 
 
 def _dashboard_processor(logger: Any, method_name: str, event_dict: dict) -> dict:
@@ -182,24 +209,22 @@ def _dashboard_processor(logger: Any, method_name: str, event_dict: dict) -> dic
         backend = event_dict.pop("backend", "")
 
         with _live_logs_lock:
-            LIVE_LOGS.append({
-                "ts": datetime.now().isoformat(),
-                "type": log_type,
-                "message": message,
-                "model": model,
-                "tokens": tokens,
-                "garden_msg": garden_msg,  # Include themed message for dashboard
-                "backend": backend,
-            })
+            LIVE_LOGS.append(
+                {
+                    "ts": datetime.now().isoformat(),
+                    "type": log_type,
+                    "message": message,
+                    "model": model,
+                    "tokens": tokens,
+                    "garden_msg": garden_msg,  # Include themed message for dashboard
+                    "backend": backend,
+                }
+            )
             if len(LIVE_LOGS) > MAX_LIVE_LOGS:
                 LIVE_LOGS.pop(0)
 
         # Schedule async save (non-blocking)
-        try:
-            asyncio.get_running_loop().create_task(_save_live_logs_async())
-        except RuntimeError:
-            # No running loop, save synchronously
-            _save_live_logs_sync()
+        _schedule_background_task(_save_live_logs_async())
 
     return event_dict
 
@@ -207,7 +232,7 @@ def _dashboard_processor(logger: Any, method_name: str, event_dict: dict) -> dic
 def _save_live_logs_sync():
     """Save live logs to disk synchronously (fallback)."""
     try:
-        temp_file = LIVE_LOGS_FILE.with_suffix('.tmp')
+        temp_file = LIVE_LOGS_FILE.with_suffix(".tmp")
         with _live_logs_lock:
             temp_file.write_text(json.dumps(LIVE_LOGS[-MAX_LIVE_LOGS:], indent=2))
         temp_file.replace(LIVE_LOGS_FILE)
@@ -219,10 +244,10 @@ def _save_live_logs_sync():
 async def _save_live_logs_async():
     """Save live logs to disk asynchronously using aiofiles."""
     try:
-        temp_file = LIVE_LOGS_FILE.with_suffix('.tmp')
+        temp_file = LIVE_LOGS_FILE.with_suffix(".tmp")
         with _live_logs_lock:
             content = json.dumps(LIVE_LOGS[-MAX_LIVE_LOGS:], indent=2)
-        async with aiofiles.open(temp_file, 'w') as f:
+        async with aiofiles.open(temp_file, "w") as f:
             await f.write(content)
         temp_file.replace(LIVE_LOGS_FILE)
     except Exception as e:
@@ -238,7 +263,6 @@ def _configure_structlog(use_stderr: bool = False):
         use_stderr: If True, suppress stdout output (required for STDIO transport)
                    to keep stdout pure for JSON-RPC messages.
     """
-    import sys
 
     # Clear any cached loggers before reconfiguring
     structlog.reset_defaults()
@@ -264,12 +288,15 @@ def _configure_structlog(use_stderr: bool = False):
         class SilentLoggerFactory:
             def __call__(self):
                 """Return a logger instance that discards all output."""
+
                 class SilentLogger:
                     def msg(self, *args, **kwargs):
                         # Discard - don't print anything
                         pass
+
                     def __getattr__(self, name):
                         return self.msg
+
                 return SilentLogger()
 
         structlog.configure(
@@ -314,8 +341,10 @@ log = structlog.get_logger()
 # PYDANTIC MODELS FOR API RESPONSES
 # ============================================================
 
+
 class OllamaResponse(BaseModel):
     """Ollama /api/generate response model."""
+
     response: str = ""
     eval_count: int = 0
     done: bool = True
@@ -323,12 +352,14 @@ class OllamaResponse(BaseModel):
 
 class LlamaCppMessage(BaseModel):
     """OpenAI-compatible message."""
+
     role: str = "assistant"
     content: str = ""
 
 
 class LlamaCppChoice(BaseModel):
     """OpenAI-compatible choice."""
+
     message: LlamaCppMessage
     index: int = 0
     finish_reason: str = "stop"
@@ -336,6 +367,7 @@ class LlamaCppChoice(BaseModel):
 
 class LlamaCppUsage(BaseModel):
     """OpenAI-compatible usage stats."""
+
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -343,18 +375,20 @@ class LlamaCppUsage(BaseModel):
 
 class LlamaCppResponse(BaseModel):
     """llama.cpp /v1/chat/completions response model."""
+
     choices: list[LlamaCppChoice]
-    usage: Optional[LlamaCppUsage] = None
+    usage: LlamaCppUsage | None = None
     model: str = ""
     id: str = ""
 
 
 class LlamaCppError(BaseModel):
     """llama.cpp error response."""
+
     type: str = ""
     message: str = ""
-    n_prompt_tokens: Optional[int] = None
-    n_ctx: Optional[int] = None
+    n_prompt_tokens: int | None = None
+    n_ctx: int | None = None
 
 
 # ============================================================
@@ -362,11 +396,11 @@ class LlamaCppError(BaseModel):
 # ============================================================
 
 # Lazy-load tiktoken encoder (first call may download encoding)
-_tiktoken_encoder: Optional[tiktoken.Encoding] = None
+_tiktoken_encoder: tiktoken.Encoding | None = None
 _tiktoken_failed: bool = False  # Track if loading failed to avoid repeated attempts
 
 
-def get_tiktoken_encoder() -> Optional[tiktoken.Encoding]:
+def get_tiktoken_encoder() -> tiktoken.Encoding | None:
     """
     Get or initialize tiktoken encoder (cl100k_base works for most models).
 
@@ -409,7 +443,7 @@ def count_tokens(text: str) -> int:
     if encoder:
         try:
             return len(encoder.encode(text))
-        except Exception:
+        except Exception:  # noqa: S110 - Fall through to estimate below
             pass
 
     # Fallback: ~4 chars per token (rough estimate for modern models)
@@ -425,6 +459,7 @@ def estimate_tokens(text: str) -> int:
     if not text:
         return 0
     return len(text) // 4
+
 
 # ============================================================
 # INPUT VALIDATION
@@ -457,7 +492,7 @@ def validate_content(content: str) -> tuple[bool, str]:
     return True, ""
 
 
-def validate_file_path(file_path: Optional[str]) -> tuple[bool, str]:
+def validate_file_path(file_path: str | None) -> tuple[bool, str]:
     """Validate file path if provided. Returns (is_valid, error_message)."""
     if file_path is None:
         return True, ""  # Optional field (None is allowed)
@@ -472,7 +507,7 @@ def validate_file_path(file_path: Optional[str]) -> tuple[bool, str]:
     return True, ""
 
 
-def validate_model_hint(model: Optional[str]) -> tuple[bool, str]:
+def validate_model_hint(model: str | None) -> tuple[bool, str]:
     """Validate model hint if provided. Returns (is_valid, error_message)."""
     if not model:
         return True, ""  # Optional field
@@ -486,15 +521,15 @@ def validate_model_hint(model: Optional[str]) -> tuple[bool, str]:
 # Intelligent GPU memory management and request queuing
 # ============================================================
 
-import asyncio
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime, timedelta
 import heapq
+from dataclasses import dataclass, field
+from typing import Any
+
 
 @dataclass(order=True)
 class QueuedRequest:
     """Represents a queued LLM request with priority."""
+
     priority: int  # Lower number = higher priority
     timestamp: datetime
     request_id: str
@@ -507,6 +542,7 @@ class QueuedRequest:
         # Tie-breaker: earlier requests get priority
         self.timestamp = self.timestamp or datetime.now()
 
+
 class ModelQueue:
     """
     Intelligent queue system for GPU memory management.
@@ -516,9 +552,9 @@ class ModelQueue:
     """
 
     def __init__(self):
-        self.loaded_models: Dict[str, Dict[str, Any]] = {}  # model_name -> metadata
+        self.loaded_models: dict[str, dict[str, Any]] = {}  # model_name -> metadata
         self.loading_models: set[str] = set()  # Models currently being loaded
-        self.request_queues: Dict[str, List[QueuedRequest]] = {}  # model_name -> priority queue
+        self.request_queues: dict[str, list[QueuedRequest]] = {}  # model_name -> priority queue
         self.lock = asyncio.Lock()
         self.request_counter = 0
 
@@ -557,16 +593,13 @@ class ModelQueue:
         if "30b" in model_name.lower():
             return 16.0  # Quantized 30B
         elif "14b" in model_name.lower():
-            return 8.0   # Quantized 14B
+            return 8.0  # Quantized 14B
         else:
-            return 4.0   # Default 4B model
+            return 4.0  # Default 4B model
 
     def get_available_memory(self) -> float:
         """Calculate available GPU memory."""
-        used_memory = sum(
-            self.get_model_size(model)
-            for model in self.loaded_models.keys()
-        )
+        used_memory = sum(self.get_model_size(model) for model in self.loaded_models)
         return max(0, self.gpu_memory_limit_gb - used_memory - self.memory_buffer_gb)
 
     def can_load_model(self, model_name: str) -> bool:
@@ -601,8 +634,9 @@ class ModelQueue:
 
         return priority
 
-    async def acquire_model(self, model_name: str, task_type: str = "unknown",
-                          content_length: int = 0) -> tuple[bool, Optional[asyncio.Future]]:
+    async def acquire_model(
+        self, model_name: str, task_type: str = "unknown", content_length: int = 0
+    ) -> tuple[bool, asyncio.Future | None]:
         """
         Acquire a model for use.
 
@@ -625,7 +659,7 @@ class ModelQueue:
                 self.request_counter += 1
 
                 priority = self.calculate_priority(task_type, content_length, model_name)
-                request_future = asyncio.Future()
+                request_future: asyncio.Future[tuple[bool, str | None]] = asyncio.Future()
                 queued_request = QueuedRequest(
                     priority=priority,
                     timestamp=datetime.now(),
@@ -633,7 +667,7 @@ class ModelQueue:
                     model_name=model_name,
                     task_type=task_type,
                     content_length=content_length,
-                    future=request_future
+                    future=request_future,
                 )
 
                 if model_name not in self.request_queues:
@@ -646,14 +680,16 @@ class ModelQueue:
                 self.total_queued += 1
                 self.max_queue_depth = max(self.max_queue_depth, queue_length)
 
-                log.info(get_display_event("model_queued"),
-                        model=model_name,
-                        queue_length=queue_length,
-                        priority=priority,
-                        task_type=task_type,
-                        request_id=request_id,
-                        garden_msg=get_message(GardenEvent.SEED_PLANTED),
-                        log_type="QUEUE")
+                log.info(
+                    get_display_event("model_queued"),
+                    model=model_name,
+                    queue_length=queue_length,
+                    priority=priority,
+                    task_type=task_type,
+                    request_id=request_id,
+                    garden_msg=get_message(GardenEvent.SEED_PLANTED),
+                    log_type="QUEUE",
+                )
 
                 return (False, request_future)
 
@@ -665,10 +701,12 @@ class ModelQueue:
             # Start loading the model
             self.loading_models.add(model_name)
 
-            log.info(get_display_event("model_loading_start"),
-                    model=model_name,
-                    available_memory_gb=round(self.get_available_memory(), 1),
-                    garden_msg=get_message(GardenEvent.WATERING))
+            log.info(
+                get_display_event("model_loading_start"),
+                model=model_name,
+                available_memory_gb=round(self.get_available_memory(), 1),
+                garden_msg=get_message(GardenEvent.WATERING),
+            )
 
             return (True, None)
 
@@ -681,15 +719,12 @@ class ModelQueue:
             return  # No need to unload
 
         # Sort loaded models by last used time (oldest first)
-        unload_candidates = sorted(
-            self.loaded_models.items(),
-            key=lambda x: x[1]["last_used"]
-        )
+        unload_candidates = sorted(self.loaded_models.items(), key=lambda x: x[1]["last_used"])
 
-        freed_memory = 0
-        to_unload = []
+        freed_memory: float = 0.0
+        to_unload: list[str] = []
 
-        for model_name, metadata in unload_candidates:
+        for model_name, _metadata in unload_candidates:
             if freed_memory >= (new_model_size - available_memory):
                 break
             freed_memory += self.get_model_size(model_name)
@@ -698,10 +733,12 @@ class ModelQueue:
         # Unload the selected models
         for model_name in to_unload:
             del self.loaded_models[model_name]
-            log.info(get_display_event("model_unloaded"),
-                    model=model_name,
-                    reason="memory_pressure",
-                    garden_msg=get_message(GardenEvent.COMPOSTING))
+            log.info(
+                get_display_event("model_unloaded"),
+                model=model_name,
+                reason="memory_pressure",
+                garden_msg=get_message(GardenEvent.COMPOSTING),
+            )
 
     async def release_model(self, model_name: str, success: bool = True) -> None:
         """Release a model after use and process queued requests."""
@@ -714,14 +751,16 @@ class ModelQueue:
                     self.loaded_models[model_name] = {
                         "loaded_at": datetime.now(),
                         "last_used": datetime.now(),
-                        "size_gb": self.get_model_size(model_name)
+                        "size_gb": self.get_model_size(model_name),
                     }
 
-                    log.info(get_display_event("model_loaded"),
-                            model=model_name,
-                            loaded_count=len(self.loaded_models),
-                            available_memory_gb=round(self.get_available_memory(), 1),
-                            garden_msg=get_message(GardenEvent.GARDEN_READY))
+                    log.info(
+                        get_display_event("model_loaded"),
+                        model=model_name,
+                        loaded_count=len(self.loaded_models),
+                        available_memory_gb=round(self.get_available_memory(), 1),
+                        garden_msg=get_message(GardenEvent.GARDEN_READY),
+                    )
 
                     # Process queued requests for this model
                     await self._process_queue(model_name)
@@ -730,9 +769,7 @@ class ModelQueue:
                     if model_name in self.request_queues:
                         for queued_request in self.request_queues[model_name]:
                             if not queued_request.future.done():
-                                queued_request.future.set_exception(
-                                    Exception(f"Failed to load model {model_name}")
-                                )
+                                queued_request.future.set_exception(Exception(f"Failed to load model {model_name}"))
                         del self.request_queues[model_name]
 
     async def _process_queue(self, model_name: str) -> None:
@@ -753,26 +790,26 @@ class ModelQueue:
                 self.total_processed += 1
 
                 wait_time_ms = (datetime.now() - queued_request.timestamp).total_seconds() * 1000
-                log.info(get_display_event("queue_processed"),
-                        model=model_name,
-                        request_id=queued_request.request_id,
-                        wait_time_ms=round(wait_time_ms, 1),
-                        remaining=len(queue),
-                        garden_msg="Seedling ready for the big garden!",
-                        log_type="QUEUE")
+                log.info(
+                    get_display_event("queue_processed"),
+                    model=model_name,
+                    request_id=queued_request.request_id,
+                    wait_time_ms=round(wait_time_ms, 1),
+                    remaining=len(queue),
+                    garden_msg="Seedling ready for the big garden!",
+                    log_type="QUEUE",
+                )
 
         if not queue:
             del self.request_queues[model_name]
 
-    def get_queue_status(self) -> Dict[str, Any]:
+    def get_queue_status(self) -> dict[str, Any]:
         """Get current queue status for monitoring."""
         current_queue_depth = sum(len(q) for q in self.request_queues.values())
         return {
             "loaded_models": list(self.loaded_models.keys()),
             "loading_models": list(self.loading_models),
-            "queued_requests": {
-                model: len(queue) for model, queue in self.request_queues.items()
-            },
+            "queued_requests": {model: len(queue) for model, queue in self.request_queues.items()},
             "available_memory_gb": round(self.get_available_memory(), 1),
             "total_loaded_gb": round(sum(m["size_gb"] for m in self.loaded_models.values()), 1),
             # Queue health metrics
@@ -782,8 +819,9 @@ class ModelQueue:
                 "current_queue_depth": current_queue_depth,
                 "max_queue_depth": self.max_queue_depth,
                 "queue_timeouts": self.queue_timeouts,
-            }
+            },
         }
+
 
 # Global model queue instance
 model_queue = ModelQueue()
@@ -819,8 +857,8 @@ MAX_RECENT_CALLS = 50
 RECENT_CALLS: deque[dict] = deque(maxlen=MAX_RECENT_CALLS)
 
 # Response time tracking
-RESPONSE_TIMES = {
-    "quick": [],  # List of (timestamp, ms) tuples
+RESPONSE_TIMES: dict[str, list[dict[str, object]]] = {
+    "quick": [],  # List of {"ts": timestamp, "ms": elapsed_ms} dicts
     "coder": [],
     "moe": [],
     "thinking": [],
@@ -832,6 +870,7 @@ ENHANCED_STATS_FILE = paths.ENHANCED_STATS_FILE
 
 # Circuit breaker stats file (for dashboard)
 CIRCUIT_BREAKER_FILE = paths.CIRCUIT_BREAKER_FILE
+
 
 def load_live_logs():
     """Load live logs from disk into the structlog buffer."""
@@ -870,9 +909,9 @@ def load_usage_stats():
                         MODEL_USAGE[new_key]["tokens"] += data[legacy_key].get("tokens", 0)
             log.info(
                 "stats_loaded",
-                quick_calls=MODEL_USAGE['quick']['calls'],
-                coder_calls=MODEL_USAGE['coder']['calls'],
-                moe_calls=MODEL_USAGE['moe']['calls'],
+                quick_calls=MODEL_USAGE["quick"]["calls"],
+                coder_calls=MODEL_USAGE["coder"]["calls"],
+                moe_calls=MODEL_USAGE["moe"]["calls"],
             )
         except json.JSONDecodeError as e:
             log.warning("stats_load_failed", error=str(e), reason="invalid_json")
@@ -910,13 +949,9 @@ def _snapshot_stats() -> tuple[dict, dict, dict, list]:
     """
     with _stats_thread_lock:
         # Create deep copies to prevent external modifications
-        model_usage_snapshot = {
-            tier: data.copy() for tier, data in MODEL_USAGE.items()
-        }
+        model_usage_snapshot = {tier: data.copy() for tier, data in MODEL_USAGE.items()}
         task_stats_snapshot = TASK_STATS.copy()
-        response_times_snapshot = {
-            tier: times.copy() for tier, times in RESPONSE_TIMES.items()
-        }
+        response_times_snapshot = {tier: times.copy() for tier, times in RESPONSE_TIMES.items()}
         recent_calls_snapshot = list(RECENT_CALLS)  # Convert deque to list for snapshot
 
     return model_usage_snapshot, task_stats_snapshot, response_times_snapshot, recent_calls_snapshot
@@ -930,7 +965,7 @@ def save_usage_stats():
     """
     try:
         model_usage_snapshot, _, _, _ = _snapshot_stats()
-        temp_file = STATS_FILE.with_suffix('.tmp')
+        temp_file = STATS_FILE.with_suffix(".tmp")
         # Use compact JSON in production
         temp_file.write_text(json.dumps(model_usage_snapshot, indent=2))
         temp_file.replace(STATS_FILE)  # Atomic on POSIX
@@ -954,9 +989,9 @@ def save_enhanced_stats():
                 "quick": response_times_snapshot["quick"][-MAX_RESPONSE_TIMES:],
                 "coder": response_times_snapshot["coder"][-MAX_RESPONSE_TIMES:],
                 "moe": response_times_snapshot["moe"][-MAX_RESPONSE_TIMES:],
-            }
+            },
         }
-        temp_file = ENHANCED_STATS_FILE.with_suffix('.tmp')
+        temp_file = ENHANCED_STATS_FILE.with_suffix(".tmp")
         temp_file.write_text(json.dumps(data, indent=2))
         temp_file.replace(ENHANCED_STATS_FILE)  # Atomic on POSIX
     except Exception as e:
@@ -975,10 +1010,12 @@ def save_circuit_breaker_stats():
                 "name": active_backend.name,
                 "provider": active_backend.provider,
                 "type": active_backend.type,
-            } if active_backend else None,
+            }
+            if active_backend
+            else None,
             "timestamp": datetime.now().isoformat(),
         }
-        temp_file = CIRCUIT_BREAKER_FILE.with_suffix('.tmp')
+        temp_file = CIRCUIT_BREAKER_FILE.with_suffix(".tmp")
         temp_file.write_text(json.dumps(data, indent=2))
         temp_file.replace(CIRCUIT_BREAKER_FILE)  # Atomic on POSIX
     except Exception as e:
@@ -987,6 +1024,7 @@ def save_circuit_breaker_stats():
 
 # Threading lock for in-memory stats updates (protects both reading and writing)
 import threading
+
 _stats_thread_lock = threading.Lock()
 
 # Async lock for file I/O operations (prevents concurrent writes to same file)
@@ -1001,7 +1039,7 @@ def _update_stats_sync(
     elapsed_ms: int,
     content_preview: str,
     enable_thinking: bool,
-    backend: str = "ollama"
+    backend: str = "ollama",
 ) -> None:
     """
     Thread-safe update of all in-memory stats.
@@ -1099,27 +1137,28 @@ load_live_logs()
 # The BackendManager reads from settings.json - the single source of truth
 # ============================================================
 
-def get_active_backend() -> Optional[BackendConfig]:
+
+def get_active_backend() -> BackendConfig | None:
     """Get the currently active backend configuration."""
     return backend_manager.get_active_backend()
+
 
 def get_active_backend_id() -> str:
     """Get the ID of the currently active backend."""
     backend = backend_manager.get_active_backend()
     return backend.id if backend else "none"
 
+
 def set_active_backend(backend_id: str) -> bool:
     """Set the active backend by ID."""
     return backend_manager.set_active_backend(backend_id)
 
-def get_backend_client(backend_id: Optional[str] = None) -> Optional[httpx.AsyncClient]:
-    """Get HTTP client for a specific backend (or active backend if not specified)."""
-    if backend_id:
-        backend = backend_manager.get_backend(backend_id)
-    else:
-        backend = backend_manager.get_active_backend()
 
+def get_backend_client(backend_id: str | None = None) -> httpx.AsyncClient | None:
+    """Get HTTP client for a specific backend (or active backend if not specified)."""
+    backend = backend_manager.get_backend(backend_id) if backend_id else backend_manager.get_active_backend()
     return backend.get_client() if backend else None
+
 
 # ============================================================
 # LANGUAGE DETECTION AND SYSTEM PROMPTS
@@ -1287,7 +1326,19 @@ def detect_language(content: str, file_path: str = "") -> str:
                     log.debug("lang_pygments_extension", pygments_name=pygments_name, detected=detected)
                     return detected
                 # Direct name matching for common languages
-                for our_lang in ["python", "go", "rust", "java", "cpp", "csharp", "ruby", "php", "swift", "kotlin", "scala"]:
+                for our_lang in [
+                    "python",
+                    "go",
+                    "rust",
+                    "java",
+                    "cpp",
+                    "csharp",
+                    "ruby",
+                    "php",
+                    "swift",
+                    "kotlin",
+                    "scala",
+                ]:
                     if our_lang in pygments_name:
                         log.debug("lang_pygments_name", pygments_name=pygments_name, our_lang=our_lang)
                         return our_lang
@@ -1322,9 +1373,10 @@ def detect_language(content: str, file_path: str = "") -> str:
 
     return "python"  # Default fallback
 
+
 def get_system_prompt(language: str, task_type: str) -> str:
     """Get structured system prompt optimized for LLM-to-LLM communication."""
-    base = LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["python"])["system_prompt"]
+    base: str = str(LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["python"])["system_prompt"])
 
     # Aggressive LLM-to-LLM optimization - eliminate all fluff
     llm_prefix = """CRITICAL: Your output is consumed by another LLM (Claude/Copilot), NOT a human.
@@ -1411,10 +1463,9 @@ def optimize_prompt(content: str, task_type: str) -> str:
     cleaned = cleaned.strip()
 
     # For certain tasks, add structure if not already present
-    if task_type == "quick" and "?" not in cleaned:
-        # Ensure questions have question marks
-        if cleaned and not cleaned.endswith("."):
-            cleaned = cleaned.rstrip(".,!;") + "?"
+    # Ensure questions have question marks
+    if task_type == "quick" and "?" not in cleaned and cleaned and not cleaned.endswith("."):
+        cleaned = cleaned.rstrip(".,!;") + "?"
 
     return cleaned
 
@@ -1422,11 +1473,11 @@ def optimize_prompt(content: str, task_type: str) -> str:
 def create_enhanced_prompt(
     task_type: str,
     content: str,
-    file: Optional[str] = None,
-    language: Optional[str] = None,
-    symbols: Optional[list[str]] = None,
-    context_files: Optional[list[str]] = None,
-    user_instructions: Optional[str] = None
+    file: str | None = None,
+    language: str | None = None,
+    symbols: list[str] | None = None,
+    context_files: list[str] | None = None,
+    user_instructions: str | None = None,
 ) -> str:
     """
     Create an enhanced, structured prompt using templates and context.
@@ -1463,7 +1514,7 @@ def create_enhanced_prompt(
         symbols=symbols,
         file_path=file,
         context_files=all_context_files if len(all_context_files) > 1 else None,
-        user_instructions=user_instructions
+        user_instructions=user_instructions,
     )
 
     # Append file content if available
@@ -1482,55 +1533,56 @@ def create_enhanced_prompt(
 CODE_INDICATORS = {
     # Strong indicators (weight 3) - almost certainly code
     "strong": [
-        re.compile(r'\bdef\s+\w+\s*\(', re.MULTILINE),          # Python function
-        re.compile(r'\bclass\s+\w+[\s:(]', re.MULTILINE),       # Class definition
-        re.compile(r'\bimport\s+\w+', re.MULTILINE),            # Import statement
-        re.compile(r'\bfrom\s+\w+\s+import', re.MULTILINE),     # From import
-        re.compile(r'\bfunction\s+\w+\s*\(', re.MULTILINE),     # JS function
-        re.compile(r'\bconst\s+\w+\s*=', re.MULTILINE),         # JS const
-        re.compile(r'\blet\s+\w+\s*=', re.MULTILINE),           # JS let
-        re.compile(r'\bexport\s+(default\s+)?', re.MULTILINE),  # JS export
-        re.compile(r'^\s*@\w+', re.MULTILINE),                  # Decorator
-        re.compile(r'\basync\s+(def|function)', re.MULTILINE),  # Async
-        re.compile(r'\bawait\s+\w+', re.MULTILINE),             # Await
-        re.compile(r'\breturn\s+[\w{(\[]', re.MULTILINE),       # Return statement
-        re.compile(r'if\s*\(.+\)\s*{', re.MULTILINE),           # C-style if
-        re.compile(r'for\s*\(.+\)\s*{', re.MULTILINE),          # C-style for
-        re.compile(r'\bwhile\s*\(.+\)', re.MULTILINE),          # While loop
-        re.compile(r'\btry\s*[:{]', re.MULTILINE),              # Try block
-        re.compile(r'\bcatch\s*\(', re.MULTILINE),              # Catch block
-        re.compile(r'\bexcept\s+\w*:', re.MULTILINE),           # Python except
-        re.compile(r'=>\s*{', re.MULTILINE),                    # Arrow function
-        re.compile(r'\.map\(|\.filter\(|\.reduce\(', re.MULTILINE),  # Array methods
+        re.compile(r"\bdef\s+\w+\s*\(", re.MULTILINE),  # Python function
+        re.compile(r"\bclass\s+\w+[\s:(]", re.MULTILINE),  # Class definition
+        re.compile(r"\bimport\s+\w+", re.MULTILINE),  # Import statement
+        re.compile(r"\bfrom\s+\w+\s+import", re.MULTILINE),  # From import
+        re.compile(r"\bfunction\s+\w+\s*\(", re.MULTILINE),  # JS function
+        re.compile(r"\bconst\s+\w+\s*=", re.MULTILINE),  # JS const
+        re.compile(r"\blet\s+\w+\s*=", re.MULTILINE),  # JS let
+        re.compile(r"\bexport\s+(default\s+)?", re.MULTILINE),  # JS export
+        re.compile(r"^\s*@\w+", re.MULTILINE),  # Decorator
+        re.compile(r"\basync\s+(def|function)", re.MULTILINE),  # Async
+        re.compile(r"\bawait\s+\w+", re.MULTILINE),  # Await
+        re.compile(r"\breturn\s+[\w{(\[]", re.MULTILINE),  # Return statement
+        re.compile(r"if\s*\(.+\)\s*{", re.MULTILINE),  # C-style if
+        re.compile(r"for\s*\(.+\)\s*{", re.MULTILINE),  # C-style for
+        re.compile(r"\bwhile\s*\(.+\)", re.MULTILINE),  # While loop
+        re.compile(r"\btry\s*[:{]", re.MULTILINE),  # Try block
+        re.compile(r"\bcatch\s*\(", re.MULTILINE),  # Catch block
+        re.compile(r"\bexcept\s+\w*:", re.MULTILINE),  # Python except
+        re.compile(r"=>\s*{", re.MULTILINE),  # Arrow function
+        re.compile(r"\.map\(|\.filter\(|\.reduce\(", re.MULTILINE),  # Array methods
     ],
     # Medium indicators (weight 2) - likely code
     "medium": [
-        re.compile(r'\bself\.', re.MULTILINE),                  # Python self
-        re.compile(r'\bthis\.', re.MULTILINE),                  # JS this
-        re.compile(r'===|!==', re.MULTILINE),                   # Strict equality
-        re.compile(r'&&|\|\|', re.MULTILINE),                   # Logical operators
-        re.compile(r'\bnull\b|\bundefined\b', re.MULTILINE),    # Null/undefined
-        re.compile(r'\bTrue\b|\bFalse\b|\bNone\b', re.MULTILINE),  # Python booleans
-        re.compile(r':\s*\w+\s*[,)\]]', re.MULTILINE),          # Type annotations
-        re.compile(r'\[\w+\]', re.MULTILINE),                   # Array indexing
-        re.compile(r'\{\s*\w+:\s*', re.MULTILINE),              # Object literal
-        re.compile(r'console\.|print\(|logger\.', re.MULTILINE),  # Logging
-        re.compile(r'\braise\s+\w+', re.MULTILINE),             # Python raise
-        re.compile(r'\bthrow\s+new', re.MULTILINE),             # JS throw
-        re.compile(r'`[^`]+\$\{', re.MULTILINE),                # Template literal
-        re.compile(r'f"[^"]*\{', re.MULTILINE),                 # Python f-string
+        re.compile(r"\bself\.", re.MULTILINE),  # Python self
+        re.compile(r"\bthis\.", re.MULTILINE),  # JS this
+        re.compile(r"===|!==", re.MULTILINE),  # Strict equality
+        re.compile(r"&&|\|\|", re.MULTILINE),  # Logical operators
+        re.compile(r"\bnull\b|\bundefined\b", re.MULTILINE),  # Null/undefined
+        re.compile(r"\bTrue\b|\bFalse\b|\bNone\b", re.MULTILINE),  # Python booleans
+        re.compile(r":\s*\w+\s*[,)\]]", re.MULTILINE),  # Type annotations
+        re.compile(r"\[\w+\]", re.MULTILINE),  # Array indexing
+        re.compile(r"\{\s*\w+:\s*", re.MULTILINE),  # Object literal
+        re.compile(r"console\.|print\(|logger\.", re.MULTILINE),  # Logging
+        re.compile(r"\braise\s+\w+", re.MULTILINE),  # Python raise
+        re.compile(r"\bthrow\s+new", re.MULTILINE),  # JS throw
+        re.compile(r"`[^`]+\$\{", re.MULTILINE),  # Template literal
+        re.compile(r'f"[^"]*\{', re.MULTILINE),  # Python f-string
     ],
     # Weak indicators (weight 1) - could be code
     "weak": [
-        re.compile(r';$', re.MULTILINE),                        # Semicolon ending
-        re.compile(r'\{|\}', re.MULTILINE),                     # Braces
-        re.compile(r'\[|\]', re.MULTILINE),                     # Brackets
-        re.compile(r'==|!=', re.MULTILINE),                     # Equality
-        re.compile(r'->', re.MULTILINE),                        # Arrow (type hints, etc)
-        re.compile(r'\bint\b|\bstr\b|\bbool\b', re.MULTILINE),  # Type names
-        re.compile(r'\bvar\b', re.MULTILINE),                   # Var keyword
+        re.compile(r";$", re.MULTILINE),  # Semicolon ending
+        re.compile(r"\{|\}", re.MULTILINE),  # Braces
+        re.compile(r"\[|\]", re.MULTILINE),  # Brackets
+        re.compile(r"==|!=", re.MULTILINE),  # Equality
+        re.compile(r"->", re.MULTILINE),  # Arrow (type hints, etc)
+        re.compile(r"\bint\b|\bstr\b|\bbool\b", re.MULTILINE),  # Type names
+        re.compile(r"\bvar\b", re.MULTILINE),  # Var keyword
     ],
 }
+
 
 def detect_code_content(content: str) -> tuple[bool, float, str]:
     """
@@ -1545,7 +1597,7 @@ def detect_code_content(content: str) -> tuple[bool, float, str]:
     if not content or len(content.strip()) < 20:
         return False, 0.0, "Content too short"
 
-    lines = content.strip().split('\n')
+    lines = content.strip().split("\n")
 
     # Count code indicators
     strong_matches = 0
@@ -1565,14 +1617,14 @@ def detect_code_content(content: str) -> tuple[bool, float, str]:
         weak_matches += min(matches, 5)
 
     # Weighted score
-    score = (strong_matches * 3 + medium_matches * 2 + weak_matches * 1)
+    score = strong_matches * 3 + medium_matches * 2 + weak_matches * 1
 
     # Normalize by content length (per 1000 chars)
     normalized = score / max(1, len(content) / 1000)
 
     # Additional heuristics
-    avg_line_length = sum(len(l) for l in lines) / max(1, len(lines))
-    indent_lines = sum(1 for l in lines if l.startswith('  ') or l.startswith('\t'))
+    avg_line_length = sum(len(line) for line in lines) / max(1, len(lines))
+    indent_lines = sum(1 for line in lines if line.startswith("  ") or line.startswith("\t"))
     indent_ratio = indent_lines / max(1, len(lines))
 
     # Adjust score based on structure
@@ -1595,6 +1647,7 @@ def detect_code_content(content: str) -> tuple[bool, float, str]:
 # ============================================================
 # MODEL SELECTION
 # ============================================================
+
 
 async def get_loaded_models() -> list[str]:
     """Get list of currently loaded models from the active backend."""
@@ -1642,13 +1695,29 @@ def get_model_info(model_name: str) -> dict:
     if backend:
         models = backend.models
         if model_name == models.get("quick"):
-            return {"vram_gb": config.model_quick.vram_gb, "context_tokens": config.model_quick.context_tokens, "tier": "quick"}
+            return {
+                "vram_gb": config.model_quick.vram_gb,
+                "context_tokens": config.model_quick.context_tokens,
+                "tier": "quick",
+            }
         elif model_name == models.get("coder"):
-            return {"vram_gb": config.model_coder.vram_gb, "context_tokens": config.model_coder.context_tokens, "tier": "coder"}
+            return {
+                "vram_gb": config.model_coder.vram_gb,
+                "context_tokens": config.model_coder.context_tokens,
+                "tier": "coder",
+            }
         elif model_name == models.get("moe"):
-            return {"vram_gb": config.model_moe.vram_gb, "context_tokens": config.model_moe.context_tokens, "tier": "moe"}
+            return {
+                "vram_gb": config.model_moe.vram_gb,
+                "context_tokens": config.model_moe.context_tokens,
+                "tier": "moe",
+            }
         elif model_name == models.get("thinking"):
-            return {"vram_gb": config.model_thinking.vram_gb, "context_tokens": config.model_thinking.context_tokens, "tier": "thinking"}
+            return {
+                "vram_gb": config.model_thinking.vram_gb,
+                "context_tokens": config.model_thinking.context_tokens,
+                "tier": "thinking",
+            }
 
     # Initialize defaults for estimation
     vram_gb: Any = "Unknown"
@@ -1658,7 +1727,7 @@ def get_model_info(model_name: str) -> dict:
     import re
 
     # Extract parameter count (e.g., "14B", "7b", "72B")
-    param_match = re.search(r'(\d+(?:\.\d+)?)\s*[bB](?:illion)?(?![a-zA-Z])', model_name, re.IGNORECASE)
+    param_match = re.search(r"(\d+(?:\.\d+)?)\s*[bB](?:illion)?(?![a-zA-Z])", model_name, re.IGNORECASE)
     if param_match:
         params = float(param_match.group(1))
         # Rough VRAM estimation (very approximate)
@@ -1679,14 +1748,10 @@ def get_model_info(model_name: str) -> dict:
         else:
             context_tokens = 32_000  # Conservative default
 
-    return {
-        "vram_gb": vram_gb,
-        "context_tokens": context_tokens,
-        "tier": "unknown"
-    }
+    return {"vram_gb": vram_gb, "context_tokens": context_tokens, "tier": "unknown"}
 
 
-def parse_model_override(model_hint: Optional[str], content: str) -> Optional[str]:
+def parse_model_override(model_hint: str | None, content: str) -> str | None:
     """Parse explicit model request from content or hint.
 
     Recognizes tier keywords (moe, coder, quick, thinking) and natural language model references.
@@ -1705,7 +1770,7 @@ def parse_model_override(model_hint: Optional[str], content: str) -> Optional[st
             return "quick"
         if "thinking" in hint or "think" in hint or "chain" in hint:
             return "thinking"
-        
+
         # Pass through other hints as-is (might be specific model name)
         return model_hint
 
@@ -1714,26 +1779,30 @@ def parse_model_override(model_hint: Optional[str], content: str) -> Optional[st
         content_lower = content.lower()
 
         # Size and capability-based patterns
-        if (re.search(r'\b(30b|large|big|complex|reasoning|deep|planning|critique)\b', content_lower) or
-            re.search(r'\bmoe\b', content_lower)):
+        if re.search(r"\b(30b|large|big|complex|reasoning|deep|planning|critique)\b", content_lower) or re.search(
+            r"\bmoe\b", content_lower
+        ):
             log.info("model_override_detected", tier="moe", source="content", pattern="size/capability")
             return "moe"
 
-        if (re.search(r'\b(14b|coder|code|programming|development|review|analyze)\b', content_lower)):
+        if re.search(r"\b(14b|coder|code|programming|development|review|analyze)\b", content_lower):
             log.info("model_override_detected", tier="coder", source="content", pattern="size/capability")
             return "coder"
 
-        if (re.search(r'\b(7b|small|fast|quick|simple|basic|summarize)\b', content_lower)):
+        if re.search(r"\b(7b|small|fast|quick|simple|basic|summarize)\b", content_lower):
             log.info("model_override_detected", tier="quick", source="content", pattern="size/capability")
             return "quick"
 
-        if (re.search(r'\b(thinking|think|chain|reason|step.*by.*step)\b', content_lower)):
+        if re.search(r"\b(thinking|think|chain|reason|step.*by.*step)\b", content_lower):
             log.info("model_override_detected", tier="thinking", source="content", pattern="capability")
             return "thinking"
 
     return None
 
-async def select_model(task_type: str, content_size: int = 0, model_override: Optional[str] = None, content: str = "") -> str:
+
+async def select_model(
+    task_type: str, content_size: int = 0, model_override: str | None = None, content: str = ""
+) -> str:
     """
     Select the best model for the task with intelligent code-aware routing.
 
@@ -1767,11 +1836,15 @@ async def select_model(task_type: str, content_size: int = 0, model_override: Op
 
     # Helper to resolve tier name to model name
     def resolve_tier(tier_name):
-        if tier_name == "quick": return model_quick
-        if tier_name == "coder": return model_coder
-        if tier_name == "moe": return model_moe
-        if tier_name == "thinking": return model_thinking
-        return tier_name # Assume it's a model name if not a tier
+        if tier_name == "quick":
+            return model_quick
+        if tier_name == "coder":
+            return model_coder
+        if tier_name == "moe":
+            return model_moe
+        if tier_name == "thinking":
+            return model_thinking
+        return tier_name  # Assume it's a model name if not a tier
 
     # Priority 1: Explicit override
     if model_override:
@@ -1793,11 +1866,25 @@ async def select_model(task_type: str, content_size: int = 0, model_override: Op
     if content_size > config.large_content_threshold and code_detection:
         is_code, confidence, reasoning = code_detection
         if is_code and confidence > 0.5:
-            log.info("model_selected", source="large_code", content_kb=content_size//1000, confidence=f"{confidence:.0%}", tier="coder", reasoning=reasoning)
+            log.info(
+                "model_selected",
+                source="large_code",
+                content_kb=content_size // 1000,
+                confidence=f"{confidence:.0%}",
+                tier="coder",
+                reasoning=reasoning,
+            )
             return model_coder
         else:
             # Large text content benefits from MoE's reasoning
-            log.info("model_selected", source="large_text", content_kb=content_size//1000, confidence=f"{1-confidence:.0%}", tier="moe", reasoning=reasoning)
+            log.info(
+                "model_selected",
+                source="large_text",
+                content_kb=content_size // 1000,
+                confidence=f"{1 - confidence:.0%}",
+                tier="moe",
+                reasoning=reasoning,
+            )
             return model_moe
 
     # Priority 4: Code-focused tasks - check if content is actually code (reuse cached detection)
@@ -1815,6 +1902,7 @@ async def select_model(task_type: str, content_size: int = 0, model_override: Op
     log.info("model_selected", source="default", task=task_type, tier="quick")
     return model_quick
 
+
 # ============================================================
 # OLLAMA API CALLS (with retry and Pydantic validation)
 # ============================================================
@@ -1823,7 +1911,8 @@ async def select_model(task_type: str, content_size: int = 0, model_override: Op
 # RESPONSE HELPERS
 # ============================================================
 
-def extract_thinking_content(response_text: str) -> Optional[str]:
+
+def extract_thinking_content(response_text: str) -> str | None:
     """
     Extract thinking content from LLM response.
 
@@ -1852,20 +1941,24 @@ def log_thinking_and_response(response_text: str, model_tier: str, tokens: int) 
     thinking = extract_thinking_content(response_text)
     if thinking:
         thinking_preview = thinking[:200] + "..." if len(thinking) > 200 else thinking
-        log.info(get_display_event("model_thinking"),
-                log_type="THINK",
-                preview=thinking_preview.replace("\n", " "),
-                model=model_tier,
-                garden_msg=get_message(GardenEvent.GROWING))
+        log.info(
+            get_display_event("model_thinking"),
+            log_type="THINK",
+            preview=thinking_preview.replace("\n", " "),
+            model=model_tier,
+            garden_msg=get_message(GardenEvent.GROWING),
+        )
 
     # Log LLM response (first 300 chars)
     response_preview = response_text[:300] + "..." if len(response_text) > 300 else response_text
-    log.info(get_display_event("model_response"),
-            log_type="RESPONSE",
-            preview=response_preview.replace("\n", " ").strip(),
-            model=model_tier,
-            tokens=tokens,
-            garden_msg=get_message(GardenEvent.HARVEST))
+    log.info(
+        get_display_event("model_response"),
+        log_type="RESPONSE",
+        preview=response_preview.replace("\n", " ").strip(),
+        model=model_tier,
+        tokens=tokens,
+        garden_msg=get_message(GardenEvent.HARVEST),
+    )
 
 
 # Retry decorator for transient failures (connection issues, timeouts on model load)
@@ -1878,12 +1971,18 @@ def _should_retry_ollama(exception: BaseException) -> bool:
     return False
 
 
-async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
-                      enable_thinking: bool = False, task_type: str = "unknown",
-                      original_task: str = "unknown",
-                      language: str = "unknown", content_preview: str = "",
-                      backend_obj: Optional[BackendConfig] = None,
-                      max_tokens: Optional[int] = None) -> dict:
+async def call_ollama(
+    model: str,
+    prompt: str,
+    system: str | None = None,
+    enable_thinking: bool = False,
+    task_type: str = "unknown",
+    original_task: str = "unknown",
+    language: str = "unknown",
+    content_preview: str = "",
+    backend_obj: BackendConfig | None = None,
+    max_tokens: int | None = None,
+) -> dict:
     """Call Ollama API with Pydantic validation, retry logic, and circuit breaker."""
     start_time = time.time()
 
@@ -1894,7 +1993,7 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
             if b.provider == "ollama":
                 backend_obj = b
                 break
-    
+
     if not backend_obj:
         return {"success": False, "error": "No enabled Ollama backend found"}
 
@@ -1906,14 +2005,19 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
         return {
             "success": False,
             "error": f"Ollama circuit breaker open. Too many failures. Retry in {wait_time:.0f}s.",
-            "circuit_breaker": True
+            "circuit_breaker": True,
         }
 
     # Context size check and potential reduction
     content_size = len(prompt) + len(system or "")
     should_reduce, recommended_size = health.should_reduce_context(content_size)
     if should_reduce:
-        log.info("context_reduction", backend=backend_obj.id, original_kb=content_size//1024, recommended_kb=recommended_size//1024)
+        log.info(
+            "context_reduction",
+            backend=backend_obj.id,
+            original_kb=content_size // 1024,
+            recommended_kb=recommended_size // 1024,
+        )
         # Truncate prompt if too large (keep beginning which usually has instructions)
         if len(prompt) > recommended_size:
             prompt = prompt[:recommended_size] + "\n\n[Content truncated due to previous timeout]"
@@ -1933,18 +2037,20 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
     # Temperature based on thinking mode (from config)
     temperature = config.temperature_thinking if enable_thinking else config.temperature_normal
 
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": temperature,
-            "num_ctx": num_ctx,
-        }
+    options: dict[str, float | int] = {
+        "temperature": temperature,
+        "num_ctx": num_ctx,
     }
     # Add max_tokens limit if specified (Ollama uses num_predict)
     if max_tokens:
-        payload["options"]["num_predict"] = max_tokens
+        options["num_predict"] = max_tokens
+
+    payload: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": options,
+    }
     if system:
         payload["system"] = system
 
@@ -1956,7 +2062,7 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
         stop=stop_after_attempt(2),
         wait=wait_exponential(multiplier=1, min=1, max=5),
         retry=retry_if_exception_type(httpx.ConnectError),
-        reraise=True
+        reraise=True,
     )
     async def _make_request():
         return await client.post("/api/generate", json=payload)
@@ -1964,13 +2070,15 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
     data: dict[str, Any] = {}
     try:
         # Log start of request
-        log.info(get_display_event("model_starting"),
-                log_type="MODEL",
-                model=model,
-                task=task_type,
-                thinking=enable_thinking,
-                backend=backend_obj.name,
-                garden_msg=get_vine_message(model_tier, "start"))
+        log.info(
+            get_display_event("model_starting"),
+            log_type="MODEL",
+            model=model,
+            task=task_type,
+            thinking=enable_thinking,
+            backend=backend_obj.name,
+            garden_msg=get_vine_message(model_tier, "start"),
+        )
 
         response = await _make_request()
         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -2004,7 +2112,7 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
                 elapsed_ms=elapsed_ms,
                 content_preview=content_preview,
                 enable_thinking=enable_thinking,
-                backend="ollama"
+                backend="ollama",
             )
 
             # Log thinking and response using helper
@@ -2026,7 +2134,7 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
             health.record_success(content_size)
 
             # Persist stats to disk (async with lock, non-blocking)
-            asyncio.create_task(save_all_stats_async())
+            _schedule_background_task(save_all_stats_async())
 
             return {
                 "success": True,
@@ -2051,7 +2159,10 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
     except httpx.TimeoutException:
         log.error("ollama_timeout", model=model, timeout_seconds=config.ollama_timeout_seconds)
         health.record_failure("timeout", content_size)
-        return {"success": False, "error": f"Ollama timeout after {config.ollama_timeout_seconds}s. Model may be loading or prompt too large."}
+        return {
+            "success": False,
+            "error": f"Ollama timeout after {config.ollama_timeout_seconds}s. Model may be loading or prompt too large.",
+        }
     except httpx.ConnectError:
         log.error("ollama_connection_refused", base_url=backend_obj.url)
         health.record_failure("connection", content_size)
@@ -2059,18 +2170,26 @@ async def call_ollama(model: str, prompt: str, system: Optional[str] = None,
     except Exception as e:
         log.error("ollama_error", model=model, error=str(e))
         health.record_failure("exception", content_size)
-        return {"success": False, "error": f"Ollama error: {str(e)}"}
+        return {"success": False, "error": f"Ollama error: {e!s}"}
+
 
 # ============================================================
 # LLAMA.CPP API CALLS (OpenAI-compatible, with retry and Pydantic)
 # ============================================================
 
-async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
-                        enable_thinking: bool = False, task_type: str = "unknown",
-                        original_task: str = "unknown",
-                        language: str = "unknown", content_preview: str = "",
-                        backend_obj: Optional[BackendConfig] = None,
-                        max_tokens: Optional[int] = None) -> dict:
+
+async def call_llamacpp(
+    model: str,
+    prompt: str,
+    system: str | None = None,
+    enable_thinking: bool = False,
+    task_type: str = "unknown",
+    original_task: str = "unknown",
+    language: str = "unknown",
+    content_preview: str = "",
+    backend_obj: BackendConfig | None = None,
+    max_tokens: int | None = None,
+) -> dict:
     """Call OpenAI-compatible API (llama.cpp, vLLM, etc.) with Pydantic validation, retry, and circuit breaker."""
     start_time = time.time()
 
@@ -2081,7 +2200,7 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
             if b.provider in ("llamacpp", "vllm", "openai", "custom"):
                 backend_obj = b
                 break
-    
+
     if not backend_obj:
         return {"success": False, "error": "No enabled OpenAI-compatible backend found"}
 
@@ -2093,14 +2212,19 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
         return {
             "success": False,
             "error": f"Backend circuit breaker open. Too many failures. Retry in {wait_time:.0f}s.",
-            "circuit_breaker": True
+            "circuit_breaker": True,
         }
 
     # Context size check and potential reduction
     content_size = len(prompt) + len(system or "")
     should_reduce, recommended_size = health.should_reduce_context(content_size)
     if should_reduce:
-        log.info("context_reduction", backend=backend_obj.id, original_kb=content_size//1024, recommended_kb=recommended_size//1024)
+        log.info(
+            "context_reduction",
+            backend=backend_obj.id,
+            original_kb=content_size // 1024,
+            recommended_kb=recommended_size // 1024,
+        )
         if len(prompt) > recommended_size:
             prompt = prompt[:recommended_size] + "\n\n[Content truncated due to previous timeout]"
 
@@ -2129,7 +2253,7 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
     # OpenAI-compatible payload
     # Note: Some backends ignore 'model' in payload if they only host one, but we send it anyway
     payload = {
-        "model": model, 
+        "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens if max_tokens else num_ctx,  # Use explicit limit or context size
@@ -2144,7 +2268,7 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
         stop=stop_after_attempt(2),
         wait=wait_exponential(multiplier=1, min=1, max=5),
         retry=retry_if_exception_type(httpx.ConnectError),
-        reraise=True
+        reraise=True,
     )
     async def _make_request():
         return await client.post(backend_obj.chat_endpoint, json=payload)
@@ -2152,13 +2276,15 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
     data: dict[str, Any] = {}
     try:
         # Log start of request
-        log.info(get_display_event("model_starting"),
-                log_type="MODEL",
-                backend=backend_obj.name,
-                task=task_type,
-                thinking=enable_thinking,
-                model=model_tier,
-                garden_msg=get_vine_message(model_tier, "start"))
+        log.info(
+            get_display_event("model_starting"),
+            log_type="MODEL",
+            backend=backend_obj.name,
+            task=task_type,
+            thinking=enable_thinking,
+            model=model_tier,
+            garden_msg=get_vine_message(model_tier, "start"),
+        )
 
         response = await _make_request()
         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -2205,7 +2331,7 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
                 elapsed_ms=elapsed_ms,
                 content_preview=content_preview,
                 enable_thinking=enable_thinking,
-                backend="llamacpp"
+                backend="llamacpp",
             )
 
             # Log thinking and response using helper
@@ -2227,7 +2353,7 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
             health.record_success(content_size)
 
             # Persist stats to disk
-            asyncio.create_task(save_all_stats_async())
+            _schedule_background_task(save_all_stats_async())
 
             return {
                 "success": True,
@@ -2257,7 +2383,10 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
     except httpx.TimeoutException:
         log.error("llamacpp_timeout", timeout_seconds=config.llamacpp_timeout_seconds)
         health.record_failure("timeout", content_size)
-        return {"success": False, "error": f"Timeout after {config.llamacpp_timeout_seconds}s. Model may be loading or prompt too large."}
+        return {
+            "success": False,
+            "error": f"Timeout after {config.llamacpp_timeout_seconds}s. Model may be loading or prompt too large.",
+        }
     except httpx.ConnectError:
         log.error("llamacpp_connection_refused", base_url=backend_obj.url)
         health.record_failure("connection", content_size)
@@ -2265,30 +2394,34 @@ async def call_llamacpp(model: str, prompt: str, system: Optional[str] = None,
     except Exception as e:
         log.error("llamacpp_error", error=str(e))
         health.record_failure("exception", content_size)
-        return {"success": False, "error": f"Error: {str(e)}"}
+        return {"success": False, "error": f"Error: {e!s}"}
 
 
 # ============================================================
 # GEMINI API CALLS (Google Generative AI)
 # ============================================================
 
-async def call_gemini(model: str, prompt: str, system: Optional[str] = None,
-                      enable_thinking: bool = False, task_type: str = "unknown",
-                      original_task: str = "unknown",
-                      language: str = "unknown", content_preview: str = "",
-                      backend_obj: Optional[BackendConfig] = None) -> dict:
+
+async def call_gemini(
+    model: str,
+    prompt: str,
+    system: str | None = None,
+    enable_thinking: bool = False,
+    task_type: str = "unknown",
+    original_task: str = "unknown",
+    language: str = "unknown",
+    content_preview: str = "",
+    backend_obj: BackendConfig | None = None,
+) -> dict:
     """Call Google Gemini API with stats tracking and circuit breaker."""
     start_time = time.time()
-    
+
     # 1. Dependency Check
     try:
         import google.generativeai as genai
         from google.api_core import exceptions as google_exceptions
     except ImportError:
-        return {
-            "success": False, 
-            "error": "Gemini dependency missing. Please run: uv add google-generativeai"
-        }
+        return {"success": False, "error": "Gemini dependency missing. Please run: uv add google-generativeai"}
 
     # 2. Resolve Backend
     if not backend_obj:
@@ -2296,7 +2429,7 @@ async def call_gemini(model: str, prompt: str, system: Optional[str] = None,
             if b.provider == "gemini":
                 backend_obj = b
                 break
-    
+
     if not backend_obj:
         return {"success": False, "error": "No enabled Gemini backend found"}
 
@@ -2307,15 +2440,16 @@ async def call_gemini(model: str, prompt: str, system: Optional[str] = None,
         return {
             "success": False,
             "error": f"Gemini circuit breaker open. Retry in {wait_time:.0f}s.",
-            "circuit_breaker": True
+            "circuit_breaker": True,
         }
 
     # 4. Configuration (API Key)
     import os
+
     api_key = backend_obj.api_key or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return {"success": False, "error": "Missing GEMINI_API_KEY"}
-    
+
     genai.configure(api_key=api_key)
 
     # 5. Model Configuration
@@ -2325,41 +2459,40 @@ async def call_gemini(model: str, prompt: str, system: Optional[str] = None,
     if model_name in ["quick", "coder", "moe", "thinking"]:
         model_name = "gemini-2.0-flash"
 
-    # Generation Config
-    generation_config = {
+    # Generation Config (typed dict for Gemini)
+    generation_config: dict[str, Any] = {
         "temperature": config.temperature_thinking if enable_thinking else config.temperature_normal,
     }
-    
+
     # Add thinking/reasoning config if supported by model and requested
     # Note: 2.0 Flash Thinking is a separate model, not a param, usually.
     # If user wants thinking, we might map to a specific thinking model if configured.
-    
+
     try:
-        log.info(get_display_event("model_starting"),
-                log_type="MODEL",
-                backend="gemini",
-                task=task_type,
-                model=model_name,
-                garden_msg="Consulting the Gemini constellation...")
-        
-        # Instantiate model
-        gen_model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=system
+        log.info(
+            get_display_event("model_starting"),
+            log_type="MODEL",
+            backend="gemini",
+            task=task_type,
+            model=model_name,
+            garden_msg="Consulting the Gemini constellation...",
         )
+
+        # Instantiate model
+        gen_model = genai.GenerativeModel(model_name=model_name, system_instruction=system)
 
         # Run in thread executor because the SDK is synchronous
         response = await asyncio.to_thread(
             gen_model.generate_content,
             prompt,
-            generation_config=generation_config
+            generation_config=generation_config,  # type: ignore[arg-type]
         )
-        
+
         elapsed_ms = int((time.time() - start_time) * 1000)
-        
+
         # Extract text and usage
         response_text = response.text
-        
+
         # Estimate usage (Gemini SDK might not return exact tokens in all responses easily without metadata)
         # Usage metadata is in response.usage_metadata
         prompt_tokens = 0
@@ -2367,21 +2500,21 @@ async def call_gemini(model: str, prompt: str, system: Optional[str] = None,
         if hasattr(response, "usage_metadata"):
             prompt_tokens = response.usage_metadata.prompt_token_count
             completion_tokens = response.usage_metadata.candidates_token_count
-        
+
         total_tokens = prompt_tokens + completion_tokens
         if total_tokens == 0:
             total_tokens = count_tokens(prompt) + count_tokens(response_text)
 
         # Thread-safe stats update
         _update_stats_sync(
-            model_tier="moe", # Treat Gemini as MoE/High-end tier for stats
+            model_tier="moe",  # Treat Gemini as MoE/High-end tier for stats
             task_type=task_type,
             original_task=original_task,
             tokens=total_tokens,
             elapsed_ms=elapsed_ms,
             content_preview=content_preview,
             enable_thinking=enable_thinking,
-            backend="gemini"
+            backend="gemini",
         )
 
         # Log completion
@@ -2397,14 +2530,9 @@ async def call_gemini(model: str, prompt: str, system: Optional[str] = None,
         )
 
         health.record_success(len(prompt))
-        asyncio.create_task(save_all_stats_async())
+        _schedule_background_task(save_all_stats_async())
 
-        return {
-            "success": True,
-            "response": response_text,
-            "tokens": total_tokens,
-            "elapsed_ms": elapsed_ms
-        }
+        return {"success": True, "response": response_text, "tokens": total_tokens, "elapsed_ms": elapsed_ms}
 
     except google_exceptions.ResourceExhausted:
         health.record_failure("rate_limit", len(prompt))
@@ -2412,15 +2540,22 @@ async def call_gemini(model: str, prompt: str, system: Optional[str] = None,
     except Exception as e:
         log.error("gemini_error", error=str(e))
         health.record_failure("exception", len(prompt))
-        return {"success": False, "error": f"Gemini error: {str(e)}"}
+        return {"success": False, "error": f"Gemini error: {e!s}"}
 
 
-async def call_llm(model: str, prompt: str, system: Optional[str] = None,
-                   enable_thinking: bool = False, task_type: str = "unknown",
-                   original_task: str = "unknown",
-                   language: str = "unknown", content_preview: str = "",
-                   backend: Optional[str] = None, backend_obj: Optional[BackendConfig] = None,
-                   max_tokens: Optional[int] = None) -> dict:
+async def call_llm(
+    model: str,
+    prompt: str,
+    system: str | None = None,
+    enable_thinking: bool = False,
+    task_type: str = "unknown",
+    original_task: str = "unknown",
+    language: str = "unknown",
+    content_preview: str = "",
+    backend: str | BackendConfig | None = None,
+    backend_obj: BackendConfig | None = None,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
     """
     Unified LLM call dispatcher that routes to the appropriate backend.
 
@@ -2437,7 +2572,7 @@ async def call_llm(model: str, prompt: str, system: Optional[str] = None,
         max_tokens: Maximum response tokens (limits verbosity)
     """
     # Acquire model from queue (prevents concurrent loading)
-    # Note: Gemini is cloud-based so we might skip local queue for it, 
+    # Note: Gemini is cloud-based so we might skip local queue for it,
     # but the queue also manages concurrency limits which is good.
     content_length = len(prompt) + len(system or "")
     is_available, queue_future = await model_queue.acquire_model(model, task_type, content_length)
@@ -2446,40 +2581,43 @@ async def call_llm(model: str, prompt: str, system: Optional[str] = None,
     if not is_available and queue_future:
         try:
             await asyncio.wait_for(queue_future, timeout=300)  # Wait up to 5 minutes for model to load
-        except asyncio.TimeoutError:
+        except TimeoutError:
             model_queue.queue_timeouts += 1
             await model_queue.release_model(model, success=False)
-            log.warning("queue_timeout",
-                       model=model,
-                       wait_seconds=300,
-                       total_timeouts=model_queue.queue_timeouts,
-                       log_type="QUEUE")
+            log.warning(
+                "queue_timeout",
+                model=model,
+                wait_seconds=300,
+                total_timeouts=model_queue.queue_timeouts,
+                log_type="QUEUE",
+            )
             return {"success": False, "error": f"Timeout waiting for model {model} to load (waited 5 minutes)"}
         except Exception as e:
             await model_queue.release_model(model, success=False)
-            log.error("queue_error",
-                     model=model,
-                     error=str(e),
-                     log_type="QUEUE")
-            return {"success": False, "error": f"Error waiting for model {model}: {str(e)}"}
+            log.error("queue_error", model=model, error=str(e), log_type="QUEUE")
+            return {"success": False, "error": f"Error waiting for model {model}: {e!s}"}
 
     try:
         # Determine backend to use
         active_backend = None
-        
+
         # 1. Use passed object if available
         if backend_obj:
             active_backend = backend_obj
         # 2. Resolve by ID or provider name
         elif backend:
-            # Try as ID
-            active_backend = backend_manager.get_backend(backend)
-            if not active_backend:
-                # Try as provider name
-                for b in backend_manager.get_enabled_backends():
-                    if b.provider == backend:
-                        active_backend = b
-                        break
+            # If backend is already a BackendConfig, use it directly
+            if isinstance(backend, BackendConfig):
+                active_backend = backend
+            else:
+                # Try as ID
+                active_backend = backend_manager.get_backend(backend)
+                if not active_backend:
+                    # Try as provider name
+                    for b in backend_manager.get_enabled_backends():
+                        if b.provider == backend:
+                            active_backend = b
+                            break
         # 3. Use default active backend
         else:
             active_backend = backend_manager.get_active_backend()
@@ -2490,19 +2628,51 @@ async def call_llm(model: str, prompt: str, system: Optional[str] = None,
 
         # Dispatch based on provider type
         if active_backend.provider in ("llama.cpp", "llamacpp", "vllm", "openai", "custom"):
-            result = await call_llamacpp(model, prompt, system, enable_thinking, task_type, original_task, language, content_preview, backend_obj=active_backend, max_tokens=max_tokens)
+            result = await call_llamacpp(
+                model,
+                prompt,
+                system,
+                enable_thinking,
+                task_type,
+                original_task,
+                language,
+                content_preview,
+                backend_obj=active_backend,
+                max_tokens=max_tokens,
+            )
         elif active_backend.provider == "ollama":
-            result = await call_ollama(model, prompt, system, enable_thinking, task_type, original_task, language, content_preview, backend_obj=active_backend, max_tokens=max_tokens)
+            result = await call_ollama(
+                model,
+                prompt,
+                system,
+                enable_thinking,
+                task_type,
+                original_task,
+                language,
+                content_preview,
+                backend_obj=active_backend,
+                max_tokens=max_tokens,
+            )
         elif active_backend.provider == "gemini":
-            result = await call_gemini(model, prompt, system, enable_thinking, task_type, original_task, language, content_preview, backend_obj=active_backend)
+            result = await call_gemini(
+                model,
+                prompt,
+                system,
+                enable_thinking,
+                task_type,
+                original_task,
+                language,
+                content_preview,
+                backend_obj=active_backend,
+            )
         else:
-             await model_queue.release_model(model, success=False)
-             return {"success": False, "error": f"Unsupported provider: {active_backend.provider}"}
+            await model_queue.release_model(model, success=False)
+            return {"success": False, "error": f"Unsupported provider: {active_backend.provider}"}
 
         # Release model on success
         await model_queue.release_model(model, success=result.get("success", False))
         return result
-    except Exception as e:
+    except Exception:
         # Release model on failure
         await model_queue.release_model(model, success=False)
         raise
@@ -2512,7 +2682,8 @@ async def call_llm(model: str, prompt: str, system: Optional[str] = None,
 # FILE HANDLING
 # ============================================================
 
-def read_file_safe(file_path: str, max_size: Optional[int] = None) -> tuple[Optional[str], Optional[str]]:
+
+def read_file_safe(file_path: str, max_size: int | None = None) -> tuple[str | None, str | None]:
     """Safely read file with size limit."""
     if max_size is None:
         max_size = config.max_file_size
@@ -2525,6 +2696,7 @@ def read_file_safe(file_path: str, max_size: Optional[int] = None) -> tuple[Opti
         return path.read_text(encoding="utf-8", errors="replace"), None
     except Exception as e:
         return None, f"Error reading file: {e}"
+
 
 # ============================================================
 # MCP SERVER SETUP
@@ -2649,7 +2821,7 @@ When you detect processing/task terms WITHOUT explicit "delegate" mention:
 - Don't announce "I'll delegate this"
 - Just invoke tools and use results
 - Delia handles failures automatically
-"""
+""",
 )
 
 # ============================================================
@@ -2657,8 +2829,8 @@ When you detect processing/task terms WITHOUT explicit "delegate" mention:
 # Extracts user from JWT and tracks requests per user
 # ============================================================
 
+from fastmcp.server.dependencies import get_http_headers, get_http_request
 from fastmcp.server.middleware import Middleware, MiddlewareContext
-from fastmcp.server.dependencies import get_http_request, get_http_headers
 
 
 class UserTrackingMiddleware(Middleware):
@@ -2707,8 +2879,8 @@ class UserTrackingMiddleware(Middleware):
                 forwarded = request.headers.get("x-forwarded-for", "")
                 if forwarded:
                     ip_address = forwarded.split(",")[0].strip()
-        except Exception:
-            pass  # No HTTP context - STDIO transport
+        except Exception:  # noqa: S110 - No HTTP context in STDIO transport
+            pass
 
         # Try to extract user from JWT token (only if auth enabled)
         if AUTH_ENABLED and transport == "http":
@@ -2725,20 +2897,20 @@ class UserTrackingMiddleware(Middleware):
 
                         # Get user details from database
                         if user_id:
-                            async with get_async_session_context() as session:
-                                async with get_user_db_context(session) as user_db:
-                                    user = await user_db.get(uuid.UUID(user_id))
-                                    if user:
-                                        username = user.email
-                                        # Set user quota from database
-                                        from .multi_user_tracking import QuotaConfig
-                                        quota = QuotaConfig(
-                                            max_requests_per_hour=user.max_requests_per_hour,
-                                            max_tokens_per_hour=user.max_tokens_per_hour,
-                                        )
-                                        # Will be set after client is created
-            except Exception:
-                pass  # No HTTP context or invalid token
+                            async with get_async_session_context() as session, get_user_db_context(session) as user_db:
+                                user = await user_db.get(uuid.UUID(user_id))
+                                if user:
+                                    username = user.email
+                                    # Set user quota from database
+                                    from .multi_user_tracking import QuotaConfig
+
+                                    _quota = QuotaConfig(
+                                        max_requests_per_hour=user.max_requests_per_hour,
+                                        max_tokens_per_hour=user.max_tokens_per_hour,
+                                    )
+                                    # Will be set after client is created
+            except Exception:  # noqa: S110 - No HTTP context or invalid token
+                pass
 
         # Fall back to session_id for tracking (works for all transports)
         if not user_id and ctx and ctx.request_context:
@@ -2771,8 +2943,11 @@ class UserTrackingMiddleware(Middleware):
                 if not can_proceed:
                     log.warning("quota_exceeded", username=username, reason=msg)
                     # Return error without executing tool
-                    from fastmcp.tools import ToolResult
-                    return ToolResult(content=[{"type": "text", "text": f"Quota exceeded: {msg}"}], is_error=True)
+                    from mcp.types import CallToolResult, TextContent
+
+                    return CallToolResult(
+                        content=[TextContent(type="text", text=f"Quota exceeded: {msg}")], isError=True
+                    )
 
                 # Mark request as started (for concurrent tracking)
                 tracker.start_request(client.client_id)
@@ -2792,7 +2967,7 @@ class UserTrackingMiddleware(Middleware):
 
             if client:
                 # Get tool name from context method or message
-                tool_name = context.method or getattr(context.message, 'name', None) or 'unknown'
+                tool_name = context.method or getattr(context.message, "name", None) or "unknown"
 
                 tracker.record_request(
                     client_id=client.client_id,
@@ -2815,6 +2990,7 @@ mcp.add_middleware(UserTrackingMiddleware())
 # HELPER: Get Current User in Tools
 # ============================================================
 
+
 def get_current_user_from_context(ctx) -> dict:
     """
     Get the current authenticated user from context.
@@ -2834,11 +3010,10 @@ def get_current_user_from_context(ctx) -> dict:
 # These routes are only active when AUTH_ENABLED=true
 # ============================================================
 
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import EmailStr
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from fastapi import HTTPException
-from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel as PydanticBaseModel, EmailStr
 
 if AUTH_ENABLED:
     import jose.jwt
@@ -2846,12 +3021,14 @@ if AUTH_ENABLED:
 
 class LoginRequest(PydanticBaseModel):
     """Login request body."""
+
     username: str  # Actually email
     password: str
 
 
 class RegisterRequest(PydanticBaseModel):
     """User registration request."""
+
     email: EmailStr
     password: str
     display_name: str | None = None
@@ -2874,41 +3051,42 @@ def _register_auth_routes():
             reg = RegisterRequest(**body)
 
             # Use context managers for dependency injection outside FastAPI
-            async with get_async_session_context() as session:
-                async with get_user_db_context(session) as user_db:
-                    async with get_user_manager_context(user_db) as user_manager:
-                        # Create user
-                        user_create = UserCreate(
-                            email=reg.email,
-                            password=reg.password,
-                            display_name=reg.display_name
-                        )
-                        user = await user_manager.create(user_create)
+            async with (
+                get_async_session_context() as session,
+                get_user_db_context(session) as user_db,
+                get_user_manager_context(user_db) as user_manager,
+            ):
+                # Create user
+                user_create = UserCreate(email=reg.email, password=reg.password, display_name=reg.display_name)
+                user = await user_manager.create(user_create)
 
-                        # Commit the session to persist the user
-                        await session.commit()
+                # Commit the session to persist the user
+                await session.commit()
 
-                        # Generate token
-                        strategy = auth_backend.get_strategy()
-                        token = await strategy.write_token(user)
+                # Generate token
+                strategy = cast(JWTStrategy[User, uuid.UUID], auth_backend.get_strategy())
+                token = await strategy.write_token(user)
 
-                        return JSONResponse({
-                            "access_token": token,
-                            "token_type": "bearer",
-                            "user": {
-                                "id": str(user.id),
-                                "email": user.email,
-                                "display_name": user.display_name,
-                                "is_active": user.is_active,
-                                "is_superuser": user.is_superuser,
-                            }
-                        }, status_code=201)
+                return JSONResponse(
+                    {
+                        "access_token": token,
+                        "token_type": "bearer",
+                        "user": {
+                            "id": str(user.id),
+                            "email": user.email,
+                            "display_name": user.display_name,
+                            "is_active": user.is_active,
+                            "is_superuser": user.is_superuser,
+                        },
+                    },
+                    status_code=201,
+                )
         except Exception as e:
             import traceback
+
             tb = traceback.format_exc()
             log.error("registration_failed", error=str(e), traceback=tb)
             return JSONResponse({"detail": str(e) or repr(e), "traceback": tb}, status_code=400)
-
 
     @mcp.custom_route("/auth/jwt/login", methods=["POST"])
     async def auth_login(request: Request) -> JSONResponse:
@@ -2931,34 +3109,32 @@ def _register_auth_routes():
                 form = await request.form()
                 login = LoginRequest(username=form.get("username", ""), password=form.get("password", ""))
 
-            async with get_async_session_context() as session:
-                async with get_user_db_context(session) as user_db:
-                    async with get_user_manager_context(user_db) as user_manager:
-                        # Authenticate user
-                        user = await user_manager.authenticate(
-                            credentials=type('Creds', (), {'username': login.username, 'password': login.password})()
-                        )
+            async with (
+                get_async_session_context() as session,
+                get_user_db_context(session) as user_db,
+                get_user_manager_context(user_db) as user_manager,
+            ):
+                # Authenticate user
+                user = await user_manager.authenticate(
+                    credentials=type("Creds", (), {"username": login.username, "password": login.password})()
+                )
 
-                        if user is None:
-                            return JSONResponse({"detail": "Invalid credentials"}, status_code=401)
+                if user is None:
+                    return JSONResponse({"detail": "Invalid credentials"}, status_code=401)
 
-                        if not user.is_active:
-                            return JSONResponse({"detail": "User is inactive"}, status_code=401)
+                if not user.is_active:
+                    return JSONResponse({"detail": "User is inactive"}, status_code=401)
 
-                        # Generate token
-                        strategy = auth_backend.get_strategy()
-                        token = await strategy.write_token(user)
+                # Generate token
+                strategy = cast(JWTStrategy[User, uuid.UUID], auth_backend.get_strategy())
+                token = await strategy.write_token(user)
 
-                        log.info("user_logged_in", user_id=str(user.id), email=user.email)
+                log.info("user_logged_in", user_id=str(user.id), email=user.email)
 
-                        return JSONResponse({
-                            "access_token": token,
-                            "token_type": "bearer"
-                        })
+                return JSONResponse({"access_token": token, "token_type": "bearer"})
         except Exception as e:
             log.error("login_failed", error=str(e))
             return JSONResponse({"detail": str(e)}, status_code=400)
-
 
     @mcp.custom_route("/auth/me", methods=["GET"])
     async def auth_me(request: Request) -> JSONResponse:
@@ -2986,14 +3162,14 @@ def _register_auth_routes():
                 return JSONResponse({"detail": "Invalid token"}, status_code=401)
 
             # Get user from database
-            async with get_async_session_context() as session:
-                async with get_user_db_context(session) as user_db:
-                    user = await user_db.get(uuid.UUID(user_id))
+            async with get_async_session_context() as session, get_user_db_context(session) as user_db:
+                user = await user_db.get(uuid.UUID(user_id))
 
-                    if not user:
-                        return JSONResponse({"detail": "User not found"}, status_code=404)
+                if not user:
+                    return JSONResponse({"detail": "User not found"}, status_code=404)
 
-                    return JSONResponse({
+                return JSONResponse(
+                    {
                         "id": str(user.id),
                         "email": user.email,
                         "display_name": user.display_name,
@@ -3002,12 +3178,12 @@ def _register_auth_routes():
                         "max_tokens_per_hour": user.max_tokens_per_hour,
                         "max_requests_per_hour": user.max_requests_per_hour,
                         "max_model_tier": user.max_model_tier,
-                    })
+                    }
+                )
 
         except Exception as e:
             log.error("auth_me_failed", error=str(e))
             return JSONResponse({"detail": str(e)}, status_code=500)
-
 
     @mcp.custom_route("/auth/users", methods=["GET"])
     async def list_users(request: Request) -> JSONResponse:
@@ -3035,19 +3211,20 @@ def _register_auth_routes():
             if not user_id:
                 return JSONResponse({"detail": "Invalid token"}, status_code=401)
 
-            async with get_async_session_context() as session:
-                async with get_user_db_context(session) as user_db:
-                    admin = await user_db.get(uuid.UUID(user_id))
+            async with get_async_session_context() as session, get_user_db_context(session) as user_db:
+                admin = await user_db.get(uuid.UUID(user_id))
 
-                    if not admin or not admin.is_superuser:
-                        return JSONResponse({"detail": "Superuser access required"}, status_code=403)
+                if not admin or not admin.is_superuser:
+                    return JSONResponse({"detail": "Superuser access required"}, status_code=403)
 
-                    # Get all users
-                    from sqlalchemy import select
-                    result = await session.execute(select(User))
-                    users = result.scalars().all()
+                # Get all users
+                from sqlalchemy import select
 
-                    return JSONResponse({
+                result = await session.execute(select(User))
+                users = result.scalars().all()
+
+                return JSONResponse(
+                    {
                         "users": [
                             {
                                 "id": str(u.id),
@@ -3060,12 +3237,12 @@ def _register_auth_routes():
                             }
                             for u in users
                         ]
-                    })
+                    }
+                )
 
         except Exception as e:
             log.error("list_users_failed", error=str(e))
             return JSONResponse({"detail": str(e)}, status_code=500)
-
 
     @mcp.custom_route("/auth/stats", methods=["GET"])
     async def auth_user_stats(request: Request) -> JSONResponse:
@@ -3093,17 +3270,17 @@ def _register_auth_routes():
                 return JSONResponse({"detail": "Invalid token"}, status_code=401)
 
             # Get user from database
-            async with get_async_session_context() as session:
-                async with get_user_db_context(session) as user_db:
-                    user = await user_db.get(uuid.UUID(user_id))
+            async with get_async_session_context() as session, get_user_db_context(session) as user_db:
+                user = await user_db.get(uuid.UUID(user_id))
 
-                    if not user:
-                        return JSONResponse({"detail": "User not found"}, status_code=404)
+                if not user:
+                    return JSONResponse({"detail": "User not found"}, status_code=404)
 
-                    # Get tracking stats for this user
-                    stats = tracker.get_user_stats(user.email)
+                # Get tracking stats for this user
+                stats = tracker.get_user_stats(user.email)
 
-                    return JSONResponse({
+                return JSONResponse(
+                    {
                         "user_id": str(user.id),
                         "email": user.email,
                         "quotas": {
@@ -3118,15 +3295,16 @@ def _register_auth_routes():
                             "tokens_this_hour": stats.tokens_this_hour if stats else 0,
                         },
                         "quota_remaining": {
-                            "requests_remaining": user.max_requests_per_hour - (stats.requests_this_hour if stats else 0),
+                            "requests_remaining": user.max_requests_per_hour
+                            - (stats.requests_this_hour if stats else 0),
                             "tokens_remaining": user.max_tokens_per_hour - (stats.tokens_this_hour if stats else 0),
-                        }
-                    })
+                        },
+                    }
+                )
 
         except Exception as e:
             log.error("user_stats_failed", error=str(e))
             return JSONResponse({"detail": str(e)}, status_code=500)
-
 
     @mcp.custom_route("/auth/stats/all", methods=["GET"])
     async def auth_all_stats(request: Request) -> JSONResponse:
@@ -3153,17 +3331,17 @@ def _register_auth_routes():
             if not user_id:
                 return JSONResponse({"detail": "Invalid token"}, status_code=401)
 
-            async with get_async_session_context() as session:
-                async with get_user_db_context(session) as user_db:
-                    admin = await user_db.get(uuid.UUID(user_id))
+            async with get_async_session_context() as session, get_user_db_context(session) as user_db:
+                admin = await user_db.get(uuid.UUID(user_id))
 
-                    if not admin or not admin.is_superuser:
-                        return JSONResponse({"detail": "Superuser access required"}, status_code=403)
+                if not admin or not admin.is_superuser:
+                    return JSONResponse({"detail": "Superuser access required"}, status_code=403)
 
-                    # Get all user stats from tracker
-                    all_stats = tracker.get_all_users()
+                # Get all user stats from tracker
+                all_stats = tracker.get_all_users()
 
-                    return JSONResponse({
+                return JSONResponse(
+                    {
                         "users": [
                             {
                                 "client_id": stats.client_id,
@@ -3176,7 +3354,8 @@ def _register_auth_routes():
                             }
                             for stats in all_stats
                         ]
-                    })
+                    }
+                )
 
         except Exception as e:
             log.error("all_stats_failed", error=str(e))
@@ -3196,14 +3375,13 @@ else:
 # ============================================================
 
 if AUTH_ENABLED:
-    from .auth import (
-        microsoft_oauth_client, oauth_backend, get_user_manager,
-        JWT_SECRET, MICROSOFT_REDIRECT_URL
-    )
-    from fastapi_users.router.oauth import get_oauth_router
+    import secrets
+
     from fastapi import Request, Response
     from fastapi.responses import RedirectResponse
-    import secrets
+    from fastapi_users.router.oauth import get_oauth_router
+
+    from .auth import JWT_SECRET, MICROSOFT_REDIRECT_URL, get_user_manager, microsoft_oauth_client, oauth_backend
 
     # Create OAuth router instance to access its logic
     oauth_router_instance = get_oauth_router(
@@ -3216,7 +3394,7 @@ if AUTH_ENABLED:
     )
 
     @mcp.custom_route("/auth/microsoft/authorize", methods=["GET"])
-    async def oauth_authorize(request: Request) -> RedirectResponse:
+    async def oauth_authorize(request: Request) -> Response:
         """Initiate Microsoft OAuth login flow."""
         try:
             # Generate state for CSRF protection
@@ -3237,7 +3415,7 @@ if AUTH_ENABLED:
             return JSONResponse({"detail": "OAuth authorization failed"}, status_code=500)
 
     @mcp.custom_route("/auth/microsoft/callback", methods=["GET"])
-    async def oauth_callback(request: Request) -> RedirectResponse:
+    async def oauth_callback(request: Request) -> JSONResponse:
         """Handle Microsoft OAuth callback."""
         try:
             # Get authorization code from query params
@@ -3248,58 +3426,69 @@ if AUTH_ENABLED:
             # Exchange code for tokens
             tokens = await microsoft_oauth_client.get_access_token(code, MICROSOFT_REDIRECT_URL)
 
-            # Get user info from Microsoft
-            user_info = await microsoft_oauth_client.get_user_info(tokens["access_token"])
+            # Get user info from Microsoft Graph API
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://graph.microsoft.com/v1.0/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+                )
+                user_info = resp.json()
+
+            user_email = user_info.get("mail") or user_info.get("userPrincipalName", "")
+            user_name = user_info.get("displayName", "")
+            _microsoft_id = user_info.get("id", "")  # Stored for potential future use
 
             # Create or get user in database
-            async with get_async_session_context() as session:
-                async with get_user_manager_context(get_user_db_context(session)) as user_manager:
-                    # Try to find existing user by email
-                    try:
-                        user = await user_manager.get_by_email(user_info.email)
-                    except Exception:
-                        user = None  # User not found or database error
+            async with (
+                get_async_session_context() as session,
+                get_user_db_context(session) as user_db,
+                get_user_manager_context(user_db) as user_manager,
+            ):
+                # Try to find existing user by email
+                try:
+                    user = await user_manager.get_by_email(user_email)
+                except Exception:
+                    user = None  # User not found or database error
 
-                    if user:
-                        # Associate OAuth account with existing user
-                        await user_manager.oauth_associate_account(
-                            user,
-                            "microsoft",
-                            user_info.id,
-                            tokens
-                        )
-                    else:
-                        # Create new user
-                        user = await user_manager.oauth_create_account(
-                            "microsoft",
-                            user_info.id,
-                            user_info.email,
-                            user_info.name,
-                            tokens
-                        )
+                if not user:
+                    # Create new user with OAuth info
+                    import secrets
 
-                    # Generate JWT token
-                    from auth import get_jwt_strategy
-                    strategy = get_jwt_strategy()
-                    token = await strategy.write_token(user)
+                    user_create = UserCreate(
+                        email=user_email,
+                        password=secrets.token_urlsafe(32),  # Random password for OAuth users
+                        display_name=user_name,
+                    )
+                    user = await user_manager.create(user_create)
+                    await session.commit()
 
-                    # Redirect to frontend with token (or return JSON for API clients)
-                    # For now, return JSON response with token
-                    return JSONResponse({
+                # Generate JWT token
+                strategy = cast(JWTStrategy[User, uuid.UUID], auth_backend.get_strategy())
+                token = await strategy.write_token(user)
+
+                # Return JSON response with token
+                return JSONResponse(
+                    {
                         "access_token": token,
                         "token_type": "bearer",
                         "user": {
                             "id": str(user.id),
                             "email": user.email,
-                            "name": user_info.name,
-                        }
-                    })
+                            "name": user_name,
+                        },
+                    }
+                )
 
         except Exception as e:
             log.error("oauth_callback_failed", error=str(e))
             return JSONResponse({"detail": "OAuth callback failed"}, status_code=500)
 
-    log.info("oauth_routes_registered", provider="microsoft", endpoints=["/auth/microsoft/authorize", "/auth/microsoft/callback"])
+    log.info(
+        "oauth_routes_registered",
+        provider="microsoft",
+        endpoints=["/auth/microsoft/authorize", "/auth/microsoft/callback"],
+    )
 else:
     log.info("oauth_disabled", message="OAuth routes not registered. Set DELIA_AUTH_ENABLED=true to enable.")
 
@@ -3307,8 +3496,8 @@ else:
 async def validate_delegate_request(
     task: str,
     content: str,
-    file: Optional[str] = None,
-    model: Optional[str] = None,
+    file: str | None = None,
+    model: str | None = None,
 ) -> tuple[bool, str]:
     """Validate all inputs for delegate request."""
     # Input validation
@@ -3333,10 +3522,10 @@ async def validate_delegate_request(
 
 async def prepare_delegate_content(
     content: str,
-    context: Optional[str] = None,
-    symbols: Optional[str] = None,
+    context: str | None = None,
+    symbols: str | None = None,
     include_references: bool = False,
-    files: Optional[str] = None,
+    files: str | None = None,
 ) -> str:
     """Prepare content with context, files, and symbol focus.
 
@@ -3358,8 +3547,7 @@ async def prepare_delegate_content(
                 ext = Path(path).suffix.lstrip(".")
                 lang_hint = ext if ext else ""
                 parts.append(f"### File: `{path}`\n```{lang_hint}\n{file_content}\n```")
-            log.info("files_loaded", count=len(file_contents),
-                    paths=[p for p, _ in file_contents])
+            log.info("files_loaded", count=len(file_contents), paths=[p for p, _ in file_contents])
 
     # Load Serena memory context if specified
     if context:
@@ -3405,10 +3593,10 @@ def determine_task_type(task: str) -> str:
 async def select_delegate_model(
     task_type: str,
     content: str,
-    model_override: Optional[str] = None,
-    backend: Optional[str] = None,
-    backend_obj: Optional[Any] = None,
-) -> tuple[str, str, str]:
+    model_override: str | None = None,
+    backend: str | None = None,
+    backend_obj: Any | None = None,
+) -> tuple[str, str, str | BackendConfig | None]:
     """Select appropriate model and backend for the task."""
     # Determine model tier from task type
     if task_type in config.moe_tasks:
@@ -3442,6 +3630,8 @@ async def select_delegate_model(
     target_backend = backend or get_active_backend()
 
     return selected_model, tier, target_backend
+
+
 async def execute_delegate_call(
     selected_model: str,
     content: str,
@@ -3449,9 +3639,9 @@ async def execute_delegate_call(
     task_type: str,
     original_task: str,
     detected_language: str,
-    target_backend: str,
-    backend_obj: Optional[Any] = None,
-    max_tokens: Optional[int] = None,
+    target_backend: str | BackendConfig | None,
+    backend_obj: Any | None = None,
+    max_tokens: int | None = None,
 ) -> tuple[str, int]:
     """Execute the LLM call and return response with metadata."""
     # Call LLM
@@ -3460,13 +3650,21 @@ async def execute_delegate_call(
     content_preview = content[:200].replace("\n", " ").strip()
 
     result = await call_llm(
-        selected_model, content, system, enable_thinking,
-        task_type=task_type, original_task=original_task, language=detected_language, content_preview=content_preview,
-        backend=target_backend, backend_obj=backend_obj, max_tokens=max_tokens
+        selected_model,
+        content,
+        system,
+        enable_thinking,
+        task_type=task_type,
+        original_task=original_task,
+        language=detected_language,
+        content_preview=content_preview,
+        backend=target_backend,
+        backend_obj=backend_obj,
+        max_tokens=max_tokens,
     )
 
     if not result.get("success"):
-        error_msg = result.get('error', 'Unknown error')
+        error_msg = result.get("error", "Unknown error")
         raise Exception(f"LLM call failed: {error_msg}")
 
     response_text = result.get("response", "")
@@ -3504,7 +3702,7 @@ def finalize_delegate_response(
         return response_text
 
     # Extract backend name (handle both string and BackendConfig)
-    backend_name = target_backend.name if hasattr(target_backend, 'name') else str(target_backend)
+    backend_name = target_backend.name if hasattr(target_backend, "name") else str(target_backend)
 
     # Add concise metadata footer
     return f"""{response_text}
@@ -3512,20 +3710,21 @@ def finalize_delegate_response(
 ---
 _Model: {selected_model} | Tokens: {tokens} | Time: {elapsed_ms}ms | Backend: {backend_name}_"""
 
+
 async def _delegate_impl(
     task: str,
     content: str,
-    file: Optional[str] = None,
-    model: Optional[str] = None,
-    language: Optional[str] = None,
-    context: Optional[str] = None,
-    symbols: Optional[str] = None,
+    file: str | None = None,
+    model: str | None = None,
+    language: str | None = None,
+    context: str | None = None,
+    symbols: str | None = None,
     include_references: bool = False,
-    backend: Optional[str] = None,
-    backend_obj: Optional[Any] = None,  # Backend object from backend_manager
-    files: Optional[str] = None,  # Comma-separated file paths (Delia reads directly)
+    backend: str | None = None,
+    backend_obj: Any | None = None,  # Backend object from backend_manager
+    files: str | None = None,  # Comma-separated file paths (Delia reads directly)
     include_metadata: bool = True,  # Include footer with model/tokens/time info
-    max_tokens: Optional[int] = None,  # Limit response length (reduces verbosity)
+    max_tokens: int | None = None,  # Limit response length (reduces verbosity)
 ) -> str:
     """
     Core implementation for delegate - can be called directly by batch().
@@ -3557,8 +3756,8 @@ async def _delegate_impl(
         content=prepared_content,
         file_path=file,
         language=language,
-        symbols=symbols.split(',') if symbols else None,
-        context_files=None  # TODO: Parse context parameter for file names if needed
+        symbols=symbols.split(",") if symbols else None,
+        context_files=None,  # TODO: Parse context parameter for file names if needed
     )
 
     # Detect language and get system prompt
@@ -3573,20 +3772,32 @@ async def _delegate_impl(
     # Execute the LLM call
     try:
         response_text, tokens = await execute_delegate_call(
-            selected_model, prepared_content, system, task_type, task,
-            detected_language, target_backend, backend_obj, max_tokens=max_tokens
+            selected_model,
+            prepared_content,
+            system,
+            task_type,
+            task,
+            detected_language,
+            target_backend,
+            backend_obj,
+            max_tokens=max_tokens,
         )
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error: {e!s}"
 
     # Calculate timing
     elapsed_ms = int((time.time() - start_time) * 1000)
 
     # Finalize response with metadata
     return finalize_delegate_response(
-        response_text, selected_model, tokens, elapsed_ms,
-        detected_language, target_backend, tier,
-        include_metadata=include_metadata
+        response_text,
+        selected_model,
+        tokens,
+        elapsed_ms,
+        detected_language,
+        target_backend,
+        tier,
+        include_metadata=include_metadata,
     )
 
 
@@ -3594,16 +3805,16 @@ async def _delegate_impl(
 async def delegate(
     task: str,
     content: str,
-    file: Optional[str] = None,
-    model: Optional[str] = None,
-    language: Optional[str] = None,
-    context: Optional[str] = None,
-    symbols: Optional[str] = None,
+    file: str | None = None,
+    model: str | None = None,
+    language: str | None = None,
+    context: str | None = None,
+    symbols: str | None = None,
     include_references: bool = False,
-    backend_type: Optional[str] = None,
-    files: Optional[str] = None,
+    backend_type: str | None = None,
+    files: str | None = None,
     include_metadata: bool = True,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
 ) -> str:
     """
     Execute a task on local/remote GPU with intelligent 3-tier model selection.
@@ -3651,9 +3862,19 @@ async def delegate(
     # Smart backend selection using backend_manager
     backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
     return await _delegate_impl(
-        task, content, file, model, language, context, symbols, include_references,
-        backend=backend_provider, backend_obj=backend_obj, files=files,
-        include_metadata=include_metadata, max_tokens=max_tokens
+        task,
+        content,
+        file,
+        model,
+        language,
+        context,
+        symbols,
+        include_references,
+        backend=backend_provider,
+        backend_obj=backend_obj,
+        files=files,
+        include_metadata=include_metadata,
+        max_tokens=max_tokens,
     )
 
 
@@ -3697,15 +3918,15 @@ async def think(
     if depth == "quick":
         task_type = "quick"
         model_hint = "quick"
-        enable_thinking = False
+        _enable_thinking = False  # Reserved for future extended thinking support
     elif depth == "deep":
         task_type = "plan"
         model_hint = "thinking"  # Use dedicated thinking model for deep reasoning
-        enable_thinking = True
+        _enable_thinking = True  # Reserved for future extended thinking support
     else:  # normal
         task_type = "analyze"
         model_hint = "thinking"  # Use thinking model for normal depth too
-        enable_thinking = True
+        _enable_thinking = True  # Reserved for future extended thinking support
 
     # Build the thinking prompt
     thinking_prompt = f"""Think through this problem step by step:
@@ -3756,30 +3977,31 @@ Think deeply before answering."""
 # MULTI-BACKEND INTELLIGENT ROUTING
 # ============================================================
 
+
 async def _select_optimal_backend_v2(
     content: str,
-    file_path: Optional[str] = None,
+    file_path: str | None = None,
     task_type: str = "quick",
-    backend_type: Optional[str] = None,
-) -> tuple[Optional[str], Optional[Any]]:
+    backend_type: str | None = None,
+) -> tuple[str | None, Any | None]:
     """
     Select optimal backend.
-    
+
     If backend_type is specified ("local" or "remote"), tries to find a matching backend.
     Otherwise uses the active backend.
     """
     if backend_type:
         # Try to find a backend of the requested type
-        for backend in backend_manager.get_enabled_backends():
-            if backend.type == backend_type:
-                return (None, backend)
-    
+        for b in backend_manager.get_enabled_backends():
+            if b.type == backend_type:
+                return (None, b)
+
     # Default to active backend
-    backend = backend_manager.get_active_backend()
-    return (None, backend)
+    active_backend = backend_manager.get_active_backend()
+    return (None, active_backend)
 
 
-async def _select_optimal_backend(content: str, file_path: Optional[str] = None) -> Optional[str]:
+async def _select_optimal_backend(content: str, file_path: str | None = None) -> str | None:
     """
     Legacy backend selection.
     """
@@ -3800,10 +4022,7 @@ def _assign_backends_to_tasks(task_list: list[dict], available: dict[str, bool])
     """
     # Get enabled backends that are available
     enabled_backends = backend_manager.get_enabled_backends()
-    candidate_backends = [
-        b.id for b in enabled_backends 
-        if available.get(b.id, False)
-    ]
+    candidate_backends = [b.id for b in enabled_backends if available.get(b.id, False)]
 
     if not candidate_backends:
         # Fallback to active backend even if status unknown, or just return empty/error
@@ -3812,7 +4031,7 @@ def _assign_backends_to_tasks(task_list: list[dict], available: dict[str, bool])
 
     assignments = []
     backend_count = len(candidate_backends)
-    
+
     for i, _ in enumerate(task_list):
         # Round-robin assignment
         backend_id = candidate_backends[i % backend_count]
@@ -3825,7 +4044,7 @@ def _assign_backends_to_tasks(task_list: list[dict], available: dict[str, bool])
 async def batch(
     tasks: str,
     include_metadata: bool = True,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
 ) -> str:
     """
     Execute multiple tasks in PARALLEL across all available GPUs for maximum throughput.
@@ -3884,10 +4103,10 @@ async def batch(
     backend_assignments = _assign_backends_to_tasks(task_list, available)
 
     # Log routing decisions
-    routing_counts = {}
+    routing_counts: dict[str, int] = {}
     for b_id in backend_assignments:
         routing_counts[b_id] = routing_counts.get(b_id, 0) + 1
-    
+
     log.info("batch_routing", counts=routing_counts)
 
     # Capture context variables before spawning tasks
@@ -3901,8 +4120,8 @@ async def batch(
         i: int,
         t: dict,
         backend_id: str,
-        client_id: Optional[str],
-        username: Optional[str],
+        client_id: str | None,
+        username: str | None,
     ) -> str:
         # Re-set context variables in this task
         # Child tasks don't inherit parent context, so we must restore them
@@ -3937,17 +4156,19 @@ async def batch(
             include_metadata=task_include_metadata,
             max_tokens=task_max_tokens,
         )
-        return f"### Task {i+1}: {task_type}\n\n{result}"
+        return f"### Task {i + 1}: {task_type}\n\n{result}"
 
-    results = await asyncio.gather(*[
-        run_task(i, t, backend_assignments[i], captured_client_id, captured_username)
-        for i, t in enumerate(task_list)
-    ])
+    results = await asyncio.gather(
+        *[
+            run_task(i, t, backend_assignments[i], captured_client_id, captured_username)
+            for i, t in enumerate(task_list)
+        ]
+    )
 
     elapsed_ms = int((time.time() - start_time) * 1000)
 
     # Build routing summary
-    routing_info = f"Backends used: {', '.join([f'{k}({v})' for k,v in routing_counts.items()])}"
+    routing_info = f"Backends used: {', '.join([f'{k}({v})' for k, v in routing_counts.items()])}"
 
     return f"""# Batch Results
 
@@ -3988,7 +4209,12 @@ async def health() -> str:
     total_moe_tokens = MODEL_USAGE["moe"]["tokens"]
     total_thinking_tokens = MODEL_USAGE["thinking"]["tokens"]
     local_tokens = total_quick_tokens + total_coder_tokens + total_moe_tokens + total_thinking_tokens
-    local_calls = MODEL_USAGE["quick"]["calls"] + MODEL_USAGE["coder"]["calls"] + MODEL_USAGE["moe"]["calls"] + MODEL_USAGE["thinking"]["calls"]
+    local_calls = (
+        MODEL_USAGE["quick"]["calls"]
+        + MODEL_USAGE["coder"]["calls"]
+        + MODEL_USAGE["moe"]["calls"]
+        + MODEL_USAGE["thinking"]["calls"]
+    )
 
     # Estimate cost savings (vs GPT-4)
     local_savings = (local_tokens / 1000) * config.gpt4_cost_per_1k_tokens
@@ -4032,27 +4258,26 @@ async def queue_status() -> str:
     Returns:
         JSON with queue status, loaded models, and pending requests
     """
-    if not hasattr(model_queue, 'loaded_models'):
-        return json.dumps({
-            "status": "queue_not_initialized",
-            "message": "ModelQueue not yet initialized"
-        }, indent=2)
+    if not hasattr(model_queue, "loaded_models"):
+        return json.dumps({"status": "queue_not_initialized", "message": "ModelQueue not yet initialized"}, indent=2)
 
     # Get current queue state
     loaded = model_queue.loaded_models.copy()
     queued_requests = []
 
     # Get queued requests from all model queues
-    for model_name, queue in model_queue.request_queues.items():
+    for _model_name, queue in model_queue.request_queues.items():
         for queued_request in queue:
-            queued_requests.append({
-                "id": queued_request.request_id,
-                "task": queued_request.task_type,
-                "model": queued_request.model_name,
-                "priority": queued_request.priority,
-                "queued_at": queued_request.timestamp.isoformat() if queued_request.timestamp else None,
-                "estimated_tokens": queued_request.content_length // 4,  # Rough estimate
-            })
+            queued_requests.append(
+                {
+                    "id": queued_request.request_id,
+                    "task": queued_request.task_type,
+                    "model": queued_request.model_name,
+                    "priority": queued_request.priority,
+                    "queued_at": queued_request.timestamp.isoformat() if queued_request.timestamp else None,
+                    "estimated_tokens": queued_request.content_length // 4,  # Rough estimate
+                }
+            )
 
     # Calculate memory usage
     total_vram = sum(model["size_gb"] * 1024 for model in loaded.values())  # Convert GB to MB
@@ -4078,7 +4303,7 @@ async def queue_status() -> str:
         "queue_config": {
             "gpu_memory_limit_gb": model_queue.gpu_memory_limit_gb,
             "memory_buffer_gb": model_queue.memory_buffer_gb,
-        }
+        },
     }
 
     return json.dumps(status, indent=2)
@@ -4106,13 +4331,15 @@ async def models() -> str:
     # Build backends info from BackendManager
     backends_info = []
     for backend in backend_manager.get_enabled_backends():
-        backends_info.append({
-            "id": backend.id,
-            "name": backend.name,
-            "provider": backend.provider,
-            "url": backend.url,
-            "models": backend.models,
-        })
+        backends_info.append(
+            {
+                "id": backend.id,
+                "name": backend.name,
+                "provider": backend.provider,
+                "url": backend.url,
+                "models": backend.models,
+            }
+        )
 
     info = {
         "active_backend": get_active_backend_id(),
@@ -4123,7 +4350,7 @@ async def models() -> str:
             "coder_tasks": ["generate", "review", "analyze"],
             "moe_tasks": ["plan", "critique"],
             "large_content_threshold": f"{config.large_content_threshold // 1024}KB",
-        }
+        },
     }
 
     return json.dumps(info, indent=2)
@@ -4189,7 +4416,7 @@ async def switch_model(tier: str, model_name: str) -> str:
     # This is tricky because we might not be able to list models for all providers.
     # We will trust the user but try to warn if we can check.
     available_models = []
-    
+
     try:
         if backend.provider == "ollama":
             client = backend.get_client()
@@ -4198,9 +4425,9 @@ async def switch_model(tier: str, model_name: str) -> str:
                 data = response.json()
                 available_models = [m["name"] for m in data.get("models", [])]
                 if model_name not in available_models:
-                     return f"""Error: Model '{model_name}' not found in Ollama backend '{backend.name}'.
+                    return f"""Error: Model '{model_name}' not found in Ollama backend '{backend.name}'.
 
-Available models: {', '.join(sorted(available_models))}
+Available models: {", ".join(sorted(available_models))}
 
 Pull the model first: `ollama pull {model_name}`"""
             else:
@@ -4212,13 +4439,13 @@ Pull the model first: `ollama pull {model_name}`"""
 
     # Update the backend configuration
     old_model = backend.models.get(tier, "none")
-    
+
     # Create a copy of models dict to update
     new_models = backend.models.copy()
     new_models[tier] = model_name
-    
+
     # Update via manager (persists to settings.json)
-    updated_backend = backend_manager.update_backend(backend.id, {"models": new_models})
+    updated_backend = await backend_manager.update_backend(backend.id, {"models": new_models})
 
     if not updated_backend:
         return "Error: Failed to update backend configuration."
@@ -4234,8 +4461,8 @@ Pull the model first: `ollama pull {model_name}`"""
 **New Model**: {model_name}
 
 **Model Info**:
-- **VRAM**: {model_info.get('vram_gb', 'Unknown')}GB
-- **Context**: {model_info.get('context_tokens', 'Unknown')} tokens
+- **VRAM**: {model_info.get("vram_gb", "Unknown")}GB
+- **Context**: {model_info.get("context_tokens", "Unknown")} tokens
 
 **Persistence**: Configuration saved to settings.json - change persists across restarts.
 
@@ -4258,21 +4485,15 @@ async def get_model_info_tool(model_name: str) -> str:
     """
     info = get_model_info(model_name)
 
-    vram = info.get('vram_gb', 'Unknown')
-    context = info.get('context_tokens', 'Unknown')
-    tier = info.get('tier', 'unknown')
+    vram = info.get("vram_gb", "Unknown")
+    context = info.get("context_tokens", "Unknown")
+    tier = info.get("tier", "unknown")
 
     # Format numbers nicely
-    if isinstance(vram, (int, float)):
-        vram_str = f"{vram}GB"
-    else:
-        vram_str = str(vram)
+    vram_str = f"{vram}GB" if isinstance(vram, (int, float)) else str(vram)
 
     if isinstance(context, int):
-        if context >= 1000:
-            context_str = f"{context:,} tokens"
-        else:
-            context_str = f"{context} tokens"
+        context_str = f"{context:,} tokens" if context >= 1000 else f"{context} tokens"
     else:
         context_str = str(context)
 
@@ -4297,12 +4518,12 @@ async def get_model_info_tool(model_name: str) -> str:
 MEMORY_DIR = paths.MEMORIES_DIR
 
 
-def _read_serena_memory(name: str) -> Optional[str]:
+def _read_serena_memory(name: str) -> str | None:
     """
     Internal: Read a Serena memory file.
     Returns content or None if not found.
     """
-    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
     memory_path = MEMORY_DIR / f"{safe_name}.md"
 
     if memory_path.exists():
@@ -4343,8 +4564,13 @@ def _read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[st
         try:
             size = file_path.stat().st_size
             if size > max_size_bytes:
-                log.warning("file_read_skipped", path=path_str, reason="too_large",
-                           size_kb=size // 1024, max_kb=max_size_bytes // 1024)
+                log.warning(
+                    "file_read_skipped",
+                    path=path_str,
+                    reason="too_large",
+                    size_kb=size // 1024,
+                    max_kb=max_size_bytes // 1024,
+                )
                 continue
 
             content = file_path.read_text(encoding="utf-8")
@@ -4359,6 +4585,7 @@ def _read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[st
 # ============================================================
 # MCP RESOURCES (Expose data for cross-server communication)
 # ============================================================
+
 
 @mcp.resource("delia://file/{path}")
 async def resource_file(path: str) -> str:
@@ -4407,7 +4634,11 @@ async def resource_stats() -> str:
     Returns token counts, call counts, and estimated cost savings
     across all model tiers.
     """
-    stats = load_stats()
+    stats = {
+        "model_usage": MODEL_USAGE,
+        "task_stats": TASK_STATS,
+        "recent_calls_count": len(RECENT_CALLS),
+    }
     return json.dumps(stats, indent=2)
 
 
@@ -4474,30 +4705,27 @@ async def resource_memories() -> str:
 # Import structured tools module - this registers additional MCP tools
 # with typed JSON input/output for programmatic use by AI assistants.
 # The import must happen after mcp and all helper functions are defined.
-from . import structured_tools  # noqa: F401, E402
-
+from . import structured_tools  # noqa: F401
 
 # ============================================================
 # GARDEN-THEMED ALIASES (Fun alternatives to standard tools)
 # ============================================================
-
-from .melon_messages import get_task_message
 
 
 @mcp.tool()
 async def plant(
     task: str,
     content: str,
-    file: Optional[str] = None,
-    model: Optional[str] = None,
-    language: Optional[str] = None,
-    context: Optional[str] = None,
-    symbols: Optional[str] = None,
+    file: str | None = None,
+    model: str | None = None,
+    language: str | None = None,
+    context: str | None = None,
+    symbols: str | None = None,
     include_references: bool = False,
-    backend_type: Optional[str] = None,
-    files: Optional[str] = None,
+    backend_type: str | None = None,
+    files: str | None = None,
     include_metadata: bool = True,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
 ) -> str:
     """
     Plant a seed in Delia's garden and watch it grow into a response.
@@ -4528,9 +4756,19 @@ async def plant(
     """
     backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
     return await _delegate_impl(
-        task, content, file, model, language, context, symbols, include_references,
-        backend=backend_provider, backend_obj=backend_obj, files=files,
-        include_metadata=include_metadata, max_tokens=max_tokens
+        task,
+        content,
+        file,
+        model,
+        language,
+        context,
+        symbols,
+        include_references,
+        backend=backend_provider,
+        backend_obj=backend_obj,
+        files=files,
+        include_metadata=include_metadata,
+        max_tokens=max_tokens,
     )
 
 
@@ -4557,14 +4795,14 @@ async def ponder(
     Returns:
         Ripened wisdom from the thinking vine
     """
-    return await think(problem, context, depth)
+    return await think(problem, context, depth)  # type: ignore[operator]
 
 
 @mcp.tool()
 async def harvest(
     tasks: str,
     include_metadata: bool = True,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
 ) -> str:
     """
     Gather multiple melons from across the garden in parallel.
@@ -4582,15 +4820,15 @@ async def harvest(
     Returns:
         A basket full of harvested melons!
     """
-    return await batch(tasks, include_metadata=include_metadata, max_tokens=max_tokens)
+    return await batch(tasks, include_metadata=include_metadata, max_tokens=max_tokens)  # type: ignore[operator]
 
 
 @mcp.tool()
 async def prune(
     content: str,
-    file: Optional[str] = None,
-    language: Optional[str] = None,
-    focus_areas: Optional[str] = None,
+    file: str | None = None,
+    language: str | None = None,
+    focus_areas: str | None = None,
 ) -> str:
     """
     Examine code vines for weeds, tangles, and overgrowth.
@@ -4613,14 +4851,25 @@ async def prune(
     task_context = f"Focus on: {focus_areas}" if focus_areas else ""
     full_content = f"{task_context}\n\n{content}" if task_context else content
     backend_provider, backend_obj = await _select_optimal_backend_v2(full_content, file, "review", None)
-    return await _delegate_impl("review", full_content, file, "coder", language, None, None, False, backend=backend_provider, backend_obj=backend_obj)
+    return await _delegate_impl(
+        "review",
+        full_content,
+        file,
+        "coder",
+        language,
+        None,
+        None,
+        False,
+        backend=backend_provider,
+        backend_obj=backend_obj,
+    )
 
 
 @mcp.tool()
 async def grow(
     content: str,
-    language: Optional[str] = None,
-    requirements: Optional[str] = None,
+    language: str | None = None,
+    requirements: str | None = None,
 ) -> str:
     """
     Cultivate fresh code from a seed of an idea.
@@ -4639,15 +4888,26 @@ async def grow(
     task_context = f"Requirements: {requirements}" if requirements else ""
     full_content = f"{task_context}\n\n{content}" if task_context else content
     backend_provider, backend_obj = await _select_optimal_backend_v2(full_content, None, "generate", None)
-    return await _delegate_impl("generate", full_content, None, "coder", language, None, None, False, backend=backend_provider, backend_obj=backend_obj)
+    return await _delegate_impl(
+        "generate",
+        full_content,
+        None,
+        "coder",
+        language,
+        None,
+        None,
+        False,
+        backend=backend_provider,
+        backend_obj=backend_obj,
+    )
 
 
 @mcp.tool()
 async def tend(
     content: str,
-    file: Optional[str] = None,
-    language: Optional[str] = None,
-    analysis_type: Optional[str] = None,
+    file: str | None = None,
+    language: str | None = None,
+    analysis_type: str | None = None,
 ) -> str:
     """
     Tend to the code garden - examine structure and health.
@@ -4670,14 +4930,25 @@ async def tend(
     task_context = f"Analysis type: {analysis_type}" if analysis_type else ""
     full_content = f"{task_context}\n\n{content}" if task_context else content
     backend_provider, backend_obj = await _select_optimal_backend_v2(full_content, file, "analyze", None)
-    return await _delegate_impl("analyze", full_content, file, "coder", language, None, None, False, backend=backend_provider, backend_obj=backend_obj)
+    return await _delegate_impl(
+        "analyze",
+        full_content,
+        file,
+        "coder",
+        language,
+        None,
+        None,
+        False,
+        backend=backend_provider,
+        backend_obj=backend_obj,
+    )
 
 
 @mcp.tool()
 async def ruminate(
     problem: str,
     context: str = "",
-    constraints: Optional[str] = None,
+    constraints: str | None = None,
 ) -> str:
     """
     Deep contemplation in the wisdom garden.
@@ -4696,12 +4967,13 @@ async def ruminate(
     """
     if constraints:
         context = f"{context}\n\nConstraints: {constraints}" if context else f"Constraints: {constraints}"
-    return await think(problem, context, "deep")
+    return await think(problem, context, "deep")  # type: ignore[operator]
 
 
 # ============================================================
 # MAIN
 # ============================================================
+
 
 async def _init_database():
     """Initialize authentication database on startup."""
@@ -4731,6 +5003,7 @@ async def _shutdown_handler():
     This is called automatically on server shutdown.
     """
     from .backend_manager import shutdown_backends
+
     await shutdown_backends()
 
     # Save tracker state on shutdown
@@ -4738,70 +5011,49 @@ async def _shutdown_handler():
         await tracker.shutdown()
 
 
-def main():
-    """Entry point for the MCP server."""
+def run_server(
+    transport: str = "stdio",
+    port: int = 8200,
+    host: str = "0.0.0.0",
+) -> None:
+    """
+    Run the Delia MCP server.
+
+    This is the main entry point for starting the server, callable from
+    both the CLI module and directly.
+
+    Args:
+        transport: Transport protocol - "stdio", "sse", "http", or "streamable-http"
+        port: Port for HTTP/SSE transports (default: 8200)
+        host: Host to bind for HTTP/SSE transports (default: 0.0.0.0)
+    """
     global log
-    import argparse
     import atexit
 
-    parser = argparse.ArgumentParser(
-        description="Delia — Local LLM delegation server",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  uv run mcp_server.py                         # stdio (VS Code, default)
-  uv run mcp_server.py --transport sse         # SSE on port 8200
-  uv run mcp_server.py --transport http -p 9000  # HTTP on port 9000
+    # Normalize transport string
+    transport = transport.lower().strip()
 
-Models (4-tier routing):
-  quick (qwen3:14b)           - Fast general tasks, ~9GB VRAM
-  coder (qwen2.5-coder:14b)   - Code generation/review, ~9GB VRAM
-  moe (qwen3:30b-a3b)         - Complex planning/critique, ~17GB VRAM
-  thinking (olmo3:7b-think)   - Chain-of-thought reasoning, ~6GB VRAM
-        """
-    )
-    parser.add_argument(
-        "-t", "--transport",
-        choices=["stdio", "sse", "http", "streamable-http"],
-        default="stdio",
-        help="Transport protocol (default: stdio)"
-    )
-    parser.add_argument(
-        "-p", "--port",
-        type=int,
-        default=8200,
-        help="Port for HTTP/SSE transport (default: 8200)"
-    )
-    parser.add_argument(
-        "--host",
-        default="0.0.0.0",
-        help="Host to bind for HTTP/SSE (default: 0.0.0.0)"
-    )
+    # Note: Stats and logs are already loaded at module import time
 
-    args = parser.parse_args()
-
-    # Note: Stats and logs are already loaded at module import time (lines 181-182)
-
-    # ✅ CRITICAL FIX: Reconfigure logging for STDIO transport
+    # CRITICAL FIX: Reconfigure logging for STDIO transport
     # For STDIO, stdout MUST be reserved for JSON-RPC protocol messages only
     # Redirect logs to stderr to avoid polluting the protocol stream
-    if args.transport == "stdio":
+    if transport == "stdio":
         _configure_structlog(use_stderr=True)
         # Get fresh logger reference after reconfiguration
         log = structlog.get_logger()
         log.info("stdio_logging_configured", destination="stderr")
 
-    # Register graceful shutdown handler for all transports
-    if args.transport == "stdio":
-        # For STDIO transport, use atexit since there's no built-in shutdown event
+        # Register graceful shutdown handler
         atexit.register(lambda: asyncio.run(_shutdown_handler()))
-    # For HTTP/SSE, FastMCP (Starlette) handles shutdown via SIGTERM/SIGINT
-    # and will call any registered shutdown handlers
 
-    if args.transport in ("http", "streamable-http"):
-        # ✅ Reconfigure logging to stderr for HTTP transports
+        log.info("server_starting", transport="stdio", auth_enabled=False)
+        # CRITICAL: show_banner=False keeps stdout clean for JSON-RPC protocol
+        mcp.run(show_banner=False)
+
+    elif transport in ("http", "streamable-http"):
+        # Reconfigure logging to stderr for HTTP transports
         _configure_structlog(use_stderr=True)
-        # Get fresh logger reference after reconfiguration
         log = structlog.get_logger()
         log.info("http_logging_configured", destination="stderr")
 
@@ -4814,13 +5066,19 @@ Models (4-tier routing):
         atexit.register(lambda: asyncio.run(_shutdown_handler()))
 
         auth_endpoints = ["/auth/register", "/auth/jwt/login", "/auth/me"] if AUTH_ENABLED else []
-        log.info("server_starting", transport="http", host=args.host, port=args.port,
-                 auth_enabled=AUTH_ENABLED, endpoints=auth_endpoints)
-        mcp.run(transport="http", host=args.host, port=args.port)
-    elif args.transport == "sse":
-        # ✅ Reconfigure logging to stderr for SSE transport
+        log.info(
+            "server_starting",
+            transport="http",
+            host=host,
+            port=port,
+            auth_enabled=AUTH_ENABLED,
+            endpoints=auth_endpoints,
+        )
+        mcp.run(transport="http", host=host, port=port)
+
+    elif transport == "sse":
+        # Reconfigure logging to stderr for SSE transport
         _configure_structlog(use_stderr=True)
-        # Get fresh logger reference after reconfiguration
         log = structlog.get_logger()
         log.info("sse_logging_configured", destination="stderr")
 
@@ -4833,14 +5091,67 @@ Models (4-tier routing):
         atexit.register(lambda: asyncio.run(_shutdown_handler()))
 
         auth_endpoints = ["/auth/register", "/auth/jwt/login", "/auth/me"] if AUTH_ENABLED else []
-        log.info("server_starting", transport="sse", host=args.host, port=args.port,
-                 auth_enabled=AUTH_ENABLED, endpoints=auth_endpoints)
-        mcp.run(transport="sse", host=args.host, port=args.port)
+        log.info(
+            "server_starting",
+            transport="sse",
+            host=host,
+            port=port,
+            auth_enabled=AUTH_ENABLED,
+            endpoints=auth_endpoints,
+        )
+        mcp.run(transport="sse", host=host, port=port)
+
     else:
-        # Default STDIO transport (already configured above)
-        log.info("server_starting", transport="stdio", auth_enabled=False)
-        # CRITICAL: show_banner=False keeps stdout clean for JSON-RPC protocol
-        mcp.run(show_banner=False)  # Default STDIO transport (no auth needed - local only)
+        raise ValueError(f"Unknown transport: {transport}. Use: stdio, sse, http, streamable-http")
+
+
+def main() -> None:
+    """
+    Legacy entry point for the MCP server.
+
+    This provides backwards compatibility for direct invocation.
+    For the full CLI experience, use 'delia' command instead.
+    """
+    from enum import Enum
+
+    import typer
+
+    class Transport(str, Enum):
+        stdio = "stdio"
+        sse = "sse"
+        http = "http"
+        streamable_http = "streamable-http"
+
+    app = typer.Typer(
+        help="Delia MCP Server (use 'delia' for full CLI with init/install/doctor)",
+        no_args_is_help=False,
+        add_completion=False,
+    )
+
+    @app.command()
+    def run(
+        transport: Transport = typer.Option(
+            Transport.stdio,
+            "-t",
+            "--transport",
+            help="Transport protocol",
+        ),
+        port: int = typer.Option(
+            8200,
+            "-p",
+            "--port",
+            help="Port for HTTP/SSE transport",
+        ),
+        host: str = typer.Option(
+            "0.0.0.0",
+            "--host",
+            help="Host to bind for HTTP/SSE",
+        ),
+    ) -> None:
+        """Run the Delia MCP server."""
+        run_server(transport=transport.value, port=port, host=host)
+
+    app()
 
 
 if __name__ == "__main__":

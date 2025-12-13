@@ -266,10 +266,6 @@ export async function GET() {
         remote: remoteBackends.length,
       },
       timestamp: new Date().toISOString()
-    }, {
-      headers: {
-        "Cache-Control": "max-age=5, stale-while-revalidate=10"
-      }
     })
   } catch (error) {
     return NextResponse.json(

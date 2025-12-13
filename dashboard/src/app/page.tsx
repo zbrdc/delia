@@ -337,6 +337,29 @@ export default function Dashboard() {
     }
   }, [])
 
+  // SSE connection for real-time backend updates
+  useEffect(() => {
+    const eventSource = new EventSource("/api/sse/backends")
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as BackendsResponse
+        if (data.backends) {
+          setBackendsResponse(data)
+          setActiveBackend(data.activeBackend || "")
+          setLastUpdated(new Date())
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
+    eventSource.onerror = () => {
+      // SSE disconnected, will auto-reconnect
+      console.debug("SSE reconnecting...")
+    }
+
+    return () => eventSource.close()
+  }, [])
+
   const fetchCircuitBreaker = useCallback(async () => {
     try {
       const res = await fetch("/api/circuit-breaker")
@@ -409,7 +432,6 @@ export default function Dashboard() {
   useEffect(() => {
     fetchStats()
     fetchOllamaStatus()
-    fetchBackends()
     fetchCircuitBreaker()
     fetchUser()
     const statsInterval = setInterval(() => {
@@ -417,14 +439,11 @@ export default function Dashboard() {
       fetchOllamaStatus()
       fetchCircuitBreaker()
     }, 5000)
-    const backendsInterval = setInterval(() => {
-      fetchBackends()
-    }, 3000)
+    // Backends now use SSE for real-time updates
     return () => {
       clearInterval(statsInterval)
-      clearInterval(backendsInterval)
     }
-  }, [fetchStats, fetchOllamaStatus, fetchBackends, fetchCircuitBreaker, fetchUser])
+  }, [fetchStats, fetchOllamaStatus, fetchCircuitBreaker, fetchUser])
 
   useEffect(() => {
     if (activeTab === "logs") {
@@ -987,7 +1006,7 @@ export default function Dashboard() {
               </Card>
 
               
-              {circuitBreaker && Object.values(circuitBreaker).some((status: CircuitBreakerStatus) => status.circuit_open) && (
+              {circuitBreaker && Object.entries(circuitBreaker).some(([key, status]) => key !== 'active_backend' && key !== 'timestamp' && status?.circuit_open) && (
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">Circuit Breaker</CardTitle>

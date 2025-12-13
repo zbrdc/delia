@@ -45,7 +45,7 @@ CIRCUIT_BREAKER_FILE = CACHE_DIR / "circuit_breaker.json"
 USER_DB_FILE = USER_DATA_DIR / "users.db"
 
 
-def ensure_directories():
+def ensure_directories() -> None:
     """Create all required directories."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
