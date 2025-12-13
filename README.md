@@ -73,7 +73,9 @@ See [Configuration](#configuration) to customize further.
 
 ## Integration
 
-Delia works with AI coding assistants via MCP. The setup wizard (`delia init`) can configure these automatically, or use the examples below.
+Delia works with AI coding assistants via MCP. The setup wizard (`delia init`) will automatically configure these clients and set up the proper uv-based MCP configuration, or you can manually configure them using the examples below.
+
+**Note:** The MCP configuration uses `uv` to reliably run Delia from your project directory, ensuring compatibility regardless of your Python installation setup.
 
 ### VS Code / GitHub Copilot
 
@@ -82,14 +84,20 @@ Add to `~/.config/Code/User/mcp.json`:
 {
   "servers": {
     "delia": {
-      "command": "delia",
-      "args": ["serve"],
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/delia",
+        "run",
+        "delia",
+        "serve"
+      ],
       "type": "stdio"
     }
   }
 }
 ```
-Reload VS Code to activate.
+Replace `/path/to/delia` with your actual Delia installation directory. Reload VS Code to activate.
 
 ### Claude Code
 
@@ -98,13 +106,19 @@ Create `~/.claude/mcp.json`:
 {
   "mcpServers": {
     "delia": {
-      "command": "delia",
-      "args": ["serve"]
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/delia",
+        "run",
+        "delia",
+        "serve"
+      ]
     }
   }
 }
 ```
-Then run `claude` and use `@delia` to delegate tasks.
+Replace `/path/to/delia` with your actual Delia installation directory. Then run `claude` and use `@delia` to delegate tasks.
 
 ### Gemini CLI
 
@@ -133,12 +147,19 @@ Add to `~/.gemini/settings.json`:
 {
   "mcpServers": {
     "delia": {
-      "command": "delia",
-      "args": ["serve"]
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/delia",
+        "run",
+        "delia",
+        "serve"
+      ]
     }
   }
 }
 ```
+Replace `/path/to/delia` with your actual Delia installation directory.
 
 ### GitHub Copilot CLI
 
@@ -147,29 +168,43 @@ Create `~/.copilot-cli/mcp.json`:
 {
   "servers": {
     "delia": {
-      "command": "delia",
-      "args": ["serve"]
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/delia",
+        "run",
+        "delia",
+        "serve"
+      ]
     }
   }
 }
 ```
+Replace `/path/to/delia` with your actual Delia installation directory.
 
 ### Manual Configuration
 
-If you prefer not to install Delia globally, or encounter `ENOENT` errors, use explicit paths:
+The examples above show how to manually configure Delia. The `delia init` command automates this process:
 
-```json
-{
-  "mcpServers": {
-    "delia": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/delia", "python", "-m", "delia.mcp_server"]
-    }
-  }
-}
+```bash
+# Run the setup wizard - it will auto-detect your Delia path and configure your clients
+delia init
 ```
 
-Replace `/path/to/delia` with your actual installation path (e.g., `~/git/delia`).
+Or to manually install to a specific client after setup:
+
+```bash
+# Install to VS Code
+delia install vscode
+
+# Install to Claude Code
+delia install claude
+
+# Install to all detected clients
+delia install
+```
+
+All configurations use the `uv` approach to reliably execute Delia from its installation directory.
 
 ## Configuration
 
