@@ -85,9 +85,8 @@ _early_configure_silent_logging()
 
 import aiofiles
 import humanize
-import tiktoken
 from fastmcp import FastMCP
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from pygments.lexers import get_lexer_for_filename
 from pygments.util import ClassNotFound
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -98,17 +97,49 @@ from .backend_manager import BackendConfig, backend_manager
 # Import configuration (all tunable values in config.py)
 from .config import STATS_FILE, config, detect_model_tier, get_backend_health
 
-# Import watermelon-themed messages for fun logging
-from .melon_messages import (
-    GardenEvent,
-    format_harvest_stats,
+# Import status messages for logging and dashboard
+from .messages import (
+    StatusEvent,
+    format_completion_stats,
     get_display_event,
-    get_message,
-    get_vine_message,
+    get_status_message,
+    get_tier_message,
 )
 
 # Import prompt templating system
 from .prompt_templates import create_structured_prompt
+
+# Import validation functions
+from .validation import (
+    MAX_CONTENT_LENGTH,
+    MAX_FILE_PATH_LENGTH,
+    VALID_BACKENDS,
+    VALID_MODELS,
+    VALID_TASKS,
+    validate_content,
+    validate_file_path,
+    validate_model_hint,
+    validate_task,
+)
+
+# Import token counting utilities
+from .tokens import count_tokens, estimate_tokens
+
+# Import provider response models
+from .providers import (
+    LlamaCppChoice,
+    LlamaCppError,
+    LlamaCppMessage,
+    LlamaCppResponse,
+    LlamaCppUsage,
+    OllamaResponse,
+)
+
+# Import model queue system
+from .queue import ModelQueue, QueuedRequest
+
+# Import routing utilities (content detection)
+from .routing import CODE_INDICATORS, detect_code_content
 
 # Conditional authentication imports (based on config.auth_enabled)
 AUTH_ENABLED = config.auth_enabled
@@ -197,7 +228,7 @@ def _dashboard_processor(logger: Any, method_name: str, event_dict: dict) -> dic
 
     Extracts dashboard-relevant fields and writes to live logs buffer.
     Only captures logs with explicit 'log_type' for dashboard display.
-    Includes garden-themed messages for a fun watermelon experience!
+    Includes status messages for dashboard display.
     """
     # Only process logs explicitly marked for dashboard
     log_type = event_dict.pop("log_type", None)
@@ -205,7 +236,7 @@ def _dashboard_processor(logger: Any, method_name: str, event_dict: dict) -> dic
         model = event_dict.pop("model", "")
         tokens = event_dict.pop("tokens", 0)
         message = event_dict.get("event", "")
-        garden_msg = event_dict.pop("garden_msg", "")  # Extract garden-themed message
+        status_msg = event_dict.pop("status_msg", "")  # Extract status message
         backend = event_dict.pop("backend", "")
 
         with _live_logs_lock:
@@ -216,7 +247,7 @@ def _dashboard_processor(logger: Any, method_name: str, event_dict: dict) -> dic
                     "message": message,
                     "model": model,
                     "tokens": tokens,
-                    "garden_msg": garden_msg,  # Include themed message for dashboard
+                    "status_msg": status_msg,  # Status message for dashboard
                     "backend": backend,
                 }
             )
@@ -337,497 +368,7 @@ _configure_structlog(use_stderr=True)
 log = structlog.get_logger()
 
 
-# ============================================================
-# PYDANTIC MODELS FOR API RESPONSES
-# ============================================================
-
-
-class OllamaResponse(BaseModel):
-    """Ollama /api/generate response model."""
-
-    response: str = ""
-    eval_count: int = 0
-    done: bool = True
-
-
-class LlamaCppMessage(BaseModel):
-    """OpenAI-compatible message."""
-
-    role: str = "assistant"
-    content: str = ""
-
-
-class LlamaCppChoice(BaseModel):
-    """OpenAI-compatible choice."""
-
-    message: LlamaCppMessage
-    index: int = 0
-    finish_reason: str = "stop"
-
-
-class LlamaCppUsage(BaseModel):
-    """OpenAI-compatible usage stats."""
-
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-
-
-class LlamaCppResponse(BaseModel):
-    """llama.cpp /v1/chat/completions response model."""
-
-    choices: list[LlamaCppChoice]
-    usage: LlamaCppUsage | None = None
-    model: str = ""
-    id: str = ""
-
-
-class LlamaCppError(BaseModel):
-    """llama.cpp error response."""
-
-    type: str = ""
-    message: str = ""
-    n_prompt_tokens: int | None = None
-    n_ctx: int | None = None
-
-
-# ============================================================
-# TOKEN ESTIMATION (tiktoken)
-# ============================================================
-
-# Lazy-load tiktoken encoder (first call may download encoding)
-_tiktoken_encoder: tiktoken.Encoding | None = None
-_tiktoken_failed: bool = False  # Track if loading failed to avoid repeated attempts
-
-
-def get_tiktoken_encoder() -> tiktoken.Encoding | None:
-    """
-    Get or initialize tiktoken encoder (cl100k_base works for most models).
-
-    Returns cached encoder, or None if loading failed.
-    """
-    global _tiktoken_encoder, _tiktoken_failed
-
-    # Don't retry if we already failed
-    if _tiktoken_failed:
-        return None
-
-    if _tiktoken_encoder is None:
-        try:
-            _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
-        except Exception as e:
-            _tiktoken_failed = True
-            log.warning("tiktoken_load_failed", error=str(e), fallback="estimate")
-            return None
-
-    return _tiktoken_encoder
-
-
-def count_tokens(text: str) -> int:
-    """
-    Count tokens accurately using tiktoken, with fallback to estimation.
-
-    Uses tiktoken's cl100k_base encoding (compatible with GPT-4, Claude, etc.)
-    Falls back to ~4 chars per token estimate if tiktoken unavailable.
-
-    Args:
-        text: The text to count tokens for
-
-    Returns:
-        Token count (accurate if tiktoken available, else estimated)
-    """
-    if not text:
-        return 0
-
-    encoder = get_tiktoken_encoder()
-    if encoder:
-        try:
-            return len(encoder.encode(text))
-        except Exception:  # noqa: S110 - Fall through to estimate below
-            pass
-
-    # Fallback: ~4 chars per token (rough estimate for modern models)
-    return len(text) // 4
-
-
-def estimate_tokens(text: str) -> int:
-    """
-    Quick token estimation without tiktoken.
-
-    Use this for non-critical estimates where speed matters more than accuracy.
-    """
-    if not text:
-        return 0
-    return len(text) // 4
-
-
-# ============================================================
-# INPUT VALIDATION
-# ============================================================
-
-VALID_TASKS = frozenset({"review", "analyze", "generate", "summarize", "critique", "quick", "plan", "think"})
-VALID_MODELS = frozenset({"quick", "coder", "moe", "thinking"})
-VALID_BACKENDS = frozenset({"ollama", "llamacpp"})
-MAX_CONTENT_LENGTH = 500_000  # 500KB max content
-MAX_FILE_PATH_LENGTH = 1000
-
-
-def validate_task(task: str) -> tuple[bool, str]:
-    """Validate task type. Returns (is_valid, error_message)."""
-    if not task:
-        return False, "Task type is required"
-    if task not in VALID_TASKS:
-        return False, f"Invalid task type: '{task}'. Valid types: {', '.join(sorted(VALID_TASKS))}"
-    return True, ""
-
-
-def validate_content(content: str) -> tuple[bool, str]:
-    """Validate content byte length. Returns (is_valid, error_message)."""
-    if content is None:
-        return False, "Content is required"
-    if not isinstance(content, str):
-        return False, f"Content must be a string, got {type(content).__name__}"
-    if not content:
-        return False, "Content is required"
-    # Use byte length (UTF-8) not character count to enforce accurate size limit
-    byte_length = len(content.encode("utf-8"))
-    if byte_length > MAX_CONTENT_LENGTH:
-        return False, f"Content too large: {byte_length} bytes (max: {MAX_CONTENT_LENGTH})"
-    return True, ""
-
-
-def validate_file_path(file_path: str | None) -> tuple[bool, str]:
-    """Validate file path if provided. Returns (is_valid, error_message)."""
-    if file_path is None:
-        return True, ""  # Optional field (None is allowed)
-    if file_path == "":
-        return False, "File path cannot be empty string"
-    if len(file_path) > MAX_FILE_PATH_LENGTH:
-        return False, f"File path too long: {len(file_path)} chars (max: {MAX_FILE_PATH_LENGTH})"
-    # Security: Reject path traversal attempts
-    if ".." in file_path:
-        return False, "File path cannot contain '..' (path traversal not allowed)"
-    # Note: ~ is allowed and will be resolved safely by Path.expanduser() in read_file_safe
-    return True, ""
-
-
-def validate_model_hint(model: str | None) -> tuple[bool, str]:
-    """Validate model hint if provided. Returns (is_valid, error_message)."""
-    if not model:
-        return True, ""  # Optional field
-    if model not in VALID_MODELS:
-        return False, f"Invalid model hint: '{model}'. Valid models: {', '.join(sorted(VALID_MODELS))}"
-    return True, ""
-
-
-# ============================================================
-# MODEL QUEUE SYSTEM
-# Intelligent GPU memory management and request queuing
-# ============================================================
-
-import heapq
-from dataclasses import dataclass, field
-from typing import Any
-
-
-@dataclass(order=True)
-class QueuedRequest:
-    """Represents a queued LLM request with priority."""
-
-    priority: int  # Lower number = higher priority
-    timestamp: datetime
-    request_id: str
-    model_name: str
-    task_type: str
-    content_length: int
-    future: asyncio.Future = field(compare=False)
-
-    def __post_init__(self):
-        # Tie-breaker: earlier requests get priority
-        self.timestamp = self.timestamp or datetime.now()
-
-
-class ModelQueue:
-    """
-    Intelligent queue system for GPU memory management.
-
-    Prevents concurrent model loading and manages GPU memory efficiently.
-    Queues requests when models need loading, prioritizes by model size and urgency.
-    """
-
-    def __init__(self):
-        self.loaded_models: dict[str, dict[str, Any]] = {}  # model_name -> metadata
-        self.loading_models: set[str] = set()  # Models currently being loaded
-        self.request_queues: dict[str, list[QueuedRequest]] = {}  # model_name -> priority queue
-        self.lock = asyncio.Lock()
-        self.request_counter = 0
-
-        # Model size estimates (in GB VRAM, rough estimates)
-        self.model_sizes = {
-            "Qwen3-4B": 4.0,
-            "Qwen3-14B": 14.0,
-            "Qwen3-30B": 30.0,
-            "Qwen3-4B-Q4_K_M": 2.5,  # Quantized versions
-            "Qwen3-14B-Q4_K_M": 8.0,
-            "Qwen3-30B-Q4_K_M": 16.0,
-        }
-
-        # GPU memory limit (assume 24GB for RTX 3090/4090, adjust as needed)
-        self.gpu_memory_limit_gb = 24.0
-        self.memory_buffer_gb = 2.0  # Keep 2GB free
-
-        # Queue health metrics
-        self.total_queued = 0
-        self.total_processed = 0
-        self.max_queue_depth = 0
-        self.queue_timeouts = 0
-
-    def get_model_size(self, model_name: str) -> float:
-        """Get estimated VRAM usage for a model."""
-        # Try exact match first
-        if model_name in self.model_sizes:
-            return self.model_sizes[model_name]
-
-        # Try partial matches
-        for key, size in self.model_sizes.items():
-            if key.lower() in model_name.lower():
-                return size
-
-        # Default estimate based on model name patterns
-        if "30b" in model_name.lower():
-            return 16.0  # Quantized 30B
-        elif "14b" in model_name.lower():
-            return 8.0  # Quantized 14B
-        else:
-            return 4.0  # Default 4B model
-
-    def get_available_memory(self) -> float:
-        """Calculate available GPU memory."""
-        used_memory = sum(self.get_model_size(model) for model in self.loaded_models)
-        return max(0, self.gpu_memory_limit_gb - used_memory - self.memory_buffer_gb)
-
-    def can_load_model(self, model_name: str) -> bool:
-        """Check if a model can be loaded given current memory."""
-        model_size = self.get_model_size(model_name)
-        return self.get_available_memory() >= model_size
-
-    def calculate_priority(self, task_type: str, content_length: int, model_name: str) -> int:
-        """Calculate request priority (lower = higher priority)."""
-        priority = 0
-
-        # Task urgency (thinking tasks are most urgent)
-        if task_type in ("think", "thinking"):
-            priority -= 100
-        elif task_type in ("plan", "analyze"):
-            priority -= 50
-        elif task_type in ("review", "critique"):
-            priority -= 25
-
-        # Content size (smaller = higher priority to avoid timeouts)
-        if content_length < 1000:
-            priority -= 20
-        elif content_length > 50000:
-            priority += 20  # Large content can wait
-
-        # Model size (smaller models = higher priority)
-        model_size = self.get_model_size(model_name)
-        if model_size <= 4.0:
-            priority -= 10
-        elif model_size > 16.0:
-            priority += 10
-
-        return priority
-
-    async def acquire_model(
-        self, model_name: str, task_type: str = "unknown", content_length: int = 0
-    ) -> tuple[bool, asyncio.Future | None]:
-        """
-        Acquire a model for use.
-
-        Returns:
-            - (True, None) if model is immediately available
-            - (False, Future) if request is queued (caller must await the Future)
-
-        The Future will be resolved when the model finishes loading and the request is processed.
-        """
-        async with self.lock:
-            # Model already loaded and not loading
-            if model_name in self.loaded_models and model_name not in self.loading_models:
-                self.loaded_models[model_name]["last_used"] = datetime.now()
-                return (True, None)
-
-            # Model is currently loading
-            if model_name in self.loading_models:
-                # Queue the request
-                request_id = f"req_{self.request_counter}"
-                self.request_counter += 1
-
-                priority = self.calculate_priority(task_type, content_length, model_name)
-                request_future: asyncio.Future[tuple[bool, str | None]] = asyncio.Future()
-                queued_request = QueuedRequest(
-                    priority=priority,
-                    timestamp=datetime.now(),
-                    request_id=request_id,
-                    model_name=model_name,
-                    task_type=task_type,
-                    content_length=content_length,
-                    future=request_future,
-                )
-
-                if model_name not in self.request_queues:
-                    self.request_queues[model_name] = []
-
-                heapq.heappush(self.request_queues[model_name], queued_request)
-
-                # Track queue stats
-                queue_length = len(self.request_queues[model_name])
-                self.total_queued += 1
-                self.max_queue_depth = max(self.max_queue_depth, queue_length)
-
-                log.info(
-                    get_display_event("model_queued"),
-                    model=model_name,
-                    queue_length=queue_length,
-                    priority=priority,
-                    task_type=task_type,
-                    request_id=request_id,
-                    garden_msg=get_message(GardenEvent.SEED_PLANTED),
-                    log_type="QUEUE",
-                )
-
-                return (False, request_future)
-
-            # Model not loaded - check if we can load it
-            if not self.can_load_model(model_name):
-                # Need to unload some models first
-                await self._make_room_for_model(model_name)
-
-            # Start loading the model
-            self.loading_models.add(model_name)
-
-            log.info(
-                get_display_event("model_loading_start"),
-                model=model_name,
-                available_memory_gb=round(self.get_available_memory(), 1),
-                garden_msg=get_message(GardenEvent.WATERING),
-            )
-
-            return (True, None)
-
-    async def _make_room_for_model(self, new_model_name: str) -> None:
-        """Unload least recently used models to make room for new model."""
-        new_model_size = self.get_model_size(new_model_name)
-        available_memory = self.get_available_memory()
-
-        if available_memory >= new_model_size:
-            return  # No need to unload
-
-        # Sort loaded models by last used time (oldest first)
-        unload_candidates = sorted(self.loaded_models.items(), key=lambda x: x[1]["last_used"])
-
-        freed_memory: float = 0.0
-        to_unload: list[str] = []
-
-        for model_name, _metadata in unload_candidates:
-            if freed_memory >= (new_model_size - available_memory):
-                break
-            freed_memory += self.get_model_size(model_name)
-            to_unload.append(model_name)
-
-        # Unload the selected models
-        for model_name in to_unload:
-            del self.loaded_models[model_name]
-            log.info(
-                get_display_event("model_unloaded"),
-                model=model_name,
-                reason="memory_pressure",
-                garden_msg=get_message(GardenEvent.COMPOSTING),
-            )
-
-    async def release_model(self, model_name: str, success: bool = True) -> None:
-        """Release a model after use and process queued requests."""
-        async with self.lock:
-            if model_name in self.loading_models:
-                self.loading_models.remove(model_name)
-
-                if success:
-                    # Mark model as loaded
-                    self.loaded_models[model_name] = {
-                        "loaded_at": datetime.now(),
-                        "last_used": datetime.now(),
-                        "size_gb": self.get_model_size(model_name),
-                    }
-
-                    log.info(
-                        get_display_event("model_loaded"),
-                        model=model_name,
-                        loaded_count=len(self.loaded_models),
-                        available_memory_gb=round(self.get_available_memory(), 1),
-                        garden_msg=get_message(GardenEvent.GARDEN_READY),
-                    )
-
-                    # Process queued requests for this model
-                    await self._process_queue(model_name)
-                else:
-                    # Loading failed - fail all queued requests
-                    if model_name in self.request_queues:
-                        for queued_request in self.request_queues[model_name]:
-                            if not queued_request.future.done():
-                                queued_request.future.set_exception(Exception(f"Failed to load model {model_name}"))
-                        del self.request_queues[model_name]
-
-    async def _process_queue(self, model_name: str) -> None:
-        """Process queued requests for a newly loaded model."""
-        if model_name not in self.request_queues:
-            return
-
-        queue = self.request_queues[model_name]
-        processed = 0
-
-        while queue and processed < 5:  # Process up to 5 requests at once
-            queued_request = heapq.heappop(queue)
-
-            if not queued_request.future.done():
-                # Wake up the waiting request
-                queued_request.future.set_result(True)
-                processed += 1
-                self.total_processed += 1
-
-                wait_time_ms = (datetime.now() - queued_request.timestamp).total_seconds() * 1000
-                log.info(
-                    get_display_event("queue_processed"),
-                    model=model_name,
-                    request_id=queued_request.request_id,
-                    wait_time_ms=round(wait_time_ms, 1),
-                    remaining=len(queue),
-                    garden_msg="Seedling ready for the big garden!",
-                    log_type="QUEUE",
-                )
-
-        if not queue:
-            del self.request_queues[model_name]
-
-    def get_queue_status(self) -> dict[str, Any]:
-        """Get current queue status for monitoring."""
-        current_queue_depth = sum(len(q) for q in self.request_queues.values())
-        return {
-            "loaded_models": list(self.loaded_models.keys()),
-            "loading_models": list(self.loading_models),
-            "queued_requests": {model: len(queue) for model, queue in self.request_queues.items()},
-            "available_memory_gb": round(self.get_available_memory(), 1),
-            "total_loaded_gb": round(sum(m["size_gb"] for m in self.loaded_models.values()), 1),
-            # Queue health metrics
-            "queue_stats": {
-                "total_queued": self.total_queued,
-                "total_processed": self.total_processed,
-                "current_queue_depth": current_queue_depth,
-                "max_queue_depth": self.max_queue_depth,
-                "queue_timeouts": self.queue_timeouts,
-            },
-        }
-
-
-# Global model queue instance
+# Global model queue instance (imported from queue.py)
 model_queue = ModelQueue()
 
 
@@ -1529,127 +1070,8 @@ def create_enhanced_prompt(
 
 
 # ============================================================
-# CODE DETECTION
-# ============================================================
-
-# Code indicators with weights for confidence scoring
-# Pre-compiled regex patterns for performance (avoids recompilation on each call)
-CODE_INDICATORS = {
-    # Strong indicators (weight 3) - almost certainly code
-    "strong": [
-        re.compile(r"\bdef\s+\w+\s*\(", re.MULTILINE),  # Python function
-        re.compile(r"\bclass\s+\w+[\s:(]", re.MULTILINE),  # Class definition
-        re.compile(r"\bimport\s+\w+", re.MULTILINE),  # Import statement
-        re.compile(r"\bfrom\s+\w+\s+import", re.MULTILINE),  # From import
-        re.compile(r"\bfunction\s+\w+\s*\(", re.MULTILINE),  # JS function
-        re.compile(r"\bconst\s+\w+\s*=", re.MULTILINE),  # JS const
-        re.compile(r"\blet\s+\w+\s*=", re.MULTILINE),  # JS let
-        re.compile(r"\bexport\s+(default\s+)?", re.MULTILINE),  # JS export
-        re.compile(r"^\s*@\w+", re.MULTILINE),  # Decorator
-        re.compile(r"\basync\s+(def|function)", re.MULTILINE),  # Async
-        re.compile(r"\bawait\s+\w+", re.MULTILINE),  # Await
-        re.compile(r"\breturn\s+[\w{(\[]", re.MULTILINE),  # Return statement
-        re.compile(r"if\s*\(.+\)\s*{", re.MULTILINE),  # C-style if
-        re.compile(r"for\s*\(.+\)\s*{", re.MULTILINE),  # C-style for
-        re.compile(r"\bwhile\s*\(.+\)", re.MULTILINE),  # While loop
-        re.compile(r"\btry\s*[:{]", re.MULTILINE),  # Try block
-        re.compile(r"\bcatch\s*\(", re.MULTILINE),  # Catch block
-        re.compile(r"\bexcept\s+\w*:", re.MULTILINE),  # Python except
-        re.compile(r"=>\s*{", re.MULTILINE),  # Arrow function
-        re.compile(r"\.map\(|\.filter\(|\.reduce\(", re.MULTILINE),  # Array methods
-    ],
-    # Medium indicators (weight 2) - likely code
-    "medium": [
-        re.compile(r"\bself\.", re.MULTILINE),  # Python self
-        re.compile(r"\bthis\.", re.MULTILINE),  # JS this
-        re.compile(r"===|!==", re.MULTILINE),  # Strict equality
-        re.compile(r"&&|\|\|", re.MULTILINE),  # Logical operators
-        re.compile(r"\bnull\b|\bundefined\b", re.MULTILINE),  # Null/undefined
-        re.compile(r"\bTrue\b|\bFalse\b|\bNone\b", re.MULTILINE),  # Python booleans
-        re.compile(r":\s*\w+\s*[,)\]]", re.MULTILINE),  # Type annotations
-        re.compile(r"\[\w+\]", re.MULTILINE),  # Array indexing
-        re.compile(r"\{\s*\w+:\s*", re.MULTILINE),  # Object literal
-        re.compile(r"console\.|print\(|logger\.", re.MULTILINE),  # Logging
-        re.compile(r"\braise\s+\w+", re.MULTILINE),  # Python raise
-        re.compile(r"\bthrow\s+new", re.MULTILINE),  # JS throw
-        re.compile(r"`[^`]+\$\{", re.MULTILINE),  # Template literal
-        re.compile(r'f"[^"]*\{', re.MULTILINE),  # Python f-string
-    ],
-    # Weak indicators (weight 1) - could be code
-    "weak": [
-        re.compile(r";$", re.MULTILINE),  # Semicolon ending
-        re.compile(r"\{|\}", re.MULTILINE),  # Braces
-        re.compile(r"\[|\]", re.MULTILINE),  # Brackets
-        re.compile(r"==|!=", re.MULTILINE),  # Equality
-        re.compile(r"->", re.MULTILINE),  # Arrow (type hints, etc)
-        re.compile(r"\bint\b|\bstr\b|\bbool\b", re.MULTILINE),  # Type names
-        re.compile(r"\bvar\b", re.MULTILINE),  # Var keyword
-    ],
-}
-
-
-def detect_code_content(content: str) -> tuple[bool, float, str]:
-    """
-    Detect if content is primarily code or text.
-
-    Returns:
-        (is_code, confidence, reasoning)
-        - is_code: True if content appears to be code
-        - confidence: 0.0-1.0 score
-        - reasoning: Brief explanation
-    """
-    if not content or len(content.strip()) < 20:
-        return False, 0.0, "Content too short"
-
-    lines = content.strip().split("\n")
-
-    # Count code indicators
-    strong_matches = 0
-    medium_matches = 0
-    weak_matches = 0
-
-    for pattern in CODE_INDICATORS["strong"]:
-        matches = len(pattern.findall(content))  # Use pre-compiled pattern
-        strong_matches += min(matches, 5)  # Cap per pattern
-
-    for pattern in CODE_INDICATORS["medium"]:
-        matches = len(pattern.findall(content))  # Use pre-compiled pattern
-        medium_matches += min(matches, 5)
-
-    for pattern in CODE_INDICATORS["weak"]:
-        matches = len(pattern.findall(content))  # Use pre-compiled pattern
-        weak_matches += min(matches, 5)
-
-    # Weighted score
-    score = strong_matches * 3 + medium_matches * 2 + weak_matches * 1
-
-    # Normalize by content length (per 1000 chars)
-    normalized = score / max(1, len(content) / 1000)
-
-    # Additional heuristics
-    avg_line_length = sum(len(line) for line in lines) / max(1, len(lines))
-    indent_lines = sum(1 for line in lines if line.startswith("  ") or line.startswith("\t"))
-    indent_ratio = indent_lines / max(1, len(lines))
-
-    # Adjust score based on structure
-    if indent_ratio > 0.3:  # Lots of indentation = code
-        normalized *= 1.3
-    if avg_line_length < 100:  # Code lines tend to be shorter
-        normalized *= 1.1
-
-    # Determine threshold
-    if normalized > 3.0:
-        return True, min(1.0, normalized / 5), f"Strong code signals (score={normalized:.1f})"
-    elif normalized > 1.5:
-        return True, normalized / 4, f"Likely code (score={normalized:.1f})"
-    elif normalized > 0.8:
-        return False, 0.4, f"Mixed content (score={normalized:.1f})"
-    else:
-        return False, max(0, 0.3 - normalized / 3), f"Primarily text (score={normalized:.1f})"
-
-
-# ============================================================
 # MODEL SELECTION
+# (detect_code_content is imported from routing.py)
 # ============================================================
 
 
@@ -1950,7 +1372,7 @@ def log_thinking_and_response(response_text: str, model_tier: str, tokens: int) 
             log_type="THINK",
             preview=thinking_preview.replace("\n", " "),
             model=model_tier,
-            garden_msg=get_message(GardenEvent.GROWING),
+            status_msg=get_status_message(StatusEvent.PROCESSING),
         )
 
     # Log LLM response (first 300 chars)
@@ -1961,7 +1383,7 @@ def log_thinking_and_response(response_text: str, model_tier: str, tokens: int) 
         preview=response_preview.replace("\n", " ").strip(),
         model=model_tier,
         tokens=tokens,
-        garden_msg=get_message(GardenEvent.HARVEST),
+        status_msg=get_status_message(StatusEvent.COMPLETED),
     )
 
 
@@ -2081,7 +1503,7 @@ async def call_ollama(
             task=task_type,
             thinking=enable_thinking,
             backend=backend_obj.name,
-            garden_msg=get_vine_message(model_tier, "start"),
+            status_msg=get_tier_message(model_tier, "start"),
         )
 
         response = await _make_request()
@@ -2131,7 +1553,7 @@ async def call_ollama(
                 tokens=humanize.intcomma(tokens),
                 model=model_tier,
                 backend="ollama",
-                garden_msg=format_harvest_stats(tokens, elapsed_ms, model_tier),
+                status_msg=format_completion_stats(tokens, elapsed_ms, model_tier),
             )
 
             # Record success for circuit breaker
@@ -2287,7 +1709,7 @@ async def call_llamacpp(
             task=task_type,
             thinking=enable_thinking,
             model=model_tier,
-            garden_msg=get_vine_message(model_tier, "start"),
+            status_msg=get_tier_message(model_tier, "start"),
         )
 
         response = await _make_request()
@@ -2350,7 +1772,7 @@ async def call_llamacpp(
                 tokens=humanize.intcomma(tokens),
                 model=model_tier,
                 backend="llamacpp",
-                garden_msg=format_harvest_stats(tokens, elapsed_ms, model_tier),
+                status_msg=format_completion_stats(tokens, elapsed_ms, model_tier),
             )
 
             # Record success for circuit breaker
@@ -2479,7 +1901,7 @@ async def call_gemini(
             backend="gemini",
             task=task_type,
             model=model_name,
-            garden_msg="Consulting the Gemini constellation...",
+            status_msg="Sending request to Gemini...",
         )
 
         # Instantiate model
@@ -2530,7 +1952,7 @@ async def call_gemini(
             tokens=humanize.intcomma(total_tokens),
             model=model_name,
             backend="gemini",
-            garden_msg="Starlight wisdom gathered from the clouds!",
+            status_msg=format_completion_stats(total_tokens, elapsed_ms, "moe"),
         )
 
         health.record_success(len(prompt))
@@ -4711,268 +4133,6 @@ async def resource_memories() -> str:
 # with typed JSON input/output for programmatic use by AI assistants.
 # The import must happen after mcp and all helper functions are defined.
 from . import structured_tools  # noqa: F401
-
-# ============================================================
-# GARDEN-THEMED ALIASES (Fun alternatives to standard tools)
-# ============================================================
-
-
-@mcp.tool()
-async def plant(
-    task: str,
-    content: str,
-    file: str | None = None,
-    model: str | None = None,
-    language: str | None = None,
-    context: str | None = None,
-    symbols: str | None = None,
-    include_references: bool = False,
-    backend_type: str | None = None,
-    files: str | None = None,
-    include_metadata: bool = True,
-    max_tokens: int | None = None,
-) -> str:
-    """
-    Plant a seed in Delia's garden and watch it grow into a response.
-    Garden-themed alias for 'delegate'.
-
-    Seeds are planted in the appropriate vine:
-    - Quick vine (7B) for fast-growing seeds
-    - Coder vine (14B) for code-flavored seeds
-    - MoE vine (30B+) for deep-rooted wisdom
-    - Thinking vine for slow-ripening contemplation
-
-    Args:
-        task: Type of seed - "quick", "review", "generate", "analyze", "plan", "critique"
-        content: The seed to plant (your prompt)
-        file: Optional file to enrich the soil
-        model: Force a specific vine - "quick", "coder", "moe", "thinking"
-        language: Language hint for code gardens
-        context: Serena memories to fertilize with
-        symbols: Code symbols to focus the growth
-        include_references: Include symbol references in context
-        backend_type: Force "local" or "remote" garden
-        files: Comma-separated file paths - Delia reads directly from disk
-        include_metadata: If False, skip the metadata footer (saves ~30 tokens)
-        max_tokens: Limit harvest size (forces concise growth)
-
-    Returns:
-        A fresh melon harvested from the vine!
-    """
-    backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
-    return await _delegate_impl(
-        task,
-        content,
-        file,
-        model,
-        language,
-        context,
-        symbols,
-        include_references,
-        backend=backend_provider,
-        backend_obj=backend_obj,
-        files=files,
-        include_metadata=include_metadata,
-        max_tokens=max_tokens,
-    )
-
-
-@mcp.tool()
-async def ponder(
-    problem: str,
-    context: str = "",
-    depth: str = "normal",
-) -> str:
-    """
-    Let thoughts grow slowly in the contemplation garden.
-    Garden-themed alias for 'think'.
-
-    Pondering depths:
-    - "quick" - A quick sprout of insight
-    - "normal" - Balanced growth with root exploration
-    - "deep" - Deep roots reaching for wisdom
-
-    Args:
-        problem: The question to let grow
-        context: Supporting soil (additional context)
-        depth: How deep should the roots go?
-
-    Returns:
-        Ripened wisdom from the thinking vine
-    """
-    return await think(problem, context, depth)  # type: ignore[operator]
-
-
-@mcp.tool()
-async def harvest(
-    tasks: str,
-    include_metadata: bool = True,
-    max_tokens: int | None = None,
-) -> str:
-    """
-    Gather multiple melons from across the garden in parallel.
-    Garden-themed alias for 'batch'.
-
-    Distributes seeds across all available garden plots (GPUs)
-    for a bountiful parallel harvest.
-
-    Args:
-        tasks: JSON array of seeds to plant:
-            [{"task": "review", "content": "..."}, {"task": "generate", "content": "..."}]
-        include_metadata: If False, skip metadata footers (saves tokens)
-        max_tokens: Limit harvest size per melon (forces concise growth)
-
-    Returns:
-        A basket full of harvested melons!
-    """
-    return await batch(tasks, include_metadata=include_metadata, max_tokens=max_tokens)  # type: ignore[operator]
-
-
-@mcp.tool()
-async def prune(
-    content: str,
-    file: str | None = None,
-    language: str | None = None,
-    focus_areas: str | None = None,
-) -> str:
-    """
-    Examine code vines for weeds, tangles, and overgrowth.
-    Garden-themed code review tool.
-
-    The gardener inspects your code for:
-    - Weeds (bugs, issues)
-    - Tangles (complexity)
-    - Overgrowth (unnecessary code)
-
-    Args:
-        content: The code vine to prune
-        file: File path for context
-        language: Programming language
-        focus_areas: Comma-separated areas to focus on (e.g., "security,performance")
-
-    Returns:
-        Pruning report with identified weeds and suggestions
-    """
-    task_context = f"Focus on: {focus_areas}" if focus_areas else ""
-    full_content = f"{task_context}\n\n{content}" if task_context else content
-    backend_provider, backend_obj = await _select_optimal_backend_v2(full_content, file, "review", None)
-    return await _delegate_impl(
-        "review",
-        full_content,
-        file,
-        "coder",
-        language,
-        None,
-        None,
-        False,
-        backend=backend_provider,
-        backend_obj=backend_obj,
-    )
-
-
-@mcp.tool()
-async def grow(
-    content: str,
-    language: str | None = None,
-    requirements: str | None = None,
-) -> str:
-    """
-    Cultivate fresh code from a seed of an idea.
-    Garden-themed code generation tool.
-
-    Plant your requirements and watch code grow!
-
-    Args:
-        content: Description of what to grow
-        language: Target programming language
-        requirements: Comma-separated requirements for the code
-
-    Returns:
-        Freshly grown code from the coder vine
-    """
-    task_context = f"Requirements: {requirements}" if requirements else ""
-    full_content = f"{task_context}\n\n{content}" if task_context else content
-    backend_provider, backend_obj = await _select_optimal_backend_v2(full_content, None, "generate", None)
-    return await _delegate_impl(
-        "generate",
-        full_content,
-        None,
-        "coder",
-        language,
-        None,
-        None,
-        False,
-        backend=backend_provider,
-        backend_obj=backend_obj,
-    )
-
-
-@mcp.tool()
-async def tend(
-    content: str,
-    file: str | None = None,
-    language: str | None = None,
-    analysis_type: str | None = None,
-) -> str:
-    """
-    Tend to the code garden - examine structure and health.
-    Garden-themed code analysis tool.
-
-    The gardener examines:
-    - Roots (dependencies, architecture)
-    - Soil (code quality)
-    - Growth patterns (complexity)
-
-    Args:
-        content: The code garden to tend
-        file: File path for context
-        language: Programming language
-        analysis_type: Type of analysis (complexity, security, architecture, general)
-
-    Returns:
-        Garden tending report with insights
-    """
-    task_context = f"Analysis type: {analysis_type}" if analysis_type else ""
-    full_content = f"{task_context}\n\n{content}" if task_context else content
-    backend_provider, backend_obj = await _select_optimal_backend_v2(full_content, file, "analyze", None)
-    return await _delegate_impl(
-        "analyze",
-        full_content,
-        file,
-        "coder",
-        language,
-        None,
-        None,
-        False,
-        backend=backend_provider,
-        backend_obj=backend_obj,
-    )
-
-
-@mcp.tool()
-async def ruminate(
-    problem: str,
-    context: str = "",
-    constraints: str | None = None,
-) -> str:
-    """
-    Deep contemplation in the wisdom garden.
-    Garden-themed deep thinking tool.
-
-    Like a wise old tree, ruminate deeply on complex problems.
-    Takes time but produces the ripest wisdom.
-
-    Args:
-        problem: The deep question to contemplate
-        context: Supporting context
-        constraints: Comma-separated constraints to consider
-
-    Returns:
-        Deeply ripened wisdom from extended contemplation
-    """
-    if constraints:
-        context = f"{context}\n\nConstraints: {constraints}" if context else f"Constraints: {constraints}"
-    return await think(problem, context, "deep")  # type: ignore[operator]
 
 
 # ============================================================
