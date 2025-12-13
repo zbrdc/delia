@@ -1,0 +1,4 @@
+# file: /home/dan/git/delia/src/delia/schemas/requests.py
+# hypothesis_version: 6.148.7
+
+[1000, 'Analysis depth', 'balanced', 'bullets', 'gentle', 'paragraph', 'strict', 'structured']

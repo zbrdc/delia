@@ -1,0 +1,16 @@
+# Simulates user with older Python (3.10 - below minimum)
+# Tests: Do we give clear error message for unsupported Python?
+FROM debian:bullseye
+
+RUN apt-get update && apt-get install -y \
+    sudo curl git \
+    python3.9 python3-pip && \
+    useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+USER testuser
+WORKDIR /home/testuser
+
+COPY --chown=testuser:testuser . /home/testuser/delia
+
+ENV PATH="/home/testuser/.local/bin:$PATH"

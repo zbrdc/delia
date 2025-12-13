@@ -1,0 +1,4 @@
+# file: /home/dan/git/delia/src/delia/paths.py
+# hypothesis_version: 6.148.7
+
+['DELIA_DATA_DIR', 'cache', 'circuit_breaker.json', 'data', 'enhanced_stats.json', 'live_logs.json', 'memories', 'settings.json', 'usage_stats.json', 'users', 'users.db']

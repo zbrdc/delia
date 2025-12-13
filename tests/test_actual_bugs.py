@@ -17,7 +17,7 @@ class TestValidationBugs:
 
     def test_validate_content_with_none_crashes(self):
         """BUG: validate_content crashes with None input instead of returning error."""
-        from mcp_server import validate_content
+        from delia.mcp_server import validate_content
 
         # This should return (False, "error message"), not crash
         try:
@@ -29,7 +29,7 @@ class TestValidationBugs:
 
     def test_validate_task_with_none_crashes(self):
         """BUG: validate_task may crash with None input."""
-        from mcp_server import validate_task
+        from delia.mcp_server import validate_task
 
         try:
             is_valid, error = validate_task(None)
@@ -39,7 +39,7 @@ class TestValidationBugs:
 
     def test_validate_content_with_non_string(self):
         """FIXED: validate_content now handles non-string input gracefully."""
-        from mcp_server import validate_content
+        from delia.mcp_server import validate_content
 
         non_strings = [123, 45.67, [], {}, object(), b"bytes"]
 
@@ -91,7 +91,7 @@ class TestModelParsingBugs:
 
     def test_huge_moe_pattern_overflow(self):
         """BUG: Huge MoE patterns may cause overflow or performance issues."""
-        from config import parse_model_name
+        from delia.config import parse_model_name
         import math
 
         # Very large experts count - should not overflow
@@ -103,7 +103,7 @@ class TestModelParsingBugs:
 
     def test_model_name_regex_catastrophic_backtracking(self):
         """BUG: Complex model names may cause regex catastrophic backtracking."""
-        from config import parse_model_name
+        from delia.config import parse_model_name
         import time
 
         # Pattern designed to cause backtracking
@@ -122,7 +122,7 @@ class TestCircuitBreakerBugs:
 
     def test_time_going_backwards(self):
         """BUG: Circuit breaker may break if system time changes."""
-        from config import BackendHealth
+        from delia.config import BackendHealth
         import time
 
         health = BackendHealth("test", failure_threshold=3, base_cooldown_seconds=60)
@@ -153,7 +153,7 @@ class TestBackendManagerBugs:
     @pytest.mark.asyncio
     async def test_double_close_client(self, tmp_path):
         """BUG: Double-closing client may cause issues."""
-        from backend_manager import BackendManager, BackendConfig
+        from delia.backend_manager import BackendManager, BackendConfig
 
         settings_file = tmp_path / "settings.json"
         settings = {
@@ -185,7 +185,7 @@ class TestBackendManagerBugs:
 
     def test_empty_models_dict_access(self, tmp_path):
         """BUG: Accessing model tier on backend with no models may crash."""
-        from backend_manager import BackendConfig
+        from delia.backend_manager import BackendConfig
 
         backend = BackendConfig(
             id="test",
@@ -209,7 +209,7 @@ class TestCodeDetectionBugs:
 
     def test_code_detection_with_binary(self):
         """BUG: Code detection may crash on binary-like content."""
-        from mcp_server import detect_code_content
+        from delia.mcp_server import detect_code_content
 
         # Binary-like content with non-printable chars
         binary_content = "".join(chr(i) for i in range(256)) * 10
@@ -223,7 +223,7 @@ class TestCodeDetectionBugs:
 
     def test_code_detection_extremely_long_lines(self):
         """BUG: Code detection may hang on very long lines."""
-        from mcp_server import detect_code_content
+        from delia.mcp_server import detect_code_content
         import time
 
         # One extremely long line
@@ -241,7 +241,7 @@ class TestTokenCountingBugs:
 
     def test_token_count_surrogate_pairs(self):
         """BUG: Token counting may fail on text with surrogate pairs."""
-        from mcp_server import count_tokens
+        from delia.mcp_server import count_tokens
 
         # Text with emoji that uses surrogate pairs
         text = "Hello 👨‍👩‍👧‍👦 World 🏳️‍🌈 Test"
@@ -254,7 +254,7 @@ class TestTokenCountingBugs:
 
     def test_estimate_tokens_empty(self):
         """BUG: estimate_tokens may divide by zero."""
-        from mcp_server import estimate_tokens
+        from delia.mcp_server import estimate_tokens
 
         try:
             tokens = estimate_tokens("")
@@ -269,9 +269,9 @@ class TestAsyncBugs:
     @pytest.mark.asyncio
     async def test_select_model_no_backend(self):
         """BUG: select_model may crash when no backend available."""
-        from mcp_server import select_model
+        from delia.mcp_server import select_model
 
-        with patch("mcp_server.backend_manager") as mock_manager:
+        with patch("delia.mcp_server.backend_manager") as mock_manager:
             mock_manager.get_active_backend.return_value = None
 
             try:
@@ -284,7 +284,7 @@ class TestAsyncBugs:
     @pytest.mark.asyncio
     async def test_health_no_backends(self):
         """BUG: health tool may crash when no backends configured."""
-        from backend_manager import BackendManager
+        from delia.backend_manager import BackendManager
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -308,7 +308,7 @@ class TestConfigBugs:
 
     def test_detect_model_tier_empty_known_models(self):
         """BUG: detect_model_tier may crash with empty known_models."""
-        from config import detect_model_tier
+        from delia.config import detect_model_tier
 
         try:
             tier = detect_model_tier("qwen:14b", {})
@@ -318,7 +318,7 @@ class TestConfigBugs:
 
     def test_parse_model_name_only_numbers(self):
         """BUG: Model name with only numbers may confuse parser."""
-        from config import parse_model_name
+        from delia.config import parse_model_name
 
         result = parse_model_name("12345678901234567890")
         assert result is not None
@@ -330,7 +330,7 @@ class TestSecurityBugs:
 
     def test_path_traversal_with_encoded_chars(self):
         """BUG: URL-encoded path traversal may bypass validation."""
-        from mcp_server import validate_file_path
+        from delia.mcp_server import validate_file_path
 
         # Already tested but double-check the actual ".." detection
         encoded_attempts = [
@@ -346,7 +346,7 @@ class TestSecurityBugs:
 
     def test_content_size_integer_overflow(self):
         """BUG: Extremely large content size check may overflow."""
-        from mcp_server import MAX_CONTENT_LENGTH
+        from delia.mcp_server import MAX_CONTENT_LENGTH
 
         # Verify MAX_CONTENT_LENGTH is reasonable
         assert MAX_CONTENT_LENGTH > 0

@@ -483,6 +483,10 @@ def validate_task(task: str) -> tuple[bool, str]:
 
 def validate_content(content: str) -> tuple[bool, str]:
     """Validate content byte length. Returns (is_valid, error_message)."""
+    if content is None:
+        return False, "Content is required"
+    if not isinstance(content, str):
+        return False, f"Content must be a string, got {type(content).__name__}"
     if not content:
         return False, "Content is required"
     # Use byte length (UTF-8) not character count to enforce accurate size limit

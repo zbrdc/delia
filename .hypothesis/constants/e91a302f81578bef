@@ -1,0 +1,4 @@
+# file: /home/dan/git/delia/src/delia/schemas/enums.py
+# hypothesis_version: 6.148.7
+
+['analyze', 'architecture', 'auto', 'c', 'code', 'coder', 'complexity', 'cpp', 'critical', 'critique', 'csharp', 'css', 'deep', 'dependencies', 'documentation', 'error', 'general', 'generate', 'go', 'html', 'info', 'java', 'javascript', 'json', 'kotlin', 'local', 'log', 'markdown', 'mixed', 'moe', 'normal', 'other', 'performance', 'php', 'plan', 'python', 'quick', 'remote', 'review', 'ruby', 'rust', 'scala', 'security', 'shell', 'sql', 'summarize', 'swift', 'text', 'think', 'thinking', 'typescript', 'warning', 'yaml']

@@ -280,6 +280,17 @@ def assign_models_to_tiers(models: list[str]) -> dict[str, str]:
     if not models:
         return {}
 
+    # Filter out vocab files, test files, and other non-model entries
+    excluded_patterns = ["ggml-vocab", "vocab-", "test", "dummy", "template", "example"]
+    filtered_models = [
+        m for m in models
+        if not any(excl in m.lower() for excl in excluded_patterns)
+    ]
+
+    # Fall back to original list if everything was filtered
+    if not filtered_models:
+        filtered_models = models
+
     tiers: dict[str, str | None] = {
         "quick": None,
         "coder": None,
@@ -288,11 +299,11 @@ def assign_models_to_tiers(models: list[str]) -> dict[str, str]:
     }
 
     # If only one model, use it for everything
-    if len(models) == 1:
-        return dict.fromkeys(tiers, models[0])
+    if len(filtered_models) == 1:
+        return dict.fromkeys(tiers, filtered_models[0])
 
     # Classify models
-    for model in models:
+    for model in filtered_models:
         model_lower = model.lower()
 
         # Thinking/reasoning models
@@ -315,7 +326,7 @@ def assign_models_to_tiers(models: list[str]) -> dict[str, str]:
             tiers["quick"] = model
 
     # Fill in gaps with first available model
-    first_model = models[0]
+    first_model = filtered_models[0]
     for tier in tiers:
         if not tiers[tier]:
             tiers[tier] = first_model

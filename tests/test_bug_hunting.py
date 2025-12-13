@@ -96,7 +96,7 @@ class TestValidationSecurityBugs:
 
     def test_path_traversal_variants(self):
         """Test various path traversal bypass attempts."""
-        from mcp_server import validate_file_path
+        from delia.mcp_server import validate_file_path
 
         traversal_attempts = [
             "../../../etc/passwd",
@@ -121,7 +121,7 @@ class TestValidationSecurityBugs:
 
     def test_content_size_boundary(self):
         """Test content size exactly at boundaries."""
-        from mcp_server import validate_content, MAX_CONTENT_LENGTH
+        from delia.mcp_server import validate_content, MAX_CONTENT_LENGTH
 
         # Exactly at limit
         content = "x" * MAX_CONTENT_LENGTH
@@ -135,7 +135,7 @@ class TestValidationSecurityBugs:
 
     def test_unicode_byte_counting_bug(self):
         """Unicode should be counted as bytes, not characters."""
-        from mcp_server import validate_content, MAX_CONTENT_LENGTH
+        from delia.mcp_server import validate_content, MAX_CONTENT_LENGTH
 
         # 4-byte emoji repeated
         emoji = "🍉"  # 4 bytes in UTF-8
@@ -325,7 +325,7 @@ class TestTokenCountingBugs:
 
     def test_empty_and_whitespace(self):
         """Edge cases in token counting."""
-        from mcp_server import count_tokens, estimate_tokens
+        from delia.mcp_server import count_tokens, estimate_tokens
 
         # Empty
         assert count_tokens("") == 0
@@ -340,7 +340,7 @@ class TestTokenCountingBugs:
 
     def test_very_long_content(self):
         """Very long content shouldn't cause memory issues."""
-        from mcp_server import count_tokens, estimate_tokens
+        from delia.mcp_server import count_tokens, estimate_tokens
 
         # 1MB of text
         content = "word " * 200000
@@ -350,7 +350,7 @@ class TestTokenCountingBugs:
 
     def test_binary_content(self):
         """Binary-like content shouldn't crash."""
-        from mcp_server import count_tokens
+        from delia.mcp_server import count_tokens
 
         # Random bytes as string
         content = "".join(chr(i % 256) for i in range(1000))
@@ -367,7 +367,7 @@ class TestCodeDetectionBugs:
 
     def test_polyglot_content(self):
         """Content that looks like multiple languages."""
-        from mcp_server import detect_code_content
+        from delia.mcp_server import detect_code_content
 
         # HTML with embedded JS and CSS
         polyglot = """
@@ -392,7 +392,7 @@ function init() {
 
     def test_minified_code(self):
         """Minified code detection."""
-        from mcp_server import detect_code_content
+        from delia.mcp_server import detect_code_content
 
         minified = 'function a(b){return b+1}var c=a(5);console.log(c);'
         is_code, confidence, reason = detect_code_content(minified)
@@ -401,7 +401,7 @@ function init() {
 
     def test_markdown_with_code_blocks(self):
         """Markdown with code blocks."""
-        from mcp_server import detect_code_content
+        from delia.mcp_server import detect_code_content
 
         markdown = """
 # README
@@ -426,8 +426,8 @@ class TestRaceConditions:
     @pytest.mark.asyncio
     async def test_concurrent_model_selection(self):
         """Concurrent model selection shouldn't race."""
-        from mcp_server import select_model
-        from backend_manager import BackendConfig
+        from delia.mcp_server import select_model
+        from delia.backend_manager import BackendConfig
 
         mock_backend = BackendConfig(
             id="test", name="Test", provider="ollama", type="local",
@@ -435,7 +435,7 @@ class TestRaceConditions:
             models={"quick": "q", "coder": "c", "moe": "m", "thinking": "t"}
         )
 
-        with patch("mcp_server.backend_manager") as mock_manager:
+        with patch("delia.mcp_server.backend_manager") as mock_manager:
             mock_manager.get_active_backend.return_value = mock_backend
 
             async def select():
@@ -451,7 +451,7 @@ class TestRaceConditions:
     async def test_stats_concurrent_updates(self):
         """Concurrent stats updates shouldn't lose data."""
         # This tests the thread safety of stats tracking
-        from mcp_server import TASK_STATS, _stats_thread_lock
+        from delia.mcp_server import TASK_STATS, _stats_thread_lock
 
         initial_count = TASK_STATS.get("quick", 0)
 

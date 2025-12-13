@@ -1,0 +1,4 @@
+# file: /home/dan/git/delia/src/delia/schemas/responses.py
+# hypothesis_version: 6.148.7
+
+['Analysis sections', 'Assumptions made', 'Column number', 'Ending line number', 'Identified risks', 'Identified strengths', 'Individual results', 'Issue severity level', 'Key points extracted', 'Model tier used', 'Package dependencies', 'Plan overview', 'Plan steps', 'Programming language', 'Quantitative metrics', 'Required imports', 'Section content', 'Section title', 'Starting line number', 'Step description', 'Step number', 'Step title', 'Suggested file path', 'Suggested fix', 'The generated code', 'The summary', 'Tokens in prompt', 'Tokens in response', 'Total tokens used', 'local', 'medium']

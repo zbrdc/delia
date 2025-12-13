@@ -1,0 +1,4 @@
+# file: /home/dan/git/delia/src/delia/prompt_templates.py
+# hypothesis_version: 6.148.7
+
+['analyze', 'critique', 'generate', 'plan', 'quick', 'review']

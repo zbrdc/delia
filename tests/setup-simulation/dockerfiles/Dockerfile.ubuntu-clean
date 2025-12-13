@@ -1,0 +1,16 @@
+# Simulates a new user on Ubuntu with minimal tools
+# Tests: Does the README guide work for a fresh Ubuntu user?
+FROM ubuntu:24.04
+
+# Simulate typical user with sudo access
+RUN apt-get update && apt-get install -y sudo curl git && \
+    useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+USER testuser
+WORKDIR /home/testuser
+
+# Copy the delia source (simulates git clone)
+COPY --chown=testuser:testuser . /home/testuser/delia
+
+ENV PATH="/home/testuser/.local/bin:$PATH"

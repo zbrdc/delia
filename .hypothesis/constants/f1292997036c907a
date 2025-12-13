@@ -1,0 +1,4 @@
+# file: /home/dan/git/delia/src/delia/schemas/__init__.py
+# hypothesis_version: 6.148.7
+
+['AnalysisSection', 'AnalysisType', 'AnalyzeRequest', 'AnalyzeResponse', 'BackendPreference', 'BatchRequest', 'BatchResponse', 'BatchResponseItem', 'CodeFinding', 'CodeGenerateRequest', 'CodeGenerateResponse', 'CodeReviewRequest', 'CodeReviewResponse', 'ContentType', 'CritiqueRequest', 'CritiqueResponse', 'ExecutionInfo', 'GeneratedCode', 'Language', 'ModelTier', 'PlanRequest', 'PlanResponse', 'PlanStep', 'ReasoningDepth', 'ReasoningStep', 'Severity', 'StructuredRequest', 'StructuredResponse', 'SummarizeRequest', 'SummarizeResponse', 'TaskType', 'ThinkRequest', 'ThinkResponse', 'UsageMetrics']

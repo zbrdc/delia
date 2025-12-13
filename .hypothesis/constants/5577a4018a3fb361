@@ -1,0 +1,4 @@
+# file: /home/dan/git/delia/src/delia/structured_tools.py
+# hypothesis_version: 6.148.7
+
+[200, 500, 1000, '</think>', 'No requests provided', 'Unknown error', 'analyze', 'critique', 'error', 'fail_fast', 'generate', 'local', 'max_parallel', 'plan', 'quick', 'remote', 'requests', 'response', 'review', 'success', 'summarize', 'symbols', 'task_type', 'think', 'tokens', 'unknown']

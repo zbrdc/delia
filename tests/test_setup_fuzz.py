@@ -493,6 +493,127 @@ class TestModelParsingSetupEdgeCases:
         assert result == expected_tier
 
 
+class TestAssignModelsToTiers:
+    """Fuzz tests for CLI assign_models_to_tiers function."""
+
+    @pytest.mark.parametrize("models,should_not_contain", [
+        # Vocab files should never be selected when real models exist
+        (
+            ["ggml-vocab-deepseek-coder", "qwen2.5-coder:14b"],
+            ["ggml-vocab"],
+        ),
+        (
+            ["ggml-vocab-nomic-bert-moe", "mixtral-8x7b", "ggml-vocab-test"],
+            ["ggml-vocab"],
+        ),
+        # Test files should be excluded
+        (
+            ["test-model", "qwen3:14b", "dummy-model"],
+            ["test-", "dummy-"],
+        ),
+        # Template/example files
+        (
+            ["template-coder", "example-model", "llama3:8b"],
+            ["template", "example"],
+        ),
+    ])
+    def test_excludes_non_model_files(self, models, should_not_contain):
+        """Non-model files (vocab, test, etc.) should be excluded from tier assignment."""
+        from delia.cli import assign_models_to_tiers
+
+        result = assign_models_to_tiers(models)
+
+        # Check none of the excluded patterns appear in selected models
+        for tier, selected_model in result.items():
+            for pattern in should_not_contain:
+                assert pattern not in selected_model.lower(), (
+                    f"Tier '{tier}' selected '{selected_model}' which contains excluded pattern '{pattern}'"
+                )
+
+    @pytest.mark.parametrize("models,expected_tiers", [
+        # Coder model should be assigned to coder tier
+        (
+            ["qwen2.5-coder:14b", "llama3:8b"],
+            {"coder": "qwen2.5-coder:14b"},
+        ),
+        # MoE model should be assigned to moe tier
+        (
+            ["mixtral-8x7b", "qwen3:7b"],
+            {"moe": "mixtral-8x7b"},
+        ),
+        # Thinking model should be assigned to thinking tier
+        (
+            ["deepseek-r1:14b", "qwen3:7b"],
+            {"thinking": "deepseek-r1:14b"},
+        ),
+        # Small model should be assigned to quick tier
+        (
+            ["qwen3:7b", "llama3:70b"],
+            {"quick": "qwen3:7b"},
+        ),
+    ])
+    def test_correct_tier_assignment(self, models, expected_tiers):
+        """Models should be assigned to correct tiers based on naming patterns."""
+        from delia.cli import assign_models_to_tiers
+
+        result = assign_models_to_tiers(models)
+
+        for tier, expected_model in expected_tiers.items():
+            assert result.get(tier) == expected_model, (
+                f"Expected tier '{tier}' to have '{expected_model}', got '{result.get(tier)}'"
+            )
+
+    def test_single_model_assigned_to_all_tiers(self):
+        """Single model should be assigned to all tiers."""
+        from delia.cli import assign_models_to_tiers
+
+        result = assign_models_to_tiers(["only-model"])
+
+        assert len(result) == 4
+        for tier in ["quick", "coder", "moe", "thinking"]:
+            assert result[tier] == "only-model"
+
+    def test_empty_model_list(self):
+        """Empty model list should return empty dict."""
+        from delia.cli import assign_models_to_tiers
+
+        result = assign_models_to_tiers([])
+        assert result == {}
+
+    @pytest.mark.fuzz
+    @given(st.lists(
+        st.text(
+            alphabet=st.characters(whitelist_categories=('L', 'N', 'P')),
+            min_size=1,
+            max_size=50
+        ),
+        min_size=1,
+        max_size=20
+    ))
+    @settings(max_examples=100)
+    def test_arbitrary_model_names_never_crash(self, models):
+        """Arbitrary model name lists should never crash."""
+        from delia.cli import assign_models_to_tiers
+
+        result = assign_models_to_tiers(models)
+
+        # Should always return a dict
+        assert isinstance(result, dict)
+        # All values should be from the input list
+        for tier, model in result.items():
+            assert model in models
+
+    def test_all_vocab_files_fallback(self):
+        """If ALL models are vocab files, should still return something."""
+        from delia.cli import assign_models_to_tiers
+
+        models = ["ggml-vocab-test1", "ggml-vocab-test2"]
+        result = assign_models_to_tiers(models)
+
+        # Should fall back to using the vocab files rather than returning empty
+        assert len(result) > 0
+
+
 @pytest.fixture
 def tmp_path(tmp_path_factory):
     """Create a temporary directory for each test."""
