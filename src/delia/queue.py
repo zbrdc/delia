@@ -26,6 +26,9 @@ from .messages import StatusEvent, get_display_event, get_status_message
 
 log = structlog.get_logger()
 
+# Maximum queue depth per model to prevent unbounded growth and OOM
+MAX_QUEUE_DEPTH = 100
+
 
 @dataclass(order=True)
 class QueuedRequest:
@@ -78,6 +81,7 @@ class ModelQueue:
         self.total_processed = 0
         self.max_queue_depth = 0
         self.queue_timeouts = 0
+        self.rejected_requests = 0  # Track requests rejected due to queue overflow
 
     def get_model_size(self, model_name: str) -> float:
         """Get estimated VRAM usage for a model."""
@@ -155,6 +159,34 @@ class ModelQueue:
 
             # Model is currently loading
             if model_name in self.loading_models:
+                # Check if queue is full before adding
+                if model_name not in self.request_queues:
+                    self.request_queues[model_name] = []
+
+                current_queue_length = len(self.request_queues[model_name])
+                if current_queue_length >= MAX_QUEUE_DEPTH:
+                    # Queue is full - reject the request
+                    self.rejected_requests += 1
+                    log.warning(
+                        get_display_event("queue_full"),
+                        model=model_name,
+                        queue_length=current_queue_length,
+                        max_depth=MAX_QUEUE_DEPTH,
+                        rejected_count=self.rejected_requests,
+                        status_msg="Queue full - request rejected",
+                        log_type="QUEUE",
+                    )
+                    # Return a future that's already resolved with an error
+                    error_future: asyncio.Future[tuple[bool, str | None]] = asyncio.Future()
+                    error_future.set_exception(
+                        RuntimeError(
+                            f"Queue full for model {model_name}: "
+                            f"{current_queue_length}/{MAX_QUEUE_DEPTH} requests queued. "
+                            f"Please retry later."
+                        )
+                    )
+                    return (False, error_future)
+
                 # Queue the request
                 request_id = f"req_{self.request_counter}"
                 self.request_counter += 1
@@ -170,9 +202,6 @@ class ModelQueue:
                     content_length=content_length,
                     future=request_future,
                 )
-
-                if model_name not in self.request_queues:
-                    self.request_queues[model_name] = []
 
                 heapq.heappush(self.request_queues[model_name], queued_request)
 
@@ -319,6 +348,8 @@ class ModelQueue:
                 "total_processed": self.total_processed,
                 "current_queue_depth": current_queue_depth,
                 "max_queue_depth": self.max_queue_depth,
+                "max_queue_limit": MAX_QUEUE_DEPTH,
                 "queue_timeouts": self.queue_timeouts,
+                "rejected_requests": self.rejected_requests,
             },
         }

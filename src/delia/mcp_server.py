@@ -2187,9 +2187,15 @@ async def _startup_handler():
     Startup handler for the server.
 
     - Starts background save task for tracker
+    - Pre-warms tiktoken encoder to avoid first-call delay
     """
     if TRACKING_ENABLED:
         await tracker.start_background_save()
+
+    # Pre-warm tiktoken encoder in background to avoid 100-200ms delay on first request
+    # Run in thread pool to avoid blocking startup
+    from .tokens import prewarm_encoder
+    await asyncio.to_thread(prewarm_encoder)
 
 
 async def _shutdown_handler():

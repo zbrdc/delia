@@ -235,6 +235,7 @@ class BackendManager:
         # Health check cache with TTL
         self._health_cache: dict[str, bool] = {}
         self._health_cache_time: float = 0.0
+        self._health_check_lock = asyncio.Lock()
 
         self._load_settings()
 
@@ -555,33 +556,34 @@ class BackendManager:
         Returns:
             Dict mapping backend_id to health status (True/False).
         """
-        # Return cached results if still valid
-        now = time.time()
-        if use_cache and self._health_cache and (now - self._health_cache_time) < HEALTH_CHECK_TTL:
-            _get_log().debug("health_check_cached", age_seconds=int(now - self._health_cache_time))
-            return self._health_cache.copy()
+        async with self._health_check_lock:
+            # Return cached results if still valid
+            now = time.time()
+            if use_cache and self._health_cache and (now - self._health_cache_time) < HEALTH_CHECK_TTL:
+                _get_log().debug("health_check_cached", age_seconds=int(now - self._health_cache_time))
+                return self._health_cache.copy()
 
-        enabled = self.get_enabled_backends()
-        if not enabled:
-            return {}
+            enabled = self.get_enabled_backends()
+            if not enabled:
+                return {}
 
-        # Check all in parallel
-        tasks = [backend.check_health() for backend in enabled]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Check all in parallel
+            tasks = [backend.check_health() for backend in enabled]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        health: dict[str, bool] = {}
-        for backend, result in zip(enabled, results, strict=True):
-            if isinstance(result, Exception):
-                health[backend.id] = False
-                _get_log().warning("health_check_exception", backend_id=backend.id, error=str(result))
-            else:
-                health[backend.id] = bool(result)
+            health: dict[str, bool] = {}
+            for backend, result in zip(enabled, results, strict=True):
+                if isinstance(result, Exception):
+                    health[backend.id] = False
+                    _get_log().warning("health_check_exception", backend_id=backend.id, error=str(result))
+                else:
+                    health[backend.id] = bool(result)
 
-        # Update cache
-        self._health_cache = health.copy()
-        self._health_cache_time = now
+            # Update cache
+            self._health_cache = health.copy()
+            self._health_cache_time = now
 
-        return health
+            return health
 
     def invalidate_health_cache(self) -> None:
         """Invalidate the health check cache, forcing fresh checks on next call."""

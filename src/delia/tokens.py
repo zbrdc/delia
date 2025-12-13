@@ -82,3 +82,28 @@ def estimate_tokens(text: str) -> int:
     if not text:
         return 0
     return len(text) // 4
+
+
+def prewarm_encoder() -> bool:
+    """
+    Pre-warm the tiktoken encoder to avoid 100-200ms delay on first use.
+
+    Call this during application startup to initialize the encoder in the background.
+    Safe to call multiple times (will return immediately if already initialized).
+
+    Returns:
+        True if encoder is ready, False if initialization failed
+    """
+    try:
+        encoder = get_tiktoken_encoder()
+        if encoder:
+            # Trigger actual initialization by encoding a small test string
+            encoder.encode("test")
+            log.debug("tiktoken_prewarmed", status="success")
+            return True
+        else:
+            log.debug("tiktoken_prewarm_skipped", reason="encoder_unavailable")
+            return False
+    except Exception as e:
+        log.warning("tiktoken_prewarm_failed", error=str(e))
+        return False
