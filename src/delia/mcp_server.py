@@ -154,7 +154,17 @@ from .language import (
 )
 
 # Import file helpers (read_files, read_serena_memory, read_file_safe, MEMORY_DIR)
-from .file_helpers import MEMORY_DIR, read_file_safe, read_files, read_serena_memory
+from .file_helpers import MEMORY_DIR, read_file_safe
+
+# Import delegation helpers
+from .delegation import (
+    DelegateContext,
+    delegate_impl,
+    determine_task_type,
+    prepare_delegate_content,
+    select_delegate_model as _select_delegate_model_impl,
+    validate_delegate_request,
+)
 
 # Import stats service for usage tracking
 from .stats import StatsService
@@ -1083,101 +1093,15 @@ else:
     log.info("auth_disabled", message="Authentication routes not registered. Set DELIA_AUTH_ENABLED=true to enable.")
 
 
-async def validate_delegate_request(
-    task: str,
-    content: str,
-    file: str | None = None,
-    model: str | None = None,
-) -> tuple[bool, str]:
-    """Validate all inputs for delegate request."""
-    # Input validation
-    valid, error = validate_task(task)
-    if not valid:
-        return False, f"Error: {error}"
-
-    valid, error = validate_content(content)
-    if not valid:
-        return False, f"Error: {error}"
-
-    valid, error = validate_file_path(file)
-    if not valid:
-        return False, f"Error: {error}"
-
-    valid, error = validate_model_hint(model)
-    if not valid:
-        return False, f"Error: {error}"
-
-    return True, ""
-
-
-async def prepare_delegate_content(
-    content: str,
-    context: str | None = None,
-    symbols: str | None = None,
-    include_references: bool = False,
-    files: str | None = None,
-) -> str:
-    """Prepare content with context, files, and symbol focus.
-
-    Args:
-        content: The main task content/prompt
-        context: Comma-separated Serena memory names to include
-        symbols: Comma-separated symbol names to focus on
-        include_references: Whether references to symbols are included
-        files: Comma-separated file paths to read and include (Delia reads directly)
-    """
-    parts = []
-
-    # Load files directly from disk (efficient - no Claude serialization)
-    if files:
-        file_contents = read_files(files)
-        if file_contents:
-            for path, file_content in file_contents:
-                # Detect language from extension for syntax highlighting hint
-                ext = Path(path).suffix.lstrip(".")
-                lang_hint = ext if ext else ""
-                parts.append(f"### File: `{path}`\n```{lang_hint}\n{file_content}\n```")
-            log.info("files_loaded", count=len(file_contents), paths=[p for p, _ in file_contents])
-
-    # Load Serena memory context if specified
-    if context:
-        memory_names = [m.strip() for m in context.split(",")]
-        for mem_name in memory_names:
-            mem_content = read_serena_memory(mem_name)
-            if mem_content:
-                parts.append(f"### Context from '{mem_name}':\n{mem_content}")
-                log.info("context_memory_loaded", memory=mem_name)
-
-    # Add symbol focus hint if symbols specified
-    if symbols:
-        symbol_list = [s.strip() for s in symbols.split(",")]
-        symbol_hint = f"### Focus Symbols: {', '.join(symbol_list)}"
-        if include_references:
-            symbol_hint += "\n_References to these symbols are included below._"
-        parts.append(symbol_hint)
-        log.info("context_symbol_focus", symbols=symbol_list, include_references=include_references)
-
-    # Add task content
-    if parts:
-        parts.append(f"---\n\n### Task:\n{content}")
-        return "\n\n".join(parts)
-    else:
-        return content
-
-
-def determine_task_type(task: str) -> str:
-    """Map user task to internal task type."""
-    task_map = {
-        "review": "review",
-        "analyze": "analyze",
-        "generate": "generate",
-        "summarize": "summarize",
-        "critique": "critique",
-        "quick": "quick",
-        "plan": "plan",
-        "think": "analyze",  # Treat direct think tasks as analyze-tier by default
-    }
-    return task_map.get(task, "analyze")
+def _get_delegate_context() -> DelegateContext:
+    """Create a DelegateContext with all runtime dependencies."""
+    return DelegateContext(
+        select_model=select_model,
+        get_active_backend=get_active_backend,
+        call_llm=call_llm,
+        get_client_id=current_client_id.get,
+        tracker=tracker,
+    )
 
 
 async def select_delegate_model(
@@ -1186,119 +1110,16 @@ async def select_delegate_model(
     model_override: str | None = None,
     backend: str | None = None,
     backend_obj: Any | None = None,
-) -> tuple[str, str, str | BackendConfig | None]:
-    """Select appropriate model and backend for the task."""
-    # Determine model tier from task type
-    if task_type in config.moe_tasks:
-        tier = "moe"
-    elif task_type in config.coder_tasks:
-        tier = "coder"
-    elif task_type == "quick" or task_type == "summarize":
-        tier = "quick"
-    else:
-        tier = "quick"  # Default
+) -> tuple[str, str, Any]:
+    """Select model and backend for delegate tasks.
 
-    # Override tier with model hint if provided
-    if model_override and model_override in VALID_MODELS:
-        tier = model_override
-
-    # Get the actual model name from backend manager or fall back to config.py
-    selected_model = None
-
-    # First priority: use backend_obj if provided (passed from delegate())
-    if backend_obj:
-        selected_model = backend_obj.models.get(tier)
-        if selected_model:
-            log.info("model_from_backend_obj", backend=backend_obj.id, tier=tier, model=selected_model)
-
-    # Try simplified backend selection (replaces complex backend_manager)
-    if not selected_model:
-        selected_model = await select_model(task_type, len(content), model_override, content)
-        log.info("model_from_simplified_selection", tier=tier, model=selected_model)
-
-    # Use provided backend or fall back to active backend
-    target_backend = backend or get_active_backend()
-
-    return selected_model, tier, target_backend
-
-
-async def execute_delegate_call(
-    selected_model: str,
-    content: str,
-    system: str,
-    task_type: str,
-    original_task: str,
-    detected_language: str,
-    target_backend: str | BackendConfig | None,
-    backend_obj: Any | None = None,
-    max_tokens: int | None = None,
-) -> tuple[str, int]:
-    """Execute the LLM call and return response with metadata."""
-    # Call LLM
-    enable_thinking = task_type in config.thinking_tasks
-    # Create a preview for the recent calls log
-    content_preview = content[:200].replace("\n", " ").strip()
-
-    result = await call_llm(
-        selected_model,
-        content,
-        system,
-        enable_thinking,
-        task_type=task_type,
-        original_task=original_task,
-        language=detected_language,
-        content_preview=content_preview,
-        backend=target_backend,
-        backend_obj=backend_obj,
-        max_tokens=max_tokens,
-    )
-
-    if not result.get("success"):
-        error_msg = result.get("error", "Unknown error")
-        raise Exception(f"LLM call failed: {error_msg}")
-
-    response_text = result.get("response", "")
-    tokens = result.get("tokens", 0)
-
-    # Strip thinking tags
-    if "</think>" in response_text:
-        response_text = response_text.split("</think>")[-1].strip()
-
-    return response_text, tokens
-
-
-def finalize_delegate_response(
-    response_text: str,
-    selected_model: str,
-    tokens: int,
-    elapsed_ms: int,
-    detected_language: str,
-    target_backend: Any,
-    tier: str,
-    include_metadata: bool = True,
-) -> str:
-    """Add metadata footer and update tracking.
-
-    Args:
-        include_metadata: If False, return response without footer (saves ~30 tokens)
+    Wrapper for delegation.select_delegate_model that provides context.
+    Used by structured_tools.py for backwards compatibility.
     """
-    # Update tracker with actual token count and model tier
-    client_id = current_client_id.get()
-    if client_id:
-        tracker.update_last_request(client_id, tokens=tokens, model_tier=tier)
-
-    # Return without metadata if requested (saves Claude tokens)
-    if not include_metadata:
-        return response_text
-
-    # Extract backend name (handle both string and BackendConfig)
-    backend_name = target_backend.name if hasattr(target_backend, "name") else str(target_backend)
-
-    # Add concise metadata footer
-    return f"""{response_text}
-
----
-_Model: {selected_model} | Tokens: {tokens} | Time: {elapsed_ms}ms | Backend: {backend_name}_"""
+    ctx = _get_delegate_context()
+    return await _select_delegate_model_impl(
+        ctx, task_type, content, model_override, backend, backend_obj
+    )
 
 
 async def _delegate_impl(
@@ -1311,83 +1132,28 @@ async def _delegate_impl(
     symbols: str | None = None,
     include_references: bool = False,
     backend: str | None = None,
-    backend_obj: Any | None = None,  # Backend object from backend_manager
-    files: str | None = None,  # Comma-separated file paths (Delia reads directly)
-    include_metadata: bool = True,  # Include footer with model/tokens/time info
-    max_tokens: int | None = None,  # Limit response length (reduces verbosity)
+    backend_obj: Any | None = None,
+    files: str | None = None,
+    include_metadata: bool = True,
+    max_tokens: int | None = None,
 ) -> str:
-    """
-    Core implementation for delegate - can be called directly by batch().
-
-    Enhanced context parameters:
-        symbols: Comma-separated symbol names to focus on (e.g., "Foo,Foo/calculate")
-        include_references: If True, indicates that references to symbols are included in content
-        backend: Override backend ("ollama" or "llamacpp"), defaults to active_backend
-        files: Comma-separated file paths - Delia reads directly from disk (efficient)
-        include_metadata: If False, skip the metadata footer (saves ~30 Claude tokens)
-        max_tokens: Limit response tokens (forces concise output, saves Claude tokens)
-    """
-    start_time = time.time()
-
-    # Validate request
-    valid, error = await validate_delegate_request(task, content, file, model)
-    if not valid:
-        return error
-
-    # Prepare content with context, files, and symbols
-    prepared_content = await prepare_delegate_content(content, context, symbols, include_references, files)
-
-    # Map task to internal type
-    task_type = determine_task_type(task)
-
-    # Create enhanced, structured prompt with templates
-    prepared_content = create_structured_prompt(
-        task_type=task_type,
-        content=prepared_content,
-        file_path=file,
-        language=language,
-        symbols=symbols.split(",") if symbols else None,
-        context_files=context.split(",") if context else None,
-    )
-
-    # Detect language and get system prompt
-    detected_language = language or detect_language(prepared_content, file or "")
-    system = get_system_prompt(detected_language, task_type)
-
-    # Select model and backend
-    selected_model, tier, target_backend = await select_delegate_model(
-        task_type, prepared_content, model, backend, backend_obj
-    )
-
-    # Execute the LLM call
-    try:
-        response_text, tokens = await execute_delegate_call(
-            selected_model,
-            prepared_content,
-            system,
-            task_type,
-            task,
-            detected_language,
-            target_backend,
-            backend_obj,
-            max_tokens=max_tokens,
-        )
-    except Exception as e:
-        return f"Error: {e!s}"
-
-    # Calculate timing
-    elapsed_ms = int((time.time() - start_time) * 1000)
-
-    # Finalize response with metadata
-    return finalize_delegate_response(
-        response_text,
-        selected_model,
-        tokens,
-        elapsed_ms,
-        detected_language,
-        target_backend,
-        tier,
-        include_metadata=include_metadata,
+    """Core implementation for delegate - wrapper that uses delegation module."""
+    ctx = _get_delegate_context()
+    return await delegate_impl(
+        ctx,
+        task,
+        content,
+        file,
+        model,
+        language,
+        context,
+        symbols,
+        include_references,
+        backend,
+        backend_obj,
+        files,
+        include_metadata,
+        max_tokens,
     )
 
 

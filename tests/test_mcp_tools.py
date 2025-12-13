@@ -80,11 +80,12 @@ class TestBatchFunction:
     @pytest.mark.asyncio
     async def test_batch_parses_json_tasks(self):
         """batch() should parse JSON task array."""
-        from delia import mcp_server
+        from delia import mcp_server, delegation
 
         # Mock the actual LLM call to avoid needing a real backend
-        with patch.object(mcp_server, 'execute_delegate_call', new_callable=AsyncMock) as mock_execute:
-            mock_execute.return_value = "Task completed"
+        # execute_delegate_call was moved to delegation module
+        with patch.object(delegation, 'execute_delegate_call', new_callable=AsyncMock) as mock_execute:
+            mock_execute.return_value = ("Task completed", 100)
 
             tasks = json.dumps([
                 {"task": "summarize", "content": "Test content 1"},
