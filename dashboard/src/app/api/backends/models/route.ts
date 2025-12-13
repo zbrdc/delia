@@ -137,9 +137,12 @@ export async function GET(request: Request) {
         }))
       } else if (data.data) {
         // OpenAI-compatible format (llama.cpp, vLLM)
-        models = data.data.map((m: { id: string; object?: string }) => ({
-          name: m.id,
-        }))
+        models = data.data
+          // Filter out llama.cpp vocab test files - these are tokenizer vocabularies, not usable models
+          .filter((m: { id: string }) => !m.id.startsWith("ggml-vocab-"))
+          .map((m: { id: string; object?: string }) => ({
+            name: m.id,
+          }))
       } else if (Array.isArray(data)) {
         models = data.map((m: string | { name?: string; id?: string }) => ({
           name: typeof m === "string" ? m : (m.name || m.id || "unknown")
