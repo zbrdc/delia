@@ -380,22 +380,15 @@ def generate_client_config(client_id: str, delia_root: Path) -> dict[str, Any]:
     if not client_info:
         raise ValueError(f"Unknown client: {client_id}")
 
-    # Determine if we should use the installed package or run from source
-    # Check if 'delia' command is available (installed via pip/uv)
-    delia_cmd = shutil.which("delia")
-
-    if delia_cmd:
-        # Use installed command
-        server_config = {
-            "command": "delia",
-            "args": ["serve"],
-        }
-    else:
-        # Run from source with uv
-        server_config = {
-            "command": "uv",
-            "args": ["run", "--directory", str(delia_root), "python", "-m", "delia.mcp_server"],
-        }
+    # Always use uv to run from the source directory
+    # This is more reliable than checking shutil.which("delia") because:
+    # 1. When run via `uv run delia init`, delia appears in PATH temporarily
+    # 2. But it won't be available when the MCP client tries to spawn it
+    # Using uv ensures the command works regardless of installation method
+    server_config = {
+        "command": "uv",
+        "args": ["--directory", str(delia_root), "run", "delia", "serve"],
+    }
 
     return server_config
 
@@ -742,7 +735,7 @@ def doctor() -> None:
                     # Check if path/command is valid
                     if "command" in delia_config:
                         cmd = delia_config["command"]
-                        if cmd == "delia" or shutil.which(cmd):
+                        if shutil.which(cmd):
                             print_success(f"{client.name}: configured")
                         else:
                             print_warning(f"{client.name}: command '{cmd}' not found")
