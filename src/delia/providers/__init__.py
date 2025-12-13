@@ -19,8 +19,21 @@ This package contains provider-specific implementations for calling LLMs:
 - llamacpp: OpenAI-compatible API client (llama.cpp, vLLM, LM Studio, etc.)
 - gemini: Google Gemini API client
 - router: Unified dispatcher that routes to the appropriate provider
+
+The provider abstraction layer follows LiteLLM patterns:
+- base: Protocol-based interface and response types
+- registry: Central dispatcher for routing to providers
+- models: Pydantic models for API responses
 """
 
+from .base import (
+    LLMProvider,
+    LLMResponse,
+    create_error_response,
+    create_success_response,
+)
+from .gemini import GeminiProvider
+from .llamacpp import LlamaCppProvider
 from .models import (
     LlamaCppChoice,
     LlamaCppError,
@@ -29,8 +42,24 @@ from .models import (
     LlamaCppUsage,
     OllamaResponse,
 )
+from .ollama import OllamaProvider
+from .registry import ProviderRegistry, get_registry, reset_registry
 
 __all__ = [
+    # Base provider interface
+    "LLMProvider",
+    "LLMResponse",
+    "create_error_response",
+    "create_success_response",
+    # Provider implementations
+    "OllamaProvider",
+    "LlamaCppProvider",
+    "GeminiProvider",
+    # Registry
+    "ProviderRegistry",
+    "get_registry",
+    "reset_registry",
+    # API response models
     "OllamaResponse",
     "LlamaCppMessage",
     "LlamaCppChoice",
