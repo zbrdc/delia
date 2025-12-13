@@ -33,6 +33,7 @@ from .config import config
 from .file_helpers import read_files, read_serena_memory
 from .language import detect_language, get_system_prompt
 from .prompt_templates import create_structured_prompt
+from .response_cache import get_cache
 from .tokens import count_tokens
 from .validation import (
     VALID_MODELS,
@@ -254,6 +255,7 @@ async def execute_delegate_call(
     target_backend: Any,
     backend_obj: Any | None = None,
     max_tokens: int | None = None,
+    use_cache: bool = True,
 ) -> tuple[str, int]:
     """Execute the LLM call and return response with metadata.
 
@@ -268,6 +270,7 @@ async def execute_delegate_call(
         target_backend: Backend to use
         backend_obj: Optional backend config object
         max_tokens: Optional token limit
+        use_cache: If True, use response cache (default). Set False to bypass cache.
 
     Returns:
         Tuple of (response_text, tokens_used)
@@ -275,8 +278,25 @@ async def execute_delegate_call(
     Raises:
         Exception: If LLM call fails
     """
-    # Call LLM
     enable_thinking = task_type in config.thinking_tasks
+
+    # Check cache before calling LLM
+    if use_cache:
+        cache = get_cache()
+        cached_response = cache.get(
+            selected_model,
+            content,
+            system,
+            enable_thinking,
+            max_tokens,
+        )
+        if cached_response:
+            log.info("cache_hit", model=selected_model, task_type=task_type)
+            # Return cached response (tokens not saved in current implementation)
+            # Estimate tokens from cached response for tracking
+            estimated_tokens = count_tokens(cached_response)
+            return cached_response, estimated_tokens
+
     # Create a preview for the recent calls log
     content_preview = content[:200].replace("\n", " ").strip()
 
@@ -304,6 +324,19 @@ async def execute_delegate_call(
     # Strip thinking tags
     if "</think>" in response_text:
         response_text = response_text.split("</think>")[-1].strip()
+
+    # Store in cache after successful LLM call
+    if use_cache:
+        cache = get_cache()
+        cache.put(
+            selected_model,
+            content,
+            response_text,
+            tokens,
+            system,
+            enable_thinking,
+            max_tokens,
+        )
 
     return response_text, tokens
 
@@ -369,6 +402,7 @@ async def delegate_impl(
     files: str | None = None,
     include_metadata: bool = True,
     max_tokens: int | None = None,
+    use_cache: bool = True,
 ) -> str:
     """Core implementation for delegate - can be called directly by batch().
 
@@ -387,6 +421,7 @@ async def delegate_impl(
         files: Comma-separated file paths (Delia reads directly)
         include_metadata: If False, skip the metadata footer
         max_tokens: Limit response tokens
+        use_cache: If True, use response cache (default). Set False to bypass cache.
 
     Returns:
         Response string from LLM, optionally with metadata footer
@@ -436,6 +471,7 @@ async def delegate_impl(
             target_backend,
             backend_obj,
             max_tokens=max_tokens,
+            use_cache=use_cache,
         )
     except Exception as e:
         return f"Error: {e!s}"
