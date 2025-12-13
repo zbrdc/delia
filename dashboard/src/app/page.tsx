@@ -90,7 +90,7 @@ interface BackendHealth {
 interface BackendStatus {
   id: string
   name: string
-  provider: "ollama" | "llamacpp" | "vllm" | "openai" | "gemini" | "custom"
+  provider: "ollama" | "llamacpp" | "lmstudio" | "vllm" | "openai" | "gemini" | "custom"
   type: "local" | "remote"
   url: string
   enabled: boolean
@@ -137,6 +137,7 @@ interface CircuitBreakerState {
 const PROVIDER_COLORS: Record<string, string> = {
   ollama: "#689B8A",
   llamacpp: "#4A7D6D",
+  lmstudio: "#5A8FBA",  // Blue-ish for LM Studio
   vllm: "#8BB5A6",
   openai: "#1E3A32",
   gemini: "#FF6B7A",
@@ -244,7 +245,7 @@ export default function Dashboard() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<"overview" | "logs">("overview")
   const [ollamaLogs, setOllamaLogs] = useState<string[]>([])
-  const [ollamaStatus, setOllamaStatus] = useState<{ model: string; size: number } | null>(null)
+  // ollamaStatus is now derived from backendsResponse via getActiveModelStatus()
   const [isStreaming, setIsStreaming] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [backendsResponse, setBackendsResponse] = useState<BackendsResponse | null>(null)
@@ -306,22 +307,15 @@ export default function Dashboard() {
     }
   }, [])
 
-  const fetchOllamaStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/ollama/stream?type=ps")
-      if (res.ok) {
-        const data = await res.json()
-        if (data.models && data.models.length > 0) {
-          const model = data.models[0]
-          setOllamaStatus({ model: model.name, size: model.size })
-        } else {
-          setOllamaStatus(null)
-        }
-      }
-    } catch {
-      setOllamaStatus(null)
+  // Derive active model status from backends response instead of polling Ollama directly
+  const getActiveModelStatus = useCallback(() => {
+    if (!backendsResponse?.backends) return null
+    const active = backendsResponse.backends.find(b => b.id === activeBackend && b.health.available)
+    if (active?.health.loaded_models?.length) {
+      return { model: active.health.loaded_models[0], provider: active.provider }
     }
-  }, [])
+    return null
+  }, [backendsResponse, activeBackend])
 
   const fetchBackends = useCallback(async () => {
     try {
@@ -431,19 +425,16 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchStats()
-    fetchOllamaStatus()
     fetchCircuitBreaker()
     fetchUser()
     const statsInterval = setInterval(() => {
       fetchStats()
-      fetchOllamaStatus()
       fetchCircuitBreaker()
-    }, 5000)
-    // Backends now use SSE for real-time updates
+    }, 10000)  // Increased to 10s since backends use SSE for real-time updates
     return () => {
       clearInterval(statsInterval)
     }
-  }, [fetchStats, fetchOllamaStatus, fetchCircuitBreaker, fetchUser])
+  }, [fetchStats, fetchCircuitBreaker, fetchUser])
 
   useEffect(() => {
     if (activeTab === "logs") {
@@ -1157,26 +1148,29 @@ export default function Dashboard() {
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base flex items-center gap-2">
                     <WatermelonSeed
-                      className={`w-2.5 h-3.5 rotate-[-10deg] ${ollamaStatus ? '' : 'opacity-40'}`}
-                      style={{ color: ollamaStatus ? '#689B8A' : undefined }}
+                      className={`w-2.5 h-3.5 rotate-[-10deg] ${getActiveModelStatus() ? '' : 'opacity-40'}`}
+                      style={{ color: getActiveModelStatus() ? PROVIDER_COLORS[getActiveModelStatus()?.provider || 'custom'] : undefined }}
                     />
                     Active Vine
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {ollamaStatus ? (
-                    <div className="space-y-1">
-                      <div className="font-medium" style={{ color: '#689B8A' }}>{ollamaStatus.model}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {(ollamaStatus.size / 1024 / 1024 / 1024).toFixed(1)} GB loaded
+                  {(() => {
+                    const activeModel = getActiveModelStatus()
+                    return activeModel ? (
+                      <div className="space-y-1">
+                        <div className="font-medium" style={{ color: PROVIDER_COLORS[activeModel.provider] || '#689B8A' }}>{activeModel.model}</div>
+                        <div className="text-xs text-muted-foreground">
+                          via {activeModel.provider}
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="text-muted-foreground text-sm flex items-center gap-2">
-                      <WatermelonSeed className="w-2 h-3 opacity-30" />
-                      No vine growing
-                    </div>
-                  )}
+                    ) : (
+                      <div className="text-muted-foreground text-sm flex items-center gap-2">
+                        <WatermelonSeed className="w-2 h-3 opacity-30" />
+                        No vine growing
+                      </div>
+                    )
+                  })()}
                 </CardContent>
               </Card>
 
@@ -1521,6 +1515,10 @@ function BackendModal({
                   type = "local"
                 } else if (provider === "llamacpp") {
                   url = "http://localhost:8080"
+                  type = "local"
+                } else if (provider === "lmstudio") {
+                  url = "http://localhost:1234"
+                  type = "local"
                 } else if (provider === "vllm") {
                   url = "http://localhost:8000"
                 }
@@ -1530,6 +1528,7 @@ function BackendModal({
             >
               <option value="ollama">Ollama</option>
               <option value="llamacpp">llama.cpp</option>
+              <option value="lmstudio">LM Studio</option>
               <option value="vllm">vLLM</option>
               <option value="openai">OpenAI-compatible</option>
               <option value="gemini">Google Gemini</option>

@@ -33,7 +33,7 @@ interface BackendModels {
 interface BackendConfig {
   id: string
   name: string
-  provider: "ollama" | "llamacpp" | "vllm" | "openai" | "gemini" | "custom"
+  provider: "ollama" | "llamacpp" | "lmstudio" | "vllm" | "openai" | "gemini" | "custom"
   type: "local" | "remote"
   url: string
   enabled: boolean
@@ -75,6 +75,7 @@ interface SettingsConfig {
 const PROVIDER_HEALTH_ENDPOINTS: Record<string, string> = {
   ollama: "/api/tags",
   llamacpp: "/health",
+  lmstudio: "/v1/models",  // LM Studio uses OpenAI-compatible API
   vllm: "/health",
   openai: "",  // No health check for OpenAI
   gemini: "",  // Gemini uses API key validation instead
@@ -85,6 +86,7 @@ const PROVIDER_HEALTH_ENDPOINTS: Record<string, string> = {
 const PROVIDER_MODEL_ENDPOINTS: Record<string, string> = {
   ollama: "/api/tags",
   llamacpp: "/v1/models",
+  lmstudio: "/v1/models",  // LM Studio uses OpenAI-compatible API
   vllm: "/v1/models",
   openai: "/v1/models",
   gemini: "/v1beta/models",
@@ -292,10 +294,10 @@ export async function POST(request: Request) {
     }
     
     // Validate provider
-    if (!["ollama", "llamacpp", "vllm", "openai", "gemini", "custom"].includes(body.provider)) {
+    if (!["ollama", "llamacpp", "lmstudio", "vllm", "openai", "gemini", "custom"].includes(body.provider)) {
       return NextResponse.json({
         success: false,
-        error: "Invalid provider. Must be: ollama, llamacpp, vllm, openai, gemini, or custom"
+        error: "Invalid provider. Must be: ollama, llamacpp, lmstudio, vllm, openai, gemini, or custom"
       }, { status: 400 })
     }
     

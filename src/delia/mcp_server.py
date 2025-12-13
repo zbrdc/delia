@@ -2197,7 +2197,7 @@ async def call_llamacpp(
     if not backend_obj:
         # Find first enabled OpenAI-compatible backend
         for b in backend_manager.get_enabled_backends():
-            if b.provider in ("llamacpp", "vllm", "openai", "custom"):
+            if b.provider in ("llamacpp", "lmstudio", "vllm", "openai", "custom"):
                 backend_obj = b
                 break
 
@@ -2627,7 +2627,8 @@ async def call_llm(
             return {"success": False, "error": "No active backend found"}
 
         # Dispatch based on provider type
-        if active_backend.provider in ("llama.cpp", "llamacpp", "vllm", "openai", "custom"):
+        # lmstudio uses OpenAI-compatible API, same as llamacpp/vllm
+        if active_backend.provider in ("llama.cpp", "llamacpp", "lmstudio", "vllm", "openai", "custom"):
             result = await call_llamacpp(
                 model,
                 prompt,
