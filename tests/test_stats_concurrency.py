@@ -25,39 +25,45 @@ Verifies that the stats system properly handles:
 """
 import asyncio
 import sys
-import json
-import tempfile
 from pathlib import Path
-from datetime import datetime
 
 import pytest
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Import stats functions
+# Import StatsService and constants
+from delia.stats import MAX_RECENT_CALLS, StatsService
+
+# Import the singleton and save function from mcp_server
 from delia.mcp_server import (
     _update_stats_sync,
-    _snapshot_stats,
     save_all_stats_async,
-    MODEL_USAGE,
-    TASK_STATS,
-    RECENT_CALLS,
-    _stats_thread_lock,
-    _stats_lock,
+    stats_service,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_stats():
+    """Reset stats before each test."""
+    # Reset the singleton's internal state
+    with stats_service._lock:
+        for tier in stats_service.model_usage:
+            stats_service.model_usage[tier]["calls"] = 0
+            stats_service.model_usage[tier]["tokens"] = 0
+        # Reset task_stats to default values (don't clear - need "other" key)
+        for key in stats_service.task_stats:
+            stats_service.task_stats[key] = 0
+        stats_service.recent_calls.clear()
+        for tier in stats_service.response_times:
+            stats_service.response_times[tier].clear()
+    yield
 
 
 @pytest.mark.asyncio
 async def test_concurrent_updates():
     """Test concurrent stat updates don't cause corruption."""
     print("\n=== Test 1: Concurrent Updates ===")
-
-    # Reset stats
-    with _stats_thread_lock:
-        MODEL_USAGE["quick"]["calls"] = 0
-        TASK_STATS["general"] = 0
-        RECENT_CALLS.clear()
 
     # Simulate concurrent updates
     async def update_stats(idx: int):
@@ -79,10 +85,10 @@ async def test_concurrent_updates():
     await asyncio.gather(*[update_stats(i) for i in range(5)])
 
     # Verify all updates were recorded
-    with _stats_thread_lock:
-        total_calls = MODEL_USAGE["quick"]["calls"]
-        total_tasks = TASK_STATS["general"]
-        recent_count = len(RECENT_CALLS)
+    model_usage, task_stats, _, recent_calls = stats_service.get_snapshot()
+    total_calls = model_usage["quick"]["calls"]
+    total_tasks = task_stats.get("general", 0)
+    recent_count = len(recent_calls)
 
     expected = 50  # 5 tasks × 10 updates each
     assert total_calls == expected, f"Expected {expected} calls, got {total_calls}"
@@ -100,16 +106,16 @@ async def test_snapshot_consistency():
     """Test that snapshots are consistent even during updates."""
     print("\n=== Test 2: Snapshot Consistency ===")
 
-    # Reset stats
-    with _stats_thread_lock:
-        MODEL_USAGE["coder"]["calls"] = 5
-        TASK_STATS["thinking"] = 3
-        RECENT_CALLS.clear()
+    # Set up stats directly
+    with stats_service._lock:
+        stats_service.model_usage["coder"]["calls"] = 5
+        stats_service.task_stats["thinking"] = 3
+        stats_service.recent_calls.clear()
         for i in range(5):
-            RECENT_CALLS.append({"idx": i})
+            stats_service.recent_calls.append({"idx": i})
 
     # Take a snapshot
-    usage_snap, task_snap, _, recent_snap = _snapshot_stats()
+    usage_snap, task_snap, _, recent_snap = stats_service.get_snapshot()
 
     # Verify snapshot has expected values
     assert usage_snap["coder"]["calls"] == 5, "Usage snapshot incorrect"
@@ -127,12 +133,6 @@ async def test_concurrent_snapshots():
     """Test that concurrent snapshots don't corrupt stats."""
     print("\n=== Test 3: Concurrent Snapshots ===")
 
-    # Reset stats
-    with _stats_thread_lock:
-        MODEL_USAGE["moe"]["calls"] = 0
-        TASK_STATS["analysis"] = 0
-        RECENT_CALLS.clear()
-
     # Concurrent updates and snapshots
     async def update_and_snapshot(idx: int, results: list):
         for i in range(20):
@@ -149,7 +149,7 @@ async def test_concurrent_snapshots():
 
             # Take snapshots while updates happen
             if i % 5 == 0:
-                snap = _snapshot_stats()
+                snap = stats_service.get_snapshot()
                 results.append(snap)
 
             await asyncio.sleep(0.001)
@@ -165,16 +165,16 @@ async def test_concurrent_snapshots():
     for snap_idx, (usage_snap, task_snap, _, recent_snap) in enumerate(results):
         # In each snapshot, values should match
         calls = usage_snap["moe"]["calls"]
-        tasks = task_snap["analysis"]
+        tasks = task_snap.get("analysis", 0)
         recent = len(recent_snap)
 
         # These should be in sync
         assert calls == tasks, f"Snapshot {snap_idx}: calls ({calls}) != tasks ({tasks})"
         assert recent <= calls, f"Snapshot {snap_idx}: recent ({recent}) > calls ({calls})"
 
-    final_snap = _snapshot_stats()
+    final_snap = stats_service.get_snapshot()
     final_calls = final_snap[0]["moe"]["calls"]
-    final_tasks = final_snap[1]["analysis"]
+    final_tasks = final_snap[1].get("analysis", 0)
 
     print(f"✓ All snapshots internally consistent")
     print(f"  - Snapshots taken: {len(results)}")
@@ -186,12 +186,6 @@ async def test_concurrent_snapshots():
 async def test_save_during_updates():
     """Test that saves work correctly during concurrent updates."""
     print("\n=== Test 4: Save During Updates ===")
-
-    # Reset stats
-    with _stats_thread_lock:
-        MODEL_USAGE["quick"]["calls"] = 0
-        TASK_STATS["general"] = 0
-        RECENT_CALLS.clear()
 
     # Concurrent updates and saves
     async def updates_task():
@@ -220,7 +214,7 @@ async def test_save_during_updates():
     )
 
     # Verify final state
-    final_snap = _snapshot_stats()
+    final_snap = stats_service.get_snapshot()
     final_calls = final_snap[0]["quick"]["calls"]
 
     assert final_calls == 30, f"Expected 30 calls, got {final_calls}"
@@ -234,15 +228,6 @@ async def test_no_data_loss():
     """Test that no updates are lost even under high concurrency."""
     print("\n=== Test 5: No Data Loss Under High Concurrency ===")
 
-    # Import to check max limit
-    from delia.mcp_server import MAX_RECENT_CALLS
-
-    # Reset stats
-    with _stats_thread_lock:
-        MODEL_USAGE["coder"]["calls"] = 0
-        TASK_STATS["coding"] = 0
-        RECENT_CALLS.clear()
-
     NUM_TASKS = 20
     UPDATES_PER_TASK = 50
 
@@ -250,7 +235,7 @@ async def test_no_data_loss():
         for i in range(UPDATES_PER_TASK):
             _update_stats_sync(
                 model_tier="coder",
-                task_type="coding",
+                task_type="generate",  # Use a valid default task type
                 original_task="test",
                 tokens=100,
                 elapsed_ms=50,
@@ -265,9 +250,9 @@ async def test_no_data_loss():
     await asyncio.gather(*[update_task(i) for i in range(NUM_TASKS)])
 
     # Verify no data loss
-    final_snap = _snapshot_stats()
+    final_snap = stats_service.get_snapshot()
     final_calls = final_snap[0]["coder"]["calls"]
-    final_tasks = final_snap[1]["coding"]
+    final_tasks = final_snap[1].get("generate", 0)
     final_recent = len(final_snap[3])
 
     expected_total = NUM_TASKS * UPDATES_PER_TASK
@@ -289,10 +274,6 @@ async def test_token_accumulation():
     """Test that tokens accumulate correctly under concurrency."""
     print("\n=== Test 6: Token Accumulation ===")
 
-    # Reset stats
-    with _stats_thread_lock:
-        MODEL_USAGE["moe"]["tokens"] = 0
-
     TOKEN_COUNTS = [100, 200, 150, 300, 250]
 
     async def update_with_tokens(tokens: int):
@@ -312,7 +293,7 @@ async def test_token_accumulation():
     await asyncio.gather(*[update_with_tokens(t) for t in TOKEN_COUNTS])
 
     # Verify tokens accumulated
-    final_snap = _snapshot_stats()
+    final_snap = stats_service.get_snapshot()
     final_tokens = final_snap[0]["moe"]["tokens"]
     expected_tokens = sum(TOKEN_COUNTS)
 

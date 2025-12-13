@@ -450,20 +450,21 @@ class TestRaceConditions:
     @pytest.mark.asyncio
     async def test_stats_concurrent_updates(self):
         """Concurrent stats updates shouldn't lose data."""
-        # This tests the thread safety of stats tracking
-        from delia.mcp_server import TASK_STATS, _stats_thread_lock
+        # This tests the thread safety of stats tracking via StatsService
+        from delia.mcp_server import stats_service
 
-        initial_count = TASK_STATS.get("quick", 0)
+        model_usage, task_stats, _, _ = stats_service.get_snapshot()
+        initial_count = task_stats.get("review", 0)
 
         async def increment():
-            with _stats_thread_lock:
-                TASK_STATS["quick"] = TASK_STATS.get("quick", 0) + 1
+            stats_service.increment_task("review")
 
         # Many concurrent increments
         await asyncio.gather(*[increment() for _ in range(1000)])
 
         # Should have incremented correctly
-        assert TASK_STATS["quick"] == initial_count + 1000
+        _, task_stats, _, _ = stats_service.get_snapshot()
+        assert task_stats["review"] == initial_count + 1000
 
 
 class TestResourceLeaks:

@@ -33,7 +33,7 @@ def setup_test_environment(tmp_path):
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
     # Clear cached modules
-    modules_to_clear = ["delia.paths", "delia.config", "delia.mcp_server", "delia.backend_manager", "delia.multi_user_tracking", "delia"]
+    modules_to_clear = ["delia.paths", "delia.config", "delia.mcp_server", "delia.backend_manager", "delia.multi_user_tracking", "delia.stats", "delia"]
     for mod in list(sys.modules.keys()):
         if any(mod.startswith(m) or mod == m for m in modules_to_clear):
             del sys.modules[mod]
@@ -44,71 +44,76 @@ def setup_test_environment(tmp_path):
 
 
 class TestUsageStats:
-    """Test MODEL_USAGE and TASK_STATS tracking."""
+    """Test stats_service model usage and task stats tracking."""
 
     def test_model_usage_initialized(self):
-        """MODEL_USAGE should be initialized with all tiers."""
+        """stats_service should be initialized with all tiers."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
 
-        assert hasattr(mcp_server, 'MODEL_USAGE')
-        assert "quick" in mcp_server.MODEL_USAGE
-        assert "coder" in mcp_server.MODEL_USAGE
-        assert "moe" in mcp_server.MODEL_USAGE
+        model_usage, _, _, _ = stats_service.get_snapshot()
+        assert "quick" in model_usage
+        assert "coder" in model_usage
+        assert "moe" in model_usage
 
     def test_model_usage_has_counters(self):
-        """MODEL_USAGE should have calls and tokens counters."""
+        """model_usage should have calls and tokens counters."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
 
+        model_usage, _, _, _ = stats_service.get_snapshot()
         for tier in ["quick", "coder", "moe"]:
-            assert "calls" in mcp_server.MODEL_USAGE[tier]
-            assert "tokens" in mcp_server.MODEL_USAGE[tier]
+            assert "calls" in model_usage[tier]
+            assert "tokens" in model_usage[tier]
 
     def test_task_stats_initialized(self):
-        """TASK_STATS should be initialized."""
+        """task_stats should be initialized."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
 
-        assert hasattr(mcp_server, 'TASK_STATS')
-        assert isinstance(mcp_server.TASK_STATS, dict)
+        _, task_stats, _, _ = stats_service.get_snapshot()
+        assert isinstance(task_stats, dict)
 
 
 class TestStatsLoadSave:
     """Test stats loading and saving to disk."""
 
-    def test_save_usage_stats_creates_file(self):
-        """save_usage_stats() should create stats file."""
+    def test_save_stats_creates_file(self):
+        """stats_service.save_all() should create stats file."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
+        import asyncio
 
         # Add some data
-        mcp_server.MODEL_USAGE["quick"]["calls"] = 10
-        mcp_server.MODEL_USAGE["quick"]["tokens"] = 5000
+        with stats_service._lock:
+            stats_service.model_usage["quick"]["calls"] = 10
+            stats_service.model_usage["quick"]["tokens"] = 5000
 
-        mcp_server.save_usage_stats()
+        asyncio.run(stats_service.save_all())
 
         assert paths.STATS_FILE.exists()
 
-    def test_save_usage_stats_content(self):
-        """save_usage_stats() should save correct content."""
+    def test_save_stats_content(self):
+        """stats_service.save_all() should save correct content."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
+        import asyncio
 
-        mcp_server.MODEL_USAGE["coder"]["calls"] = 25
-        mcp_server.MODEL_USAGE["coder"]["tokens"] = 15000
+        with stats_service._lock:
+            stats_service.model_usage["coder"]["calls"] = 25
+            stats_service.model_usage["coder"]["tokens"] = 15000
 
-        mcp_server.save_usage_stats()
+        asyncio.run(stats_service.save_all())
 
         with open(paths.STATS_FILE) as f:
             data = json.load(f)
@@ -116,8 +121,8 @@ class TestStatsLoadSave:
         assert data["coder"]["calls"] == 25
         assert data["coder"]["tokens"] == 15000
 
-    def test_load_usage_stats(self):
-        """load_usage_stats() should load from disk."""
+    def test_load_stats(self):
+        """stats_service.load() should load from disk."""
         from delia import paths
         paths.ensure_directories()
 
@@ -132,22 +137,22 @@ class TestStatsLoadSave:
         with open(paths.STATS_FILE, "w") as f:
             json.dump(stats_data, f)
 
-        from delia import mcp_server
-        # Reset stats before loading to avoid accumulation
-        mcp_server.MODEL_USAGE = {
-            "quick": {"calls": 0, "tokens": 0},
-            "coder": {"calls": 0, "tokens": 0},
-            "moe": {"calls": 0, "tokens": 0},
-            "thinking": {"calls": 0, "tokens": 0}
-        }
-        mcp_server.load_usage_stats()
+        from delia.mcp_server import stats_service
+        # Reset stats before loading
+        with stats_service._lock:
+            for tier in stats_service.model_usage:
+                stats_service.model_usage[tier]["calls"] = 0
+                stats_service.model_usage[tier]["tokens"] = 0
+
+        stats_service.load()
 
         # Verify stats were loaded
-        assert mcp_server.MODEL_USAGE["quick"]["calls"] >= 100
-        assert mcp_server.MODEL_USAGE["coder"]["tokens"] >= 100000
+        model_usage, _, _, _ = stats_service.get_snapshot()
+        assert model_usage["quick"]["calls"] >= 100
+        assert model_usage["coder"]["tokens"] >= 100000
 
-    def test_load_usage_stats_missing_file(self):
-        """load_usage_stats() should handle missing file gracefully."""
+    def test_load_stats_missing_file(self):
+        """stats_service.load() should handle missing file gracefully."""
         from delia import paths
         paths.ensure_directories()
 
@@ -155,47 +160,54 @@ class TestStatsLoadSave:
         if paths.STATS_FILE.exists():
             paths.STATS_FILE.unlink()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
         # Should not raise
-        mcp_server.load_usage_stats()
+        stats_service.load()
 
         # Should have default values
-        assert mcp_server.MODEL_USAGE["quick"]["calls"] >= 0
+        model_usage, _, _, _ = stats_service.get_snapshot()
+        assert model_usage["quick"]["calls"] >= 0
 
 
 class TestEnhancedStats:
     """Test enhanced statistics (recent calls, response times)."""
 
     def test_recent_calls_exists(self):
-        """RECENT_CALLS should be available."""
+        """recent_calls should be available in stats_service."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
 
-        assert hasattr(mcp_server, 'RECENT_CALLS')
+        _, _, _, recent_calls = stats_service.get_snapshot()
+        assert isinstance(recent_calls, list)
 
     def test_response_times_exists(self):
-        """RESPONSE_TIMES should be available."""
+        """response_times should be available in stats_service."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
 
-        assert hasattr(mcp_server, 'RESPONSE_TIMES')
+        _, _, response_times, _ = stats_service.get_snapshot()
+        assert isinstance(response_times, dict)
+        assert "quick" in response_times
+        assert "coder" in response_times
+        assert "moe" in response_times
 
     def test_save_enhanced_stats(self):
-        """save_enhanced_stats() should save to disk."""
+        """stats_service.save_all() should save enhanced stats to disk."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
+        import asyncio
 
         # Add some enhanced data
-        mcp_server.TASK_STATS["summarize"] = 15
-        mcp_server.TASK_STATS["generate"] = 30
+        stats_service.increment_task("review")
+        stats_service.increment_task("generate")
 
-        mcp_server.save_enhanced_stats()
+        asyncio.run(stats_service.save_all())
 
         assert paths.ENHANCED_STATS_FILE.exists()
 
@@ -228,8 +240,8 @@ class TestLiveLogs:
             })
 
         # Should not raise
-        if hasattr(mcp_server, '_save_live_logs'):
-            mcp_server._save_live_logs()
+        if hasattr(mcp_server, '_save_live_logs_sync'):
+            mcp_server._save_live_logs_sync()
 
 
 class TestCircuitBreakerStats:
@@ -255,28 +267,29 @@ class TestStatsSnapshot:
     """Test thread-safe stats snapshots."""
 
     def test_snapshot_stats_function(self):
-        """_snapshot_stats() should return deep copy of stats."""
+        """stats_service.get_snapshot() should return deep copy of stats."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
 
-        if hasattr(mcp_server, '_snapshot_stats'):
-            snapshot = mcp_server._snapshot_stats()
+        snapshot = stats_service.get_snapshot()
 
-            # _snapshot_stats returns a tuple of (model_usage, task_stats, response_times, recent_calls)
-            assert isinstance(snapshot, tuple)
-            assert len(snapshot) >= 1
+        # get_snapshot returns a tuple of (model_usage, task_stats, response_times, recent_calls)
+        assert isinstance(snapshot, tuple)
+        assert len(snapshot) == 4
 
-            # First element should be model usage dict
-            model_usage = snapshot[0]
-            assert isinstance(model_usage, dict)
+        # First element should be model usage dict
+        model_usage = snapshot[0]
+        assert isinstance(model_usage, dict)
 
-            # Modifying snapshot should not affect originals
-            if "quick" in model_usage:
-                original = mcp_server.MODEL_USAGE["quick"]["calls"]
-                model_usage["quick"]["calls"] = 999999
-                assert mcp_server.MODEL_USAGE["quick"]["calls"] == original
+        # Modifying snapshot should not affect originals
+        if "quick" in model_usage:
+            original_snapshot = stats_service.get_snapshot()
+            original = original_snapshot[0]["quick"]["calls"]
+            model_usage["quick"]["calls"] = 999999
+            new_snapshot = stats_service.get_snapshot()
+            assert new_snapshot[0]["quick"]["calls"] == original
 
 
 class TestAsyncStatsSave:
@@ -306,7 +319,7 @@ class TestLegacyStatsMigration:
     """Test migration from legacy stats format."""
 
     def test_legacy_tier_names_migrated(self):
-        """load_usage_stats() should migrate old tier names."""
+        """stats_service.load() should migrate old tier names."""
         from delia import paths
         paths.ensure_directories()
 
@@ -319,12 +332,12 @@ class TestLegacyStatsMigration:
         with open(paths.STATS_FILE, "w") as f:
             json.dump(legacy_stats, f)
 
-        from delia import mcp_server
-        mcp_server.load_usage_stats()
+        from delia.mcp_server import stats_service
+        stats_service.load()
 
-        # Should have migrated to new names
-        # Or at least not crash
-        assert mcp_server.MODEL_USAGE is not None
+        # Should have loaded without crash (legacy migration)
+        model_usage, _, _, _ = stats_service.get_snapshot()
+        assert model_usage is not None
 
 
 class TestStatsFilePaths:
@@ -367,10 +380,11 @@ class TestAtomicWrites:
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
+        import asyncio
 
         # Save stats
-        mcp_server.save_usage_stats()
+        asyncio.run(stats_service.save_all())
 
         # File should exist and be valid JSON
         if paths.STATS_FILE.exists():

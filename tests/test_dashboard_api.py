@@ -334,12 +334,16 @@ class TestDashboardDataIntegration:
             from delia import paths
             paths.ensure_directories()
 
-            from delia import mcp_server
+            from delia.mcp_server import stats_service
 
-            # Record some usage
-            mcp_server.MODEL_USAGE["quick"]["calls"] = 50
-            mcp_server.MODEL_USAGE["quick"]["tokens"] = 25000
-            mcp_server.save_usage_stats()
+            # Record some usage via stats_service
+            with stats_service._lock:
+                stats_service.model_usage["quick"]["calls"] = 50
+                stats_service.model_usage["quick"]["tokens"] = 25000
+
+            # Save using the synchronous path (save_all is async)
+            import asyncio
+            asyncio.run(stats_service.save_all())
 
             # Verify dashboard can read it
             with open(paths.STATS_FILE) as f:

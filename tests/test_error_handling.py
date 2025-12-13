@@ -216,11 +216,12 @@ class TestConfigFileErrors:
         with open(paths.STATS_FILE, "w") as f:
             f.write("not json at all")
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
 
-        # Should not crash
-        mcp_server.load_usage_stats()
-        assert mcp_server.MODEL_USAGE is not None
+        # Should not crash - StatsService.load() handles corrupted files gracefully
+        stats_service.load()
+        model_usage, _, _, _ = stats_service.get_snapshot()
+        assert model_usage is not None
 
 
 class TestCircuitBreakerBehavior:
@@ -356,39 +357,42 @@ class TestMemoryAndResourceManagement:
     """Test memory and resource handling."""
 
     def test_recent_calls_bounded(self):
-        """RECENT_CALLS should not grow unbounded."""
+        """Recent calls should not grow unbounded."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
+        from delia.stats import MAX_RECENT_CALLS
 
-        # Add many entries
-        for i in range(200):
-            if hasattr(mcp_server.RECENT_CALLS, 'append'):
-                mcp_server.RECENT_CALLS.append({
-                    "ts": i,
+        # Add many entries via stats_service
+        with stats_service._lock:
+            for i in range(200):
+                stats_service.recent_calls.append({
+                    "ts": str(i),
                     "task": "test",
-                    "model": "quick"
+                    "tier": "quick"
                 })
 
-        # Should be bounded (typically 100)
-        assert len(mcp_server.RECENT_CALLS) <= 150  # Some buffer for implementation
+        # Should be bounded by MAX_RECENT_CALLS (deque maxlen)
+        _, _, _, recent_calls = stats_service.get_snapshot()
+        assert len(recent_calls) <= MAX_RECENT_CALLS
 
     def test_response_times_structure(self):
-        """RESPONSE_TIMES should have correct structure for all tiers."""
+        """Response times should have correct structure for all tiers."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
 
-        # Verify structure exists for all model tiers
-        assert "quick" in mcp_server.RESPONSE_TIMES
-        assert "coder" in mcp_server.RESPONSE_TIMES
-        assert "moe" in mcp_server.RESPONSE_TIMES
+        # Verify structure exists for all model tiers via stats_service
+        _, _, response_times, _ = stats_service.get_snapshot()
+        assert "quick" in response_times
+        assert "coder" in response_times
+        assert "moe" in response_times
 
         # Each tier should be a list
         for tier in ["quick", "coder", "moe"]:
-            assert isinstance(mcp_server.RESPONSE_TIMES[tier], list)
+            assert isinstance(response_times[tier], list)
 
 
 class TestGracefulDegradation:
@@ -455,11 +459,12 @@ class TestFileSystemErrors:
         # This test is OS-dependent and may not work in all environments
         # Just verify the code doesn't crash catastrophically
 
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
+        import asyncio
 
         # Save should handle errors
         try:
-            mcp_server.save_usage_stats()
+            asyncio.run(stats_service.save_all())
         except PermissionError:
             pass  # Expected on read-only
         except Exception:

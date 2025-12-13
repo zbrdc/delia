@@ -243,13 +243,14 @@ class TestMCPServerInitialization:
 
     def test_stats_structures_initialized(self):
         """Stats tracking structures should be initialized."""
-        from delia import mcp_server
+        from delia.mcp_server import stats_service
 
-        assert hasattr(mcp_server, 'MODEL_USAGE')
-        assert hasattr(mcp_server, 'TASK_STATS')
-        assert "quick" in mcp_server.MODEL_USAGE
-        assert "coder" in mcp_server.MODEL_USAGE
-        assert "moe" in mcp_server.MODEL_USAGE
+        # StatsService should be initialized with model tiers
+        model_usage, task_stats, _, _ = stats_service.get_snapshot()
+        assert "quick" in model_usage
+        assert "coder" in model_usage
+        assert "moe" in model_usage
+        assert task_stats is not None
 
 
 if __name__ == "__main__":

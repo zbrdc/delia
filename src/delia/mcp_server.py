@@ -154,6 +154,9 @@ from .language import (
     optimize_prompt,
 )
 
+# Import stats service for usage tracking
+from .stats import StatsService
+
 # Conditional authentication imports (based on config.auth_enabled)
 AUTH_ENABLED = config.auth_enabled
 TRACKING_ENABLED = config.tracking_enabled
@@ -386,45 +389,11 @@ model_queue = ModelQueue()
 
 
 # ============================================================
-# USAGE TRACKING
+# USAGE TRACKING (via StatsService)
 # ============================================================
 
-# Usage tracking for efficiency reporting (loaded from disk on startup)
-MODEL_USAGE = {
-    "quick": {"calls": 0, "tokens": 0},
-    "coder": {"calls": 0, "tokens": 0},
-    "moe": {"calls": 0, "tokens": 0},
-    "thinking": {"calls": 0, "tokens": 0},
-}
-
-# Enhanced tracking: task types and recent calls
-TASK_STATS = {
-    "review": 0,
-    "analyze": 0,
-    "generate": 0,
-    "summarize": 0,
-    "critique": 0,
-    "quick": 0,
-    "plan": 0,
-    "think": 0,
-    "other": 0,
-}
-
-# Recent calls log (last 50 calls) - using deque for O(1) append/pop
-MAX_RECENT_CALLS = 50
-RECENT_CALLS: deque[dict] = deque(maxlen=MAX_RECENT_CALLS)
-
-# Response time tracking
-RESPONSE_TIMES: dict[str, list[dict[str, object]]] = {
-    "quick": [],  # List of {"ts": timestamp, "ms": elapsed_ms} dicts
-    "coder": [],
-    "moe": [],
-    "thinking": [],
-}
-MAX_RESPONSE_TIMES = 100  # Keep last 100 per model
-
-# Stats file for enhanced data
-ENHANCED_STATS_FILE = paths.ENHANCED_STATS_FILE
+# Stats service singleton (thread-safe, handles all usage tracking)
+stats_service = StatsService()
 
 # Circuit breaker stats file (for dashboard)
 CIRCUIT_BREAKER_FILE = paths.CIRCUIT_BREAKER_FILE
@@ -445,115 +414,16 @@ def load_live_logs():
             log.warning("logs_load_failed", error=str(e))
 
 
-def load_usage_stats():
-    """Load usage stats from disk."""
-    global MODEL_USAGE, TASK_STATS, RECENT_CALLS, RESPONSE_TIMES
-
-    # Load basic stats
-    if STATS_FILE.exists():
-        try:
-            data = json.loads(STATS_FILE.read_text())
-            # Migration: Support legacy keys from pre-refactor versions
-            # These map old tier names to current tier names (one-time migration)
-            legacy_key_mapping = {
-                "quick": ["quick", "14b"],  # Legacy: "14b" → "quick"
-                "coder": ["coder", "30b"],  # Legacy: "30b" → "coder" (now moe)
-                "moe": ["moe"],
-            }
-            for new_key, legacy_keys in legacy_key_mapping.items():
-                for legacy_key in legacy_keys:
-                    if legacy_key in data:
-                        MODEL_USAGE[new_key]["calls"] += data[legacy_key].get("calls", 0)
-                        MODEL_USAGE[new_key]["tokens"] += data[legacy_key].get("tokens", 0)
-            log.info(
-                "stats_loaded",
-                quick_calls=MODEL_USAGE["quick"]["calls"],
-                coder_calls=MODEL_USAGE["coder"]["calls"],
-                moe_calls=MODEL_USAGE["moe"]["calls"],
-            )
-        except json.JSONDecodeError as e:
-            log.warning("stats_load_failed", error=str(e), reason="invalid_json")
-        except Exception as e:
-            log.warning("stats_load_failed", error=str(e))
-
-    # Load enhanced stats
-    if ENHANCED_STATS_FILE.exists():
-        try:
-            data = json.loads(ENHANCED_STATS_FILE.read_text())
-            TASK_STATS.update(data.get("task_stats", {}))
-            RECENT_CALLS.clear()
-            RECENT_CALLS.extend(data.get("recent_calls", [])[-MAX_RECENT_CALLS:])
-            rt = data.get("response_times", {})
-            # Migration: Map legacy tier names to current names
-            RESPONSE_TIMES["quick"] = rt.get("quick", rt.get("14b", []))[-MAX_RESPONSE_TIMES:]
-            RESPONSE_TIMES["coder"] = rt.get("coder", rt.get("30b", []))[-MAX_RESPONSE_TIMES:]
-            RESPONSE_TIMES["moe"] = rt.get("moe", [])[-MAX_RESPONSE_TIMES:]
-            log.info("enhanced_stats_loaded", recent_calls=len(RECENT_CALLS))
-        except json.JSONDecodeError as e:
-            log.warning("enhanced_stats_load_failed", error=str(e), reason="invalid_json")
-        except Exception as e:
-            log.warning("enhanced_stats_load_failed", error=str(e))
 
 
-def _snapshot_stats() -> tuple[dict, dict, dict, list]:
-    """
-    Take atomic snapshot of all in-memory stats under lock.
-
-    Returns:
-        (MODEL_USAGE, TASK_STATS, RESPONSE_TIMES, RECENT_CALLS) snapshots
-
-    This prevents race conditions where one thread reads stats while another
-    is modifying them. The snapshot is consistent at the moment of capture.
-    """
-    with _stats_thread_lock:
-        # Create deep copies to prevent external modifications
-        model_usage_snapshot = {tier: data.copy() for tier, data in MODEL_USAGE.items()}
-        task_stats_snapshot = TASK_STATS.copy()
-        response_times_snapshot = {tier: times.copy() for tier, times in RESPONSE_TIMES.items()}
-        recent_calls_snapshot = list(RECENT_CALLS)  # Convert deque to list for snapshot
-
-    return model_usage_snapshot, task_stats_snapshot, response_times_snapshot, recent_calls_snapshot
 
 
-def save_usage_stats():
-    """
-    Save usage stats to disk (atomic write).
-
-    Uses snapshot to ensure consistent data even with concurrent updates.
-    """
-    try:
-        model_usage_snapshot, _, _, _ = _snapshot_stats()
-        temp_file = STATS_FILE.with_suffix(".tmp")
-        # Use compact JSON in production
-        temp_file.write_text(json.dumps(model_usage_snapshot, indent=2))
-        temp_file.replace(STATS_FILE)  # Atomic on POSIX
-    except Exception as e:
-        log.warning("stats_save_failed", error=str(e))
 
 
-def save_enhanced_stats():
-    """
-    Save enhanced stats to disk (atomic write).
 
-    Uses snapshots to ensure consistent data even with concurrent updates.
-    """
-    try:
-        _, task_stats_snapshot, response_times_snapshot, recent_calls_snapshot = _snapshot_stats()
 
-        data = {
-            "task_stats": task_stats_snapshot,
-            "recent_calls": recent_calls_snapshot[-MAX_RECENT_CALLS:],
-            "response_times": {
-                "quick": response_times_snapshot["quick"][-MAX_RESPONSE_TIMES:],
-                "coder": response_times_snapshot["coder"][-MAX_RESPONSE_TIMES:],
-                "moe": response_times_snapshot["moe"][-MAX_RESPONSE_TIMES:],
-            },
-        }
-        temp_file = ENHANCED_STATS_FILE.with_suffix(".tmp")
-        temp_file.write_text(json.dumps(data, indent=2))
-        temp_file.replace(ENHANCED_STATS_FILE)  # Atomic on POSIX
-    except Exception as e:
-        log.warning("enhanced_stats_save_failed", error=str(e))
+
+
 
 
 def save_circuit_breaker_stats():
@@ -580,15 +450,6 @@ def save_circuit_breaker_stats():
         log.warning("circuit_breaker_save_failed", error=str(e))
 
 
-# Threading lock for in-memory stats updates (protects both reading and writing)
-import threading
-
-_stats_thread_lock = threading.Lock()
-
-# Async lock for file I/O operations (prevents concurrent writes to same file)
-_stats_lock = asyncio.Lock()
-
-
 def _update_stats_sync(
     model_tier: str,
     task_type: str,
@@ -600,93 +461,49 @@ def _update_stats_sync(
     backend: str = "ollama",
 ) -> None:
     """
-    Thread-safe update of all in-memory stats.
+    Thread-safe update of all in-memory stats via StatsService.
 
-    This function is called from sync context within async functions after each model call.
-    It updates in-memory tracking structures under a single threading lock to ensure
-    atomicity of all updates.
-
-    The threading lock protects:
-    - MODEL_USAGE dictionary
-    - TASK_STATS dictionary
-    - RESPONSE_TIMES lists
-    - RECENT_CALLS list
-
-    This lock works in coordination with:
-    - _snapshot_stats(): Creates consistent snapshots for saving
-    - save_all_stats_async(): Ensures only one save writes to disk at a time
-
-    Args:
-        model_tier: Model size tier (quick, coder, moe, thinking)
-        task_type: Type of task (general, thinking, review, etc.)
-        original_task: Original task description for logging
-        tokens: Number of tokens processed
-        elapsed_ms: Processing time in milliseconds
-        content_preview: Preview of request content
-        enable_thinking: Whether thinking mode was enabled
-        backend: Backend used (ollama, llamacpp, gemini, etc.)
+    This wrapper maintains the same interface for provider callbacks
+    while delegating to the StatsService.
     """
     # Determine backend type from config
     backend_type = config.get_backend_type(backend)
 
-    with _stats_thread_lock:
-        # Track model usage
-        MODEL_USAGE[model_tier]["calls"] += 1
-        MODEL_USAGE[model_tier]["tokens"] += tokens
-
-        # Track task type
-        task_key = task_type if task_type in TASK_STATS else "other"
-        TASK_STATS[task_key] += 1
-
-        # Track response time
-        timestamp = datetime.now().isoformat()
-        RESPONSE_TIMES[model_tier].append({"ts": timestamp, "ms": elapsed_ms})
-        if len(RESPONSE_TIMES[model_tier]) > MAX_RESPONSE_TIMES:
-            RESPONSE_TIMES[model_tier] = RESPONSE_TIMES[model_tier][-MAX_RESPONSE_TIMES:]
-
-        # Add to recent calls log
-        call_entry = {
-            "timestamp": timestamp,
-            "model": f"{model_tier} ({backend})" if backend != config.get_local_backend() else model_tier,
-            "task_type": original_task,
-            "tokens": tokens,
-            "elapsed_ms": elapsed_ms,
-            "preview": content_preview[:100] + "..." if len(content_preview) > 100 else content_preview,
-            "thinking": enable_thinking,
-            "backend_type": backend_type,  # "local" or "remote"
-        }
-        if backend != config.get_local_backend():
-            call_entry["backend"] = backend
-        RECENT_CALLS.append(call_entry)  # deque auto-evicts oldest when maxlen reached
+    # Delegate to stats service
+    stats_service.record_call(
+        model_tier=model_tier,
+        task_type=task_type,
+        original_task=original_task,
+        tokens=tokens,
+        elapsed_ms=elapsed_ms,
+        content_preview=content_preview,
+        enable_thinking=enable_thinking,
+        backend=backend,
+        backend_type=backend_type,
+    )  # deque auto-evicts oldest when maxlen reached
 
 
 async def save_all_stats_async():
     """
-    Save all stats asynchronously with proper locking.
+    Save all stats asynchronously via StatsService.
 
-    Uses two-level locking strategy:
-    1. Threading lock in _snapshot_stats() to atomically read in-memory stats
-    2. Async lock here to prevent concurrent writes to disk
-
-    This ensures:
-    - Each save gets a consistent snapshot of stats
-    - Only one save operation writes to disk at a time
-    - Updates during save don't cause data loss
+    Saves:
+    - Model usage and task stats via stats_service
+    - Live logs and circuit breaker status
     """
-    async with _stats_lock:
-        # Each save function calls _snapshot_stats() internally
-        # to ensure consistent reads
-        await asyncio.to_thread(save_usage_stats)
-        await asyncio.to_thread(save_enhanced_stats)
-        await asyncio.to_thread(_save_live_logs_sync)
-        await asyncio.to_thread(save_circuit_breaker_stats)
+    # Save model/task stats via service
+    await stats_service.save_all()
+
+    # Save other data (live logs, circuit breaker)
+    await asyncio.to_thread(_save_live_logs_sync)
+    await asyncio.to_thread(save_circuit_breaker_stats)
 
 
 # Ensure all data directories exist
 paths.ensure_directories()
 
 # Load stats immediately at module import time
-load_usage_stats()
+stats_service.load()
 load_live_logs()
 
 # ============================================================
@@ -2488,8 +2305,7 @@ Think deeply before answering."""
     )
 
     # Track think() separately (in addition to underlying task type)
-    with _stats_thread_lock:
-        TASK_STATS["think"] += 1
+    stats_service.increment_task("think")
     await save_all_stats_async()
 
     return result
@@ -2725,17 +2541,20 @@ async def health() -> str:
     # Get health status from BackendManager (only checks enabled backends)
     health_status = await backend_manager.get_health_status()
 
-    # Calculate usage stats (using new 4-tier keys: quick/coder/moe/thinking)
-    total_quick_tokens = MODEL_USAGE["quick"]["tokens"]
-    total_coder_tokens = MODEL_USAGE["coder"]["tokens"]
-    total_moe_tokens = MODEL_USAGE["moe"]["tokens"]
-    total_thinking_tokens = MODEL_USAGE["thinking"]["tokens"]
+    # Get usage stats from StatsService
+    model_usage, _, _, _ = stats_service.get_snapshot()
+
+    # Calculate totals (using new 4-tier keys: quick/coder/moe/thinking)
+    total_quick_tokens = model_usage["quick"]["tokens"]
+    total_coder_tokens = model_usage["coder"]["tokens"]
+    total_moe_tokens = model_usage["moe"]["tokens"]
+    total_thinking_tokens = model_usage["thinking"]["tokens"]
     local_tokens = total_quick_tokens + total_coder_tokens + total_moe_tokens + total_thinking_tokens
     local_calls = (
-        MODEL_USAGE["quick"]["calls"]
-        + MODEL_USAGE["coder"]["calls"]
-        + MODEL_USAGE["moe"]["calls"]
-        + MODEL_USAGE["thinking"]["calls"]
+        model_usage["quick"]["calls"]
+        + model_usage["coder"]["calls"]
+        + model_usage["moe"]["calls"]
+        + model_usage["thinking"]["calls"]
     )
 
     # Estimate cost savings (vs GPT-4)
@@ -2749,15 +2568,15 @@ async def health() -> str:
         "routing": health_status["routing"],
         "usage": {
             "quick": {
-                "calls": humanize.intcomma(MODEL_USAGE["quick"]["calls"]),
+                "calls": humanize.intcomma(model_usage["quick"]["calls"]),
                 "tokens": humanize.intword(total_quick_tokens),
             },
             "coder": {
-                "calls": humanize.intcomma(MODEL_USAGE["coder"]["calls"]),
+                "calls": humanize.intcomma(model_usage["coder"]["calls"]),
                 "tokens": humanize.intword(total_coder_tokens),
             },
             "moe": {
-                "calls": humanize.intcomma(MODEL_USAGE["moe"]["calls"]),
+                "calls": humanize.intcomma(model_usage["moe"]["calls"]),
                 "tokens": humanize.intword(total_moe_tokens),
             },
             "total_calls": humanize.intcomma(local_calls),
@@ -3156,10 +2975,11 @@ async def resource_stats() -> str:
     Returns token counts, call counts, and estimated cost savings
     across all model tiers.
     """
+    model_usage, task_stats, _, recent_calls = stats_service.get_snapshot()
     stats = {
-        "model_usage": MODEL_USAGE,
-        "task_stats": TASK_STATS,
-        "recent_calls_count": len(RECENT_CALLS),
+        "model_usage": model_usage,
+        "task_stats": task_stats,
+        "recent_calls_count": len(recent_calls),
     }
     return json.dumps(stats, indent=2)
 
