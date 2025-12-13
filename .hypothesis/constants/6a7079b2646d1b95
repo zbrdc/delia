@@ -1,4 +1,0 @@
-# file: /home/dan/git/delia/src/delia/auth.py
-# hypothesis_version: 6.148.7
-
-[100, 1000, 3600, 1000000, '...', 'DELIA_JWT_SECRET', 'MICROSOFT_CLIENT_ID', 'UserManager', 'anonymous-local-user', 'auth', 'auth/jwt/login', 'database_initialized', 'jwt', 'max_model_tier', 'max_tokens_per_hour', 'microsoft', 'moe', 'reset_token', 'user_logged_in', 'user_registered', 'users', 'users.db']

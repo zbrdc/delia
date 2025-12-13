@@ -58,6 +58,8 @@ out/
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+.hypothesis/
+log
 
 # OS files
 .DS_Store
