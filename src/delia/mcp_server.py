@@ -1735,7 +1735,7 @@ async def batch(
             max_tokens=task_max_tokens,
             session_id=session_id,
         )
-        return f"### Task {i + 1}: {task_type}\\n\\n{result}"
+        return f"### Task {i + 1}: {task_type}\n\n{result}"
 
     results = await asyncio.gather(
         *[
@@ -2157,11 +2157,11 @@ async def agent(
     )
 
     # Select model based on task
-    selected_model, tier, model_source = select_model(
-        task="analyze",
-        prompt_length=len(prompt),
-        model_hint=model,
-        backend_obj=backend_obj,
+    selected_model = await select_model(
+        task_type="analyze",
+        content_size=len(prompt),
+        model_override=model,
+        content=prompt,
     )
 
     # Set up tool registry

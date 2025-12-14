@@ -1,5 +1,6 @@
 {
   "devDependencies": {
-    "eslint-plugin-security": "^3.0.1"
+    "eslint-plugin-security": "^3.0.1",
+    "shadcn": "^3.6.1"
   }
 }
