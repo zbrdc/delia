@@ -22,6 +22,7 @@ dependencies (like call_llm, tracker) receive them via a context object.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -327,9 +328,17 @@ async def execute_delegate_call(
     response_text = result.get("response", "")
     tokens = result.get("tokens", 0)
 
-    # Strip thinking tags
+    # Strip thinking tags - extract content after </think>, or thinking content if nothing follows
     if "</think>" in response_text:
-        response_text = response_text.split("</think>")[-1].strip()
+        after_think = response_text.split("</think>")[-1].strip()
+        if after_think:
+            # Use content after thinking block
+            response_text = after_think
+        else:
+            # No content after thinking - extract thinking content itself
+            think_match = re.search(r"<think>(.*?)</think>", response_text, re.DOTALL)
+            if think_match:
+                response_text = think_match.group(1).strip()
 
     # Store in cache after successful LLM call
     if use_cache:

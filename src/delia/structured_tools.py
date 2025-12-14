@@ -20,6 +20,7 @@ AI assistants to communicate with Delia programmatically.
 """
 
 import asyncio
+import re
 import time
 import uuid
 from datetime import UTC, datetime
@@ -181,9 +182,17 @@ async def _execute_structured(
     response_text = result.get("response", "")
     tokens = result.get("tokens", 0)
 
-    # Strip thinking tags if present
+    # Strip thinking tags - extract content after </think>, or thinking content if nothing follows
     if "</think>" in response_text:
-        response_text = response_text.split("</think>")[-1].strip()
+        after_think = response_text.split("</think>")[-1].strip()
+        if after_think:
+            # Use content after thinking block
+            response_text = after_think
+        else:
+            # No content after thinking - extract thinking content itself
+            think_match = re.search(r"<think>(.*?)</think>", response_text, re.DOTALL)
+            if think_match:
+                response_text = think_match.group(1).strip()
 
     # Update tracker
     client_id = current_client_id.get()

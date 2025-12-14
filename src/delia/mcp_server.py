@@ -1431,6 +1431,18 @@ async def delegate(
         if elapsed_ms == 0:
             elapsed_ms = int((time.time() - start_time) * 1000)
 
+        # Strip thinking tags - extract content after </think>, or thinking content if nothing follows
+        if "</think>" in full_response:
+            after_think = full_response.split("</think>")[-1].strip()
+            if after_think:
+                # Use content after thinking block
+                full_response = after_think
+            else:
+                # No content after thinking - extract thinking content itself
+                think_match = re.search(r"<think>(.*?)</think>", full_response, re.DOTALL)
+                if think_match:
+                    full_response = think_match.group(1).strip()
+
         # Format response with metadata
         if include_metadata:
             return f"""{full_response}
