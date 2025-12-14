@@ -29,6 +29,7 @@ The provider abstraction layer follows LiteLLM patterns:
 from .base import (
     LLMProvider,
     LLMResponse,
+    StreamChunk,
     create_error_response,
     create_success_response,
 )
@@ -49,6 +50,7 @@ __all__ = [
     # Base provider interface
     "LLMProvider",
     "LLMResponse",
+    "StreamChunk",
     "create_error_response",
     "create_success_response",
     # Provider implementations

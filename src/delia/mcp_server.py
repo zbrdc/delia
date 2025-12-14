@@ -34,6 +34,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -136,6 +137,7 @@ from .providers import (
     LlamaCppUsage,
     OllamaProvider,
     OllamaResponse,
+    StreamChunk,
 )
 
 # Import model queue system
@@ -924,6 +926,110 @@ async def call_llm(
         raise
 
 
+async def call_llm_stream(
+    model: str,
+    prompt: str,
+    system: str | None = None,
+    enable_thinking: bool = False,
+    task_type: str = "unknown",
+    original_task: str = "unknown",
+    language: str = "unknown",
+    content_preview: str = "",
+    backend: str | BackendConfig | None = None,
+    backend_obj: BackendConfig | None = None,
+    max_tokens: int | None = None,
+) -> AsyncIterator[StreamChunk]:
+    """
+    Unified LLM streaming dispatcher that routes to the appropriate backend.
+
+    Yields StreamChunk objects as the model generates tokens.
+
+    Args:
+        model: Model name/tier
+        prompt: The prompt to send
+        system: Optional system prompt
+        enable_thinking: Enable thinking mode for supported models
+        task_type: Type of task for tracking
+        language: Detected language for tracking
+        content_preview: Preview for logging
+        backend: Override backend ID or provider name
+        backend_obj: Optional BackendConfig object to use directly
+        max_tokens: Maximum response tokens
+
+    Yields:
+        StreamChunk objects with incremental text and final metadata
+    """
+    # Note: For streaming, we skip the queue for now to reduce complexity
+    # The queue is primarily for preventing concurrent model loads
+
+    # Determine backend to use
+    active_backend = None
+
+    if backend_obj:
+        active_backend = backend_obj
+    elif backend:
+        if isinstance(backend, BackendConfig):
+            active_backend = backend
+        else:
+            active_backend = backend_manager.get_backend(backend)
+            if not active_backend:
+                for b in backend_manager.get_enabled_backends():
+                    if b.provider == backend:
+                        active_backend = b
+                        break
+    else:
+        active_backend = backend_manager.get_active_backend()
+
+    if not active_backend:
+        yield StreamChunk(done=True, error="No active backend found")
+        return
+
+    # Get provider and stream
+    provider = _get_provider(active_backend.provider)
+    if not provider:
+        yield StreamChunk(done=True, error=f"Unsupported provider: {active_backend.provider}")
+        return
+
+    # Check if provider supports streaming
+    if hasattr(provider, "call_stream"):
+        async for chunk in provider.call_stream(
+            model=model,
+            prompt=prompt,
+            system=system,
+            enable_thinking=enable_thinking,
+            task_type=task_type,
+            original_task=original_task,
+            language=language,
+            content_preview=content_preview,
+            backend_obj=active_backend,
+            max_tokens=max_tokens,
+        ):
+            yield chunk
+    else:
+        # Fallback to non-streaming call
+        response = await provider.call(
+            model=model,
+            prompt=prompt,
+            system=system,
+            enable_thinking=enable_thinking,
+            task_type=task_type,
+            original_task=original_task,
+            language=language,
+            content_preview=content_preview,
+            backend_obj=active_backend,
+            max_tokens=max_tokens,
+        )
+        if response.success:
+            yield StreamChunk(
+                text=response.response,
+                done=True,
+                tokens=response.tokens,
+                metadata=response.metadata or {},
+            )
+        else:
+            yield StreamChunk(done=True, error=response.error)
+
+
 # ============================================================
 # MCP SERVER SETUP
 # ============================================================
@@ -1192,6 +1298,7 @@ async def delegate(
     max_tokens: int | None = None,
     dry_run: bool = False,
     session_id: str | None = None,
+    stream: bool = False,
 ) -> str:
     """
     Execute a task on local/remote GPU with intelligent 3-tier model selection.
@@ -1222,6 +1329,7 @@ async def delegate(
         dry_run: If True, return estimation signals without executing LLM call. Default: False
             Returns: estimated_tokens, recommended_tier, recommended_model, backend info, context fit
         session_id: Optional session ID for conversation continuity. Creates stateful multi-turn conversations.
+        stream: If True, use streaming mode internally (better for long responses, avoids timeouts). Default: False
 
     ROUTING LOGIC:
     1. Content > 32K tokens → Uses backend with largest context window
@@ -1241,10 +1349,11 @@ async def delegate(
         delegate(task="quick", content="...", max_tokens=500)  # Limit response
         delegate(task="review", content="<large code>", dry_run=True)  # Get estimates first
         delegate(task="review", content="...", session_id="abc-123")  # Use session
+        delegate(task="plan", content="<large content>", stream=True)  # Use streaming for long responses
     """
     # Dry run mode: return estimation signals without executing
     if dry_run:
-        import json
+        import json as json_mod
         ctx = _get_delegate_context()
         signals = await get_delegate_signals(
             ctx,
@@ -1258,10 +1367,79 @@ async def delegate(
             include_references,
             files,
         )
-        return json.dumps(signals, indent=2)
+        return json_mod.dumps(signals, indent=2)
 
     # Smart backend selection using backend_manager
     backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
+
+    # Streaming mode: use streaming API internally (better for long responses)
+    if stream and backend_obj:
+        ctx = _get_delegate_context()
+
+        # Prepare content with context, files, symbols (matches delegate_impl flow)
+        prepared_content = await prepare_delegate_content(
+            content, context, symbols, include_references, files
+        )
+
+        # Map task to internal type
+        task_type = determine_task_type(task)
+
+        # Create enhanced, structured prompt with templates
+        prepared_content = create_structured_prompt(
+            task_type=task_type,
+            content=prepared_content,
+            file_path=file,
+            language=language,
+            symbols=symbols.split(",") if symbols else None,
+            context_files=context.split(",") if context else None,
+        )
+
+        # Detect language and get system prompt
+        detected_language = language or detect_language(prepared_content, file or "")
+        system = get_system_prompt(detected_language, task_type)
+
+        # Select model (use implementation directly with ctx)
+        selected_model, tier, _source = await _select_delegate_model_impl(
+            ctx, task_type, prepared_content, model, None, backend_obj
+        )
+
+        # Stream and collect response
+        full_response = ""
+        total_tokens = 0
+        elapsed_ms = 0
+        start_time = time.time()
+
+        async for chunk in call_llm_stream(
+            model=selected_model,
+            prompt=prepared_content,
+            system=system,
+            task_type=task_type,
+            original_task=task,
+            language=detected_language,
+            backend_obj=backend_obj,
+            max_tokens=max_tokens,
+        ):
+            if chunk.text:
+                full_response += chunk.text
+            if chunk.done:
+                total_tokens = chunk.tokens
+                if chunk.metadata:
+                    elapsed_ms = chunk.metadata.get("elapsed_ms", 0)
+                if chunk.error:
+                    return f"Error: {chunk.error}"
+
+        if elapsed_ms == 0:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+        # Format response with metadata
+        if include_metadata:
+            return f"""{full_response}
+
+---
+_✓ {task} (streamed) | {tier} tier | {elapsed_ms}ms | {selected_model}_"""
+        return full_response
+
+    # Non-streaming mode: use existing implementation
     return await _delegate_impl(
         task,
         content,

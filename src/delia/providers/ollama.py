@@ -25,6 +25,7 @@ for Ollama backends. It handles:
 
 import json
 import time
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
@@ -42,7 +43,7 @@ from ..messages import (
     get_status_message,
     get_tier_message,
 )
-from .base import LLMResponse, create_error_response, create_success_response
+from .base import LLMResponse, StreamChunk, create_error_response, create_success_response
 from .models import OllamaResponse
 
 if TYPE_CHECKING:
@@ -315,3 +316,188 @@ class OllamaProvider:
             log.error("ollama_error", model=model, error=str(e))
             health.record_failure("exception", content_size)
             return create_error_response(f"Ollama error: {e!s}")
+
+    async def call_stream(
+        self,
+        model: str,
+        prompt: str,
+        system: str | None = None,
+        enable_thinking: bool = False,
+        task_type: str = "unknown",
+        original_task: str = "unknown",
+        language: str = "unknown",
+        content_preview: str = "",
+        backend_obj: BackendConfig | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[StreamChunk]:
+        """Stream response from Ollama API token by token.
+
+        Yields StreamChunk objects as the model generates tokens.
+        The final chunk has done=True and includes total token count.
+        """
+        start_time = time.time()
+
+        # Resolve backend
+        if not backend_obj:
+            for b in self.backend_manager.get_enabled_backends():
+                if b.provider == "ollama":
+                    backend_obj = b
+                    break
+
+        if not backend_obj:
+            yield StreamChunk(done=True, error="No enabled Ollama backend found")
+            return
+
+        # Circuit breaker check
+        health = get_backend_health(backend_obj.id)
+        if not health.is_available():
+            wait_time = health.time_until_available()
+            yield StreamChunk(
+                done=True,
+                error=f"Ollama circuit breaker open. Retry in {wait_time:.0f}s.",
+            )
+            return
+
+        # Context size check and potential reduction
+        content_size = len(prompt) + len(system or "")
+        should_reduce, recommended_size = health.should_reduce_context(content_size)
+        if should_reduce and len(prompt) > recommended_size:
+            prompt = prompt[:recommended_size] + "\n\n[Content truncated due to previous timeout]"
+
+        if enable_thinking and "qwen" in model.lower():
+            prompt = f"/think\n{prompt}"
+
+        # Auto-select context size based on model tier
+        model_tier = detect_model_tier(model)
+        if model_tier == "moe":
+            num_ctx = self.config.model_moe.num_ctx
+        elif model_tier == "coder":
+            num_ctx = self.config.model_coder.num_ctx
+        else:
+            num_ctx = self.config.model_quick.num_ctx
+
+        temperature = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
+
+        options: dict[str, float | int] = {
+            "temperature": temperature,
+            "num_ctx": num_ctx,
+        }
+        if max_tokens:
+            options["num_predict"] = max_tokens
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "stream": True,  # Enable streaming
+            "options": options,
+        }
+        if system:
+            payload["system"] = system
+
+        client = backend_obj.get_client()
+
+        log.info(
+            get_display_event("model_starting"),
+            log_type="MODEL",
+            model=model,
+            task=task_type,
+            thinking=enable_thinking,
+            backend=backend_obj.name,
+            streaming=True,
+            status_msg=get_tier_message(model_tier, "start"),
+        )
+
+        total_tokens = 0
+        full_response = ""
+
+        try:
+            async with client.stream("POST", "/api/generate", json=payload) as response:
+                if response.status_code != 200:
+                    error_text = ""
+                    async for chunk in response.aiter_text():
+                        error_text += chunk
+                    health.record_failure("http_error", content_size)
+                    yield StreamChunk(
+                        done=True,
+                        error=f"Ollama HTTP {response.status_code}: {error_text[:500]}",
+                    )
+                    return
+
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    # Extract text chunk
+                    text_chunk = data.get("response", "")
+                    if text_chunk:
+                        full_response += text_chunk
+                        yield StreamChunk(text=text_chunk)
+
+                    # Check if done
+                    if data.get("done", False):
+                        elapsed_ms = int((time.time() - start_time) * 1000)
+                        total_tokens = data.get("eval_count", 0)
+
+                        # Stats tracking
+                        if self.stats_callback:
+                            self.stats_callback(
+                                model_tier,
+                                task_type,
+                                original_task,
+                                total_tokens,
+                                elapsed_ms,
+                                content_preview,
+                                enable_thinking,
+                                "ollama",
+                            )
+
+                        health.record_success(content_size)
+
+                        if self.save_stats_callback:
+                            self.save_stats_callback()
+
+                        log.info(
+                            get_display_event("model_completed"),
+                            log_type="INFO",
+                            elapsed=humanize.naturaldelta(elapsed_ms / 1000),
+                            elapsed_ms=elapsed_ms,
+                            tokens=humanize.intcomma(total_tokens),
+                            model=model_tier,
+                            backend="ollama",
+                            streaming=True,
+                            status_msg=format_completion_stats(total_tokens, elapsed_ms, model_tier),
+                        )
+
+                        # Final chunk with metadata
+                        yield StreamChunk(
+                            done=True,
+                            tokens=total_tokens,
+                            metadata={
+                                "backend": "ollama",
+                                "model": model,
+                                "tier": model_tier,
+                                "elapsed_ms": elapsed_ms,
+                            },
+                        )
+                        return
+
+        except httpx.TimeoutException:
+            health.record_failure("timeout", content_size)
+            yield StreamChunk(
+                done=True,
+                error=f"Ollama timeout after {self.config.ollama_timeout_seconds}s.",
+            )
+        except httpx.ConnectError:
+            health.record_failure("connection", content_size)
+            yield StreamChunk(
+                done=True,
+                error=f"Cannot connect to Ollama at {backend_obj.url}. Is Ollama running?",
+            )
+        except Exception as e:
+            health.record_failure("exception", content_size)
+            yield StreamChunk(done=True, error=f"Ollama streaming error: {e!s}")

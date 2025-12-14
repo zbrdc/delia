@@ -20,6 +20,7 @@ for OpenAI-compatible backends including llama.cpp, vLLM, LM Studio, and others.
 
 import json
 import time
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
@@ -38,7 +39,7 @@ from ..messages import (
     get_tier_message,
 )
 from ..tokens import count_tokens
-from .base import LLMResponse, create_error_response, create_success_response
+from .base import LLMResponse, StreamChunk, create_error_response, create_success_response
 from .models import LlamaCppError, LlamaCppResponse
 from .ollama import log_thinking_and_response
 
@@ -302,3 +303,201 @@ class LlamaCppProvider:
             log.error("llamacpp_error", error=str(e))
             health.record_failure("exception", content_size)
             return create_error_response(f"Error: {e!s}")
+
+    async def call_stream(
+        self,
+        model: str,
+        prompt: str,
+        system: str | None = None,
+        enable_thinking: bool = False,
+        task_type: str = "unknown",
+        original_task: str = "unknown",
+        language: str = "unknown",
+        content_preview: str = "",
+        backend_obj: BackendConfig | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[StreamChunk]:
+        """Stream response from OpenAI-compatible API token by token.
+
+        Uses Server-Sent Events (SSE) format. Yields StreamChunk objects
+        as the model generates tokens.
+        """
+        start_time = time.time()
+
+        # Resolve backend
+        if not backend_obj:
+            for b in self.backend_manager.get_enabled_backends():
+                if b.provider in self.COMPATIBLE_PROVIDERS:
+                    backend_obj = b
+                    break
+
+        if not backend_obj:
+            yield StreamChunk(done=True, error="No enabled OpenAI-compatible backend found")
+            return
+
+        # Circuit breaker check
+        health = get_backend_health(backend_obj.id)
+        if not health.is_available():
+            wait_time = health.time_until_available()
+            yield StreamChunk(
+                done=True,
+                error=f"Backend circuit breaker open. Retry in {wait_time:.0f}s.",
+            )
+            return
+
+        # Context size check and potential reduction
+        content_size = len(prompt) + len(system or "")
+        should_reduce, recommended_size = health.should_reduce_context(content_size)
+        if should_reduce and len(prompt) > recommended_size:
+            prompt = prompt[:recommended_size] + "\n\n[Content truncated due to previous timeout]"
+
+        if enable_thinking and "qwen" in model.lower():
+            prompt = f"/think\n{prompt}"
+
+        # Auto-select context size based on model tier
+        model_tier = detect_model_tier(model)
+        if model_tier == "moe":
+            num_ctx = self.config.model_moe.num_ctx
+        elif model_tier == "coder":
+            num_ctx = self.config.model_coder.num_ctx
+        else:
+            num_ctx = self.config.model_quick.num_ctx
+
+        temperature = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
+
+        # Build messages for OpenAI-compatible API
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens if max_tokens else num_ctx,
+            "stream": True,  # Enable streaming
+        }
+
+        client = backend_obj.get_client()
+
+        log.info(
+            get_display_event("model_starting"),
+            log_type="MODEL",
+            backend=backend_obj.name,
+            task=task_type,
+            thinking=enable_thinking,
+            model=model_tier,
+            streaming=True,
+            status_msg=get_tier_message(model_tier, "start"),
+        )
+
+        total_tokens = 0
+        full_response = ""
+
+        try:
+            async with client.stream("POST", backend_obj.chat_endpoint, json=payload) as response:
+                if response.status_code != 200:
+                    error_text = ""
+                    async for chunk in response.aiter_text():
+                        error_text += chunk
+                    health.record_failure("http_error", content_size)
+                    yield StreamChunk(
+                        done=True,
+                        error=f"HTTP {response.status_code}: {error_text[:500]}",
+                    )
+                    return
+
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # OpenAI SSE format: "data: {...}" or "data: [DONE]"
+                    if line.startswith("data: "):
+                        data_str = line[6:]  # Remove "data: " prefix
+
+                        if data_str == "[DONE]":
+                            # Stream complete
+                            elapsed_ms = int((time.time() - start_time) * 1000)
+
+                            # Estimate tokens if not provided
+                            if total_tokens == 0:
+                                total_tokens = count_tokens(full_response)
+
+                            # Stats tracking
+                            if self.stats_callback:
+                                self.stats_callback(
+                                    model_tier,
+                                    task_type,
+                                    original_task,
+                                    total_tokens,
+                                    elapsed_ms,
+                                    content_preview,
+                                    enable_thinking,
+                                    "llamacpp",
+                                )
+
+                            health.record_success(content_size)
+
+                            if self.save_stats_callback:
+                                self.save_stats_callback()
+
+                            log.info(
+                                get_display_event("model_completed"),
+                                log_type="INFO",
+                                elapsed=humanize.naturaldelta(elapsed_ms / 1000),
+                                elapsed_ms=elapsed_ms,
+                                tokens=humanize.intcomma(total_tokens),
+                                model=model_tier,
+                                backend="llamacpp",
+                                streaming=True,
+                                status_msg=format_completion_stats(total_tokens, elapsed_ms, model_tier),
+                            )
+
+                            yield StreamChunk(
+                                done=True,
+                                tokens=total_tokens,
+                                metadata={
+                                    "backend": "llamacpp",
+                                    "model": model,
+                                    "tier": model_tier,
+                                    "elapsed_ms": elapsed_ms,
+                                },
+                            )
+                            return
+
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        # Extract delta content from choices
+                        choices = data.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            text_chunk = delta.get("content", "")
+                            if text_chunk:
+                                full_response += text_chunk
+                                yield StreamChunk(text=text_chunk)
+
+                        # Track usage if provided
+                        usage = data.get("usage")
+                        if usage:
+                            total_tokens = usage.get("total_tokens", 0)
+
+        except httpx.TimeoutException:
+            health.record_failure("timeout", content_size)
+            yield StreamChunk(
+                done=True,
+                error=f"Timeout after {self.config.llamacpp_timeout_seconds}s.",
+            )
+        except httpx.ConnectError:
+            health.record_failure("connection", content_size)
+            yield StreamChunk(
+                done=True,
+                error=f"Cannot connect to {backend_obj.url}. Is the server running?",
+            )
+        except Exception as e:
+            health.record_failure("exception", content_size)
+            yield StreamChunk(done=True, error=f"Streaming error: {e!s}")

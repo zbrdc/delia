@@ -226,6 +226,135 @@ class TestDryRunFunction:
         assert data.get("valid") is False or "error" in data
 
 
+class TestStreamingFunction:
+    """Test the delegate() stream parameter."""
+
+    @pytest.fixture(autouse=True)
+    def setup_environment(self, tmp_path):
+        """Set up test environment."""
+        os.environ["DELIA_DATA_DIR"] = str(tmp_path)
+
+        # Clear cached modules
+        modules_to_clear = ["delia.paths", "delia.config", "delia.mcp_server", "delia.delegation", "delia.providers", "delia"]
+        for mod in list(sys.modules.keys()):
+            if any(mod.startswith(m) or mod == m for m in modules_to_clear):
+                del sys.modules[mod]
+
+        from delia import paths
+        paths.ensure_directories()
+
+        settings = {
+            "version": "1.0",
+            "backends": [
+                {
+                    "id": "test-local",
+                    "name": "Test Local",
+                    "provider": "ollama",
+                    "type": "local",
+                    "url": "http://localhost:11434",
+                    "enabled": True,
+                    "priority": 1,
+                    "models": {"quick": "test:7b", "coder": "test:14b", "moe": "test:30b"}
+                }
+            ]
+        }
+        with open(paths.SETTINGS_FILE, "w") as f:
+            json.dump(settings, f)
+
+        yield
+
+        os.environ.pop("DELIA_DATA_DIR", None)
+
+    @pytest.mark.asyncio
+    async def test_stream_parameter_exists(self):
+        """delegate() should accept stream parameter."""
+        from delia import mcp_server
+
+        # Verify the delegate function has stream parameter
+        import inspect
+        sig = inspect.signature(mcp_server.delegate.fn)
+        assert "stream" in sig.parameters
+
+    @pytest.mark.asyncio
+    async def test_stream_with_mocked_provider(self):
+        """stream=True should use streaming mode and collect response."""
+        from delia import mcp_server
+        from delia.providers import StreamChunk
+
+        # Create an async generator that yields streaming chunks
+        async def mock_stream(*args, **kwargs):
+            yield StreamChunk(text="Hello ")
+            yield StreamChunk(text="World")
+            yield StreamChunk(done=True, tokens=10, metadata={"elapsed_ms": 100})
+
+        with patch.object(mcp_server, 'call_llm_stream', side_effect=mock_stream):
+            result = await mcp_server.delegate.fn(
+                task="quick",
+                content="Test content",
+                stream=True
+            )
+
+            # Should contain streamed response
+            assert "Hello World" in result
+
+    @pytest.mark.asyncio
+    async def test_stream_includes_metadata(self):
+        """stream=True with include_metadata should show streaming marker."""
+        from delia import mcp_server
+        from delia.providers import StreamChunk
+
+        async def mock_stream(*args, **kwargs):
+            yield StreamChunk(text="Response text")
+            yield StreamChunk(done=True, tokens=50, metadata={"elapsed_ms": 200})
+
+        with patch.object(mcp_server, 'call_llm_stream', side_effect=mock_stream):
+            result = await mcp_server.delegate.fn(
+                task="review",
+                content="Test content",
+                stream=True,
+                include_metadata=True
+            )
+
+            # Should include streamed marker in metadata
+            assert "(streamed)" in result
+
+    @pytest.mark.asyncio
+    async def test_stream_error_handling(self):
+        """stream=True should handle errors from streaming."""
+        from delia import mcp_server
+        from delia.providers import StreamChunk
+
+        async def mock_stream_error(*args, **kwargs):
+            yield StreamChunk(done=True, error="Connection lost")
+
+        with patch.object(mcp_server, 'call_llm_stream', side_effect=mock_stream_error):
+            result = await mcp_server.delegate.fn(
+                task="quick",
+                content="Test content",
+                stream=True
+            )
+
+            # Should return error message
+            assert "Error" in result
+
+    @pytest.mark.asyncio
+    async def test_stream_false_uses_normal_path(self):
+        """stream=False should use non-streaming implementation."""
+        from delia import mcp_server, delegation
+
+        with patch.object(delegation, 'execute_delegate_call', new_callable=AsyncMock) as mock_execute:
+            mock_execute.return_value = ("Normal response", 100)
+
+            result = await mcp_server.delegate.fn(
+                task="quick",
+                content="Test content",
+                stream=False
+            )
+
+            # Should use normal path (or return no backend error)
+            assert result is not None
+
+
 class TestHealthFunction:
     """Test the health() function."""
 

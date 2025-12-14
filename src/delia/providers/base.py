@@ -25,10 +25,30 @@ Design principles:
 - Dependency injection ready for stats tracking and configuration
 """
 
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from ..backend_manager import BackendConfig
+
+
+@dataclass
+class StreamChunk:
+    """A single chunk from a streaming LLM response.
+
+    Attributes:
+        text: The text content of this chunk (may be empty for metadata-only chunks)
+        done: Whether this is the final chunk
+        tokens: Running token count (only set on final chunk)
+        error: Error message if streaming failed mid-stream
+        metadata: Provider-specific chunk metadata
+    """
+
+    text: str = ""
+    done: bool = False
+    tokens: int = 0
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -149,6 +169,75 @@ class LLMProvider(Protocol):
             in the LLMResponse.error field with success=False
         """
         ...
+
+    async def call_stream(
+        self,
+        model: str,
+        prompt: str,
+        system: str | None = None,
+        enable_thinking: bool = False,
+        task_type: str = "unknown",
+        original_task: str = "unknown",
+        language: str = "unknown",
+        content_preview: str = "",
+        backend_obj: BackendConfig | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[StreamChunk]:
+        """Stream response from the LLM provider token by token.
+
+        This method provides incremental output as the model generates tokens,
+        enabling real-time feedback to users. Not all providers support streaming;
+        those that don't should yield a single chunk with the complete response.
+
+        Args:
+            model: Model name to use (provider-specific format)
+            prompt: The user prompt to send
+            system: Optional system prompt/instructions
+            enable_thinking: Enable extended reasoning mode for supported models
+            task_type: Type of task for stats tracking
+            original_task: Original task string from user
+            language: Detected programming language for context
+            content_preview: Short preview of content for logging
+            backend_obj: Backend configuration to use (or None to auto-select)
+            max_tokens: Optional limit on response length
+
+        Yields:
+            StreamChunk objects containing:
+            - text: Incremental text as it's generated
+            - done: True on the final chunk
+            - tokens: Total token count (only on final chunk)
+            - error: Error message if streaming fails mid-stream
+
+        Note:
+            Implementations should handle errors gracefully by yielding a final
+            chunk with done=True and error set, rather than raising exceptions.
+        """
+        # Default implementation: fall back to non-streaming call
+        # Providers that support streaming should override this
+        response = await self.call(
+            model=model,
+            prompt=prompt,
+            system=system,
+            enable_thinking=enable_thinking,
+            task_type=task_type,
+            original_task=original_task,
+            language=language,
+            content_preview=content_preview,
+            backend_obj=backend_obj,
+            max_tokens=max_tokens,
+        )
+        if response.success:
+            yield StreamChunk(
+                text=response.response,
+                done=True,
+                tokens=response.tokens,
+                metadata=response.metadata or {},
+            )
+        else:
+            yield StreamChunk(
+                done=True,
+                error=response.error,
+            )
 
 
 # ============================================================
