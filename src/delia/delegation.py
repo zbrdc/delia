@@ -115,6 +115,7 @@ async def prepare_delegate_content(
     symbols: str | None = None,
     include_references: bool = False,
     files: str | None = None,
+    session_context: str | None = None,
 ) -> str:
     """Prepare content with context, files, and symbol focus.
 
@@ -124,11 +125,16 @@ async def prepare_delegate_content(
         symbols: Comma-separated symbol names to focus on
         include_references: Whether references to symbols are included
         files: Comma-separated file paths to read and include (Delia reads directly)
+        session_context: Optional conversation history from session manager
 
     Returns:
         Prepared content string with all context assembled
     """
     parts = []
+
+    # Add session history at the start for conversation continuity
+    if session_context:
+        parts.append("### Previous Conversation\n" + session_context + "\n")
 
     # Load files directly from disk (efficient - no Claude serialization)
     if files:
@@ -403,6 +409,7 @@ async def delegate_impl(
     include_metadata: bool = True,
     max_tokens: int | None = None,
     use_cache: bool = True,
+    session_id: str | None = None,
 ) -> str:
     """Core implementation for delegate - can be called directly by batch().
 
@@ -422,6 +429,7 @@ async def delegate_impl(
         include_metadata: If False, skip the metadata footer
         max_tokens: Limit response tokens
         use_cache: If True, use response cache (default). Set False to bypass cache.
+        session_id: Optional session ID for conversation history tracking
 
     Returns:
         Response string from LLM, optionally with metadata footer
@@ -433,8 +441,35 @@ async def delegate_impl(
     if not valid:
         return error
 
-    # Prepare content with context, files, and symbols
-    prepared_content = await prepare_delegate_content(content, context, symbols, include_references, files)
+    # Session handling - load context and record user message
+    session_context = None
+    session_manager = None
+    if session_id:
+        from .session_manager import get_session_manager
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        if session:
+            # Get conversation history (limit to 6000 tokens to leave room for response)
+            session_context = session.get_context_window(max_tokens=6000)
+            # Record user's message
+            session_manager.add_to_session(
+                session_id, 
+                "user", 
+                content,  # The user's input
+                tokens=0,  # We don't count input tokens yet
+                model="",
+                task_type=task
+            )
+
+    # Prepare content with context, files, symbols, and session history
+    prepared_content = await prepare_delegate_content(
+        content, 
+        context, 
+        symbols, 
+        include_references, 
+        files,
+        session_context=session_context,
+    )
 
     # Map task to internal type
     task_type = determine_task_type(task)
@@ -475,6 +510,17 @@ async def delegate_impl(
         )
     except Exception as e:
         return f"Error: {e!s}"
+
+    # Record assistant response to session
+    if session_id and session_manager:
+        session_manager.add_to_session(
+            session_id,
+            "assistant",
+            response_text,
+            tokens=tokens,
+            model=selected_model,
+            task_type=task
+        )
 
     # Calculate timing
     elapsed_ms = int((time.time() - start_time) * 1000)

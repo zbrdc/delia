@@ -35,6 +35,7 @@ DATA_DIR = Path(os.environ.get("DELIA_DATA_DIR", PROJECT_ROOT / "data"))
 CACHE_DIR = DATA_DIR / "cache"
 USER_DATA_DIR = DATA_DIR / "users"
 MEMORIES_DIR = DATA_DIR / "memories"
+SESSIONS_DIR = DATA_DIR / "sessions"
 
 # Specific files
 SETTINGS_FILE = PROJECT_ROOT / "settings.json"
@@ -51,3 +52,4 @@ def ensure_directories() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     MEMORIES_DIR.mkdir(parents=True, exist_ok=True)
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)

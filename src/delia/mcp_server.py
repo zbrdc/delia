@@ -167,6 +167,13 @@ from .delegation import (
     validate_delegate_request,
 )
 
+# Import session manager for multi-turn conversations
+from .session_manager import get_session_manager
+
+# Import task chain module for sequential task execution
+from .task_chain import parse_chain_steps, execute_chain
+from .task_workflow import parse_workflow_definition, execute_workflow
+
 # Import stats service for usage tracking
 from .stats import StatsService
 
@@ -1146,6 +1153,7 @@ async def _delegate_impl(
     files: str | None = None,
     include_metadata: bool = True,
     max_tokens: int | None = None,
+    session_id: str | None = None,
 ) -> str:
     """Core implementation for delegate - wrapper that uses delegation module."""
     ctx = _get_delegate_context()
@@ -1164,6 +1172,7 @@ async def _delegate_impl(
         files,
         include_metadata,
         max_tokens,
+        session_id=session_id,
     )
 
 
@@ -1182,6 +1191,7 @@ async def delegate(
     include_metadata: bool = True,
     max_tokens: int | None = None,
     dry_run: bool = False,
+    session_id: str | None = None,
 ) -> str:
     """
     Execute a task on local/remote GPU with intelligent 3-tier model selection.
@@ -1211,6 +1221,7 @@ async def delegate(
         max_tokens: Limit response length to N tokens (forces concise output). Default: None (unlimited)
         dry_run: If True, return estimation signals without executing LLM call. Default: False
             Returns: estimated_tokens, recommended_tier, recommended_model, backend info, context fit
+        session_id: Optional session ID for conversation continuity. Creates stateful multi-turn conversations.
 
     ROUTING LOGIC:
     1. Content > 32K tokens → Uses backend with largest context window
@@ -1229,6 +1240,7 @@ async def delegate(
         delegate(task="review", files="src/main.py,src/utils.py", content="Review these files")
         delegate(task="quick", content="...", max_tokens=500)  # Limit response
         delegate(task="review", content="<large code>", dry_run=True)  # Get estimates first
+        delegate(task="review", content="...", session_id="abc-123")  # Use session
     """
     # Dry run mode: return estimation signals without executing
     if dry_run:
@@ -1264,6 +1276,7 @@ async def delegate(
         files=files,
         include_metadata=include_metadata,
         max_tokens=max_tokens,
+        session_id=session_id,
     )
 
 
@@ -1272,6 +1285,7 @@ async def think(
     problem: str,
     context: str = "",
     depth: str = "normal",
+    session_id: str | None = None,
 ) -> str:
     """
     Deep reasoning for complex problems using local GPU with extended thinking.
@@ -1290,6 +1304,7 @@ async def think(
             - "quick" → Fast answer, no extended thinking (14B model)
             - "normal" → Balanced reasoning with thinking (14B coder)
             - "deep" → Thorough multi-step analysis (30B+ MoE model)
+        session_id: Optional session ID for conversation continuity
 
     ROUTING:
     - Uses largest available GPU for deep thinking
@@ -1302,6 +1317,7 @@ async def think(
     Examples:
         think(problem="How should we handle authentication?", depth="deep")
         think(problem="Debug this error", context="<stack trace>", depth="normal")
+        think(problem="...", session_id="abc-123")  # Use session
     """
     # Select model tier based on depth
     if depth == "quick":
@@ -1352,6 +1368,7 @@ Think deeply before answering."""
         include_references=False,
         backend=backend_provider,
         backend_obj=backend_obj,
+        session_id=session_id,
     )
 
     # Track think() separately (in addition to underlying task type)
@@ -1425,6 +1442,7 @@ async def batch(
     tasks: str,
     include_metadata: bool = True,
     max_tokens: int | None = None,
+    session_id: str | None = None,
 ) -> str:
     """
     Execute multiple tasks in PARALLEL across all available GPUs for maximum throughput.
@@ -1447,6 +1465,7 @@ async def batch(
             - max_tokens: Override batch-level max_tokens for this task
         include_metadata: If False, skip metadata footers on all tasks (saves tokens). Default: True
         max_tokens: Limit response length per task (forces concise output). Default: None
+        session_id: Optional session ID shared across all tasks in the batch
 
     ROUTING LOGIC:
     - Distributes tasks across ALL available GPUs (local + remote)
@@ -1464,6 +1483,7 @@ async def batch(
             {"task": "analyze", "content": "log3..."}
         ]')
         batch('[...]', max_tokens=500)  # Limit all responses
+        batch('[...]', session_id="abc-123")  # Use session
     """
     start_time = time.time()
 
@@ -1535,8 +1555,9 @@ async def batch(
             files=files,
             include_metadata=task_include_metadata,
             max_tokens=task_max_tokens,
+            session_id=session_id,
         )
-        return f"### Task {i + 1}: {task_type}\n\n{result}"
+        return f"### Task {i + 1}: {task_type}\\n\\n{result}"
 
     results = await asyncio.gather(
         *[
@@ -1556,6 +1577,344 @@ async def batch(
 
 ---
 _Total tasks: {len(task_list)} | Total time: {elapsed_ms}ms | {routing_info}_"""
+
+
+@mcp.tool()
+async def session_create(
+    client_id: str | None = None,
+    metadata: str | None = None,
+) -> str:
+    """
+    Create a new conversation session for multi-turn interactions.
+    
+    WHEN TO USE:
+    - Starting a new multi-turn conversation
+    - When you need to maintain context across multiple delegate() calls
+    - For iterative code review or development workflows
+    
+    Args:
+        client_id: Optional client identifier for session grouping
+        metadata: Optional JSON string with session metadata
+    
+    Returns:
+        JSON with session_id and creation details
+    
+    Example:
+        session_create()  # Returns {"session_id": "abc-123", "created_at": "..."}
+        session_create(client_id="user-1", metadata='{"project": "demo"}')
+    """
+    sm = get_session_manager()
+    meta_dict = None
+    if metadata:
+        try:
+            meta_dict = json.loads(metadata)
+        except json.JSONDecodeError:
+            return json.dumps({"error": "Invalid metadata JSON"})
+    
+    session = sm.create_session(client_id=client_id, metadata=meta_dict)
+    return json.dumps({
+        "session_id": session.session_id,
+        "client_id": session.client_id,
+        "created_at": session.created_at,
+        "metadata": session.metadata,
+    }, indent=2)
+
+
+@mcp.tool()
+async def session_list(
+    client_id: str | None = None,
+) -> str:
+    """
+    List active conversation sessions.
+    
+    WHEN TO USE:
+    - Finding existing sessions to resume
+    - Checking session status and statistics
+    - Managing multiple concurrent conversations
+    
+    Args:
+        client_id: Optional filter by client ID
+    
+    Returns:
+        JSON array of session summaries
+    
+    Example:
+        session_list()  # All sessions
+        session_list(client_id="user-1")  # Sessions for specific client
+    """
+    sm = get_session_manager()
+    sessions = sm.list_sessions(client_id=client_id)
+    return json.dumps(sessions, indent=2)
+
+
+@mcp.tool()
+async def session_get(
+    session_id: str,
+) -> str:
+    """
+    Get full details of a conversation session including message history.
+    
+    WHEN TO USE:
+    - Reviewing conversation history
+    - Debugging session state
+    - Checking token usage
+    
+    Args:
+        session_id: The session ID to retrieve
+    
+    Returns:
+        JSON with full session details including messages
+    
+    Example:
+        session_get(session_id="abc-123")
+    """
+    sm = get_session_manager()
+    session = sm.get_session(session_id)
+    if not session:
+        return json.dumps({"error": f"Session not found: {session_id}"})
+    
+    return json.dumps(session.to_dict(), indent=2)
+
+
+@mcp.tool()
+async def session_delete(
+    session_id: str,
+) -> str:
+    """
+    Delete a conversation session and its history.
+    
+    WHEN TO USE:
+    - Cleaning up completed conversations
+    - Removing sessions with sensitive data
+    - Freeing resources
+    
+    Args:
+        session_id: The session ID to delete
+    
+    Returns:
+        JSON with deletion status
+    
+    Example:
+        session_delete(session_id="abc-123")
+    """
+    sm = get_session_manager()
+    success = sm.delete_session(session_id)
+    return json.dumps({
+        "deleted": success,
+        "session_id": session_id,
+    })
+
+
+@mcp.tool()
+async def chain(
+    steps: str,
+    session_id: str | None = None,
+    continue_on_error: bool = False,
+) -> str:
+    """
+    Execute a chain of tasks sequentially with output piping.
+    
+    Steps run in order, each able to reference outputs from previous steps
+    using ${var} variable substitution. Perfect for multi-step workflows
+    like: generate → review → fix.
+    
+    WHEN TO USE:
+    - Multi-step code generation pipelines
+    - Sequential analysis and refinement workflows
+    - Any task where outputs feed into subsequent steps
+    
+    Args:
+        steps: JSON array of step objects. Each step has:
+            - id (required): Unique step identifier
+            - task (required): Task type (quick, review, generate, analyze, plan, critique, summarize)
+            - content (required): Prompt with optional ${var} substitution
+            - model: Optional model tier (quick, coder, moe, thinking)
+            - language: Optional language hint
+            - output_var: Name to store output for later ${reference}
+            - pass_to_next: Auto-append output to next step (default: false)
+        session_id: Optional session for conversation continuity across chains
+        continue_on_error: If true, continue after step failures (default: false)
+    
+    Returns:
+        JSON with execution results, outputs, and timing
+    
+    Variable Substitution:
+        Use ${step_id} or ${output_var} to reference previous outputs.
+        Example: "Review this code: ${generate_step}"
+    
+    Examples:
+        # Simple two-step chain
+        chain('[
+            {"id": "gen", "task": "generate", "content": "Write a hello world function", "output_var": "code"},
+            {"id": "review", "task": "review", "content": "Review this code: ${code}"}
+        ]')
+        
+        # Code generation pipeline
+        chain('[
+            {"id": "design", "task": "plan", "content": "Design a REST API for users"},
+            {"id": "implement", "task": "generate", "content": "Implement: ${design}", "language": "python"},
+            {"id": "test", "task": "generate", "content": "Write tests for: ${implement}"}
+        ]')
+        
+        # With pass_to_next for automatic chaining
+        chain('[
+            {"id": "analyze", "task": "analyze", "content": "Find bugs in this code", "pass_to_next": true},
+            {"id": "fix", "task": "generate", "content": "Fix all issues"}
+        ]')
+    """
+    import json
+    
+    # Parse steps
+    try:
+        parsed_steps = parse_chain_steps(steps)
+    except ValueError as e:
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "steps_completed": 0,
+            "steps_total": 0,
+        }, indent=2)
+    
+    # Get delegate context
+    ctx = _get_delegate_context()
+    
+    # Execute chain
+    try:
+        result = await execute_chain(
+            steps=parsed_steps,
+            ctx=ctx,
+            session_id=session_id,
+            continue_on_error=continue_on_error,
+        )
+        return json.dumps(result.to_dict(), indent=2)
+    except Exception as e:
+        log.error("chain_execution_failed", error=str(e))
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "steps_completed": 0,
+            "steps_total": len(parsed_steps),
+        }, indent=2)
+
+
+@mcp.tool()
+async def workflow(
+    definition: str,
+    session_id: str | None = None,
+    max_retries: int = 1,
+) -> str:
+    """
+    Execute a DAG workflow with conditional branching and retry logic.
+    
+    Workflows are more powerful than chains, supporting:
+    - Dependencies: Nodes wait for prerequisites
+    - Conditional branching: on_success/on_failure paths
+    - Retry: Automatic retry with exponential backoff
+    - Timeout: Per-workflow time limits
+    
+    WHEN TO USE:
+    - Complex multi-path workflows with error recovery
+    - Tasks that may fail and need fallback strategies
+    - Pipelines requiring dependency management
+    - Long-running orchestration with timeout protection
+    
+    Args:
+        definition: JSON workflow definition with:
+            - name: Workflow name
+            - entry: Starting node ID
+            - timeout_minutes: Max execution time (default: 10)
+            - nodes: Array of node objects with:
+                - id (required): Unique node identifier
+                - task (required): Task type (quick, review, generate, etc.)
+                - content (required): Prompt with ${var} substitution
+                - depends_on: Array of node IDs that must complete first
+                - on_success: Node ID to execute on success
+                - on_failure: Node ID to execute on failure (fallback)
+                - retry_count: Number of retries (default: 0)
+                - backoff_factor: Retry delay multiplier (default: 1.5)
+                - output_var: Variable name to store output
+                - model: Optional model tier override
+                - language: Optional language hint
+        session_id: Optional session for conversation continuity
+        max_retries: Global retry override for all nodes (default: 1)
+    
+    Returns:
+        JSON with execution results, node status, and outputs
+    
+    Variable Substitution:
+        Use ${node_id} or ${output_var} to reference completed node outputs.
+    
+    Examples:
+        # Simple workflow with fallback
+        workflow('{
+            "name": "Resilient Analysis",
+            "entry": "analyze",
+            "nodes": [
+                {"id": "analyze", "task": "plan", "content": "Analyze code", "on_success": "report", "on_failure": "simple"},
+                {"id": "simple", "task": "quick", "content": "Quick analysis", "on_success": "report"},
+                {"id": "report", "task": "summarize", "content": "Create report"}
+            ]
+        }')
+        
+        # Workflow with dependencies and retry
+        workflow('{
+            "name": "Code Pipeline",
+            "entry": "design",
+            "timeout_minutes": 15,
+            "nodes": [
+                {"id": "design", "task": "plan", "content": "Design API", "output_var": "spec", "on_success": "implement"},
+                {"id": "implement", "task": "generate", "content": "Implement: ${spec}", "depends_on": ["design"], "retry_count": 2, "on_success": "test"},
+                {"id": "test", "task": "generate", "content": "Write tests", "depends_on": ["implement"]}
+            ]
+        }')
+        
+        # Workflow with conditional paths
+        workflow('{
+            "name": "Review Pipeline",
+            "entry": "check",
+            "nodes": [
+                {"id": "check", "task": "review", "content": "Check for issues", "on_success": "approve", "on_failure": "fix"},
+                {"id": "fix", "task": "generate", "content": "Fix issues", "on_success": "recheck"},
+                {"id": "recheck", "task": "review", "content": "Verify fixes", "on_success": "approve"},
+                {"id": "approve", "task": "summarize", "content": "Approval summary"}
+            ]
+        }')
+    """
+    import json
+    
+    # Parse workflow definition
+    try:
+        parsed_def = parse_workflow_definition(definition)
+    except ValueError as e:
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "nodes_completed": [],
+            "nodes_failed": [],
+            "nodes_skipped": [],
+        }, indent=2)
+    
+    # Get delegate context
+    ctx = _get_delegate_context()
+    
+    # Execute workflow
+    try:
+        result = await execute_workflow(
+            definition=parsed_def,
+            ctx=ctx,
+            session_id=session_id,
+            max_retries=max_retries,
+        )
+        return json.dumps(result.to_dict(), indent=2)
+    except Exception as e:
+        log.error("workflow_execution_failed", error=str(e))
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "nodes_completed": [],
+            "nodes_failed": [],
+            "nodes_skipped": [n.id for n in parsed_def.nodes],
+        }, indent=2)
 
 
 @mcp.tool()
@@ -2196,6 +2555,7 @@ async def _startup_handler():
 
     - Starts background save task for tracker
     - Pre-warms tiktoken encoder to avoid first-call delay
+    - Clears expired sessions
     """
     if TRACKING_ENABLED:
         await tracker.start_background_save()
@@ -2204,6 +2564,11 @@ async def _startup_handler():
     # Run in thread pool to avoid blocking startup
     from .tokens import prewarm_encoder
     await asyncio.to_thread(prewarm_encoder)
+
+    # Clear expired sessions on startup
+    sm = get_session_manager()
+    cleared = sm.clear_expired_sessions()
+    log.info("session_cleanup_startup", cleared=cleared)
 
 
 async def _shutdown_handler():
