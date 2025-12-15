@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Tests for first-run scenario - simulates git clone onto fresh machine.
 

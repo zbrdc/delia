@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """Tests for model routing logic."""
 
 import pytest
@@ -43,9 +44,13 @@ class TestRouting:
     @pytest.mark.asyncio
     async def test_select_model_defaults(self):
         """Test default model selection."""
-        from delia.mcp_server import select_model
+        from delia.routing import select_model
+        import delia.routing as routing_module
 
-        with patch("delia.mcp_server.backend_manager") as mock_manager:
+        # Reset singleton for clean test state
+        routing_module._router = None
+
+        with patch("delia.backend_manager.backend_manager") as mock_manager:
             mock_manager.get_active_backend.return_value = self.mock_backend
 
             # Simple task -> quick
@@ -56,12 +61,17 @@ class TestRouting:
             model = await select_model("summarize")
             assert model == "qwen-quick"
 
+        routing_module._router = None
+
     @pytest.mark.asyncio
     async def test_select_model_tasks(self):
         """Test task-based routing."""
-        from delia.mcp_server import select_model
+        from delia.routing import select_model
+        import delia.routing as routing_module
 
-        with patch("delia.mcp_server.backend_manager") as mock_manager:
+        routing_module._router = None
+
+        with patch("delia.backend_manager.backend_manager") as mock_manager:
             mock_manager.get_active_backend.return_value = self.mock_backend
 
             # Plan -> moe
@@ -88,12 +98,17 @@ class Test:
             model = await select_model("generate", content=code_content, content_size=len(code_content))
             assert model == "qwen-coder"
 
+        routing_module._router = None
+
     @pytest.mark.asyncio
     async def test_select_model_override(self):
         """Test explicit model overrides."""
-        from delia.mcp_server import select_model
+        from delia.routing import select_model
+        import delia.routing as routing_module
 
-        with patch("delia.mcp_server.backend_manager") as mock_manager:
+        routing_module._router = None
+
+        with patch("delia.backend_manager.backend_manager") as mock_manager:
             mock_manager.get_active_backend.return_value = self.mock_backend
 
             # Override with "moe"
@@ -107,6 +122,8 @@ class Test:
             # Override with "thinking"
             model = await select_model("quick", model_override="thinking")
             assert model == "qwen-think"
+
+        routing_module._router = None
 
     def test_detect_model_tier(self):
         """Test model tier detection."""

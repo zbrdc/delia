@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Tool executor with security sandboxing.
 
@@ -28,6 +29,7 @@ from typing import Any
 
 import structlog
 
+from ..types import Workspace
 from .parser import ParsedToolCall
 from .registry import ToolRegistry
 
@@ -71,39 +73,83 @@ class ToolResult:
     truncated: bool = False
 
 
-def validate_path(path: str) -> tuple[bool, str]:
+def validate_path(
+    path: str,
+    workspace: Workspace | None = None,
+) -> tuple[bool, str]:
     """Validate a file path for security.
 
     Checks:
-    - Path doesn't contain traversal sequences
+    - Path doesn't contain traversal sequences (unless workspace allows it)
     - Path isn't in blocked list
-    - Path is within allowed directories
+    - If workspace provided, path must be within workspace boundaries
 
     Args:
         path: Path to validate
+        workspace: Optional workspace to confine path within
 
     Returns:
         Tuple of (is_valid, error_message)
     """
     # Expand and resolve path
     try:
-        expanded = Path(path).expanduser().resolve()
+        if workspace and not Path(path).is_absolute():
+            # Relative paths are relative to workspace root
+            expanded = (workspace.root / path).resolve()
+        else:
+            expanded = Path(path).expanduser().resolve()
     except Exception as e:
         return False, f"Invalid path: {e}"
 
     path_str = str(expanded)
 
-    # Check for path traversal
+    # Check for path traversal (unless workspace allows it)
     if ".." in path:
-        return False, "Path traversal not allowed"
+        if workspace and not workspace.allow_parent_traversal:
+            return False, "Path traversal (..) not allowed in workspace"
+        elif not workspace:
+            return False, "Path traversal not allowed"
 
-    # Check blocked paths
+    # Check blocked paths (always blocked, even within workspace)
     for blocked in BLOCKED_PATHS:
         blocked_expanded = str(Path(blocked).expanduser().resolve())
         if path_str.startswith(blocked_expanded):
             return False, f"Access to {blocked} is not allowed"
 
+    # If workspace provided, enforce boundary
+    if workspace:
+        if not workspace.contains(expanded):
+            return False, f"Path '{path}' is outside workspace '{workspace.root}'"
+
     return True, ""
+
+
+def validate_path_in_workspace(
+    path: str,
+    workspace: Workspace,
+) -> tuple[bool, str, Path | None]:
+    """Validate and resolve a path within a workspace.
+
+    This is a convenience function that validates the path and returns
+    the resolved absolute path if valid.
+
+    Args:
+        path: Path to validate (absolute or relative to workspace)
+        workspace: Workspace to confine path within
+
+    Returns:
+        Tuple of (is_valid, error_message, resolved_path)
+        resolved_path is None if invalid
+    """
+    valid, error = validate_path(path, workspace)
+    if not valid:
+        return False, error, None
+
+    try:
+        resolved = workspace.resolve_path(path)
+        return True, "", resolved
+    except ValueError as e:
+        return False, str(e), None
 
 
 def truncate_output(output: str, max_size: int = MAX_OUTPUT_SIZE) -> tuple[str, bool]:

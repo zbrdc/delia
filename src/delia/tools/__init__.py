@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Tool use module for Delia.
 
@@ -30,6 +31,13 @@ from .parser import ParsedToolCall, parse_tool_calls
 from .executor import execute_tool, ToolResult
 from .builtins import get_default_tools
 from .agent import run_agent_loop, AgentConfig, AgentResult
+from .mcp_client import (
+    MCPClient,
+    MCPClientManager,
+    MCPServerConfig,
+    MCPTool,
+    MCPError,
+)
 
 __all__ = [
     # Registry
@@ -47,4 +55,10 @@ __all__ = [
     "run_agent_loop",
     "AgentConfig",
     "AgentResult",
+    # MCP Client
+    "MCPClient",
+    "MCPClientManager",
+    "MCPServerConfig",
+    "MCPTool",
+    "MCPError",
 ]

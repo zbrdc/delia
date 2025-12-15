@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """Google Gemini LLM provider implementation.
 
 This module provides the GeminiProvider class that implements the LLMProvider protocol
@@ -32,12 +33,92 @@ from ..backend_manager import BackendConfig
 from ..config import get_backend_health
 from ..messages import format_completion_stats, get_display_event
 from ..tokens import count_tokens
-from .base import LLMResponse, StreamChunk, create_error_response, create_success_response
+from .base import (
+    LLMResponse,
+    ModelLoadResult,
+    StreamChunk,
+    create_error_response,
+    create_success_response,
+)
 
 if TYPE_CHECKING:
     from ..config import Config
 
 log = structlog.get_logger()
+
+
+def _convert_openai_tools_to_gemini(tools: list[dict[str, Any]]) -> list[Any]:
+    """Convert OpenAI-format tools to Gemini function declarations.
+
+    OpenAI format:
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the weather",
+            "parameters": {...}  # JSON Schema
+        }
+    }
+
+    Gemini format uses FunctionDeclaration objects.
+    """
+    try:
+        from google.generativeai.types import FunctionDeclaration
+    except ImportError:
+        return []
+
+    declarations = []
+    for tool in tools:
+        if tool.get("type") != "function":
+            continue
+
+        func = tool.get("function", {})
+        name = func.get("name", "")
+        description = func.get("description", "")
+        parameters = func.get("parameters", {})
+
+        # Gemini expects parameters in a specific format
+        declarations.append(
+            FunctionDeclaration(
+                name=name,
+                description=description,
+                parameters=parameters,
+            )
+        )
+
+    return declarations
+
+
+def _extract_gemini_tool_calls(response: Any) -> list[dict[str, Any]] | None:
+    """Extract tool calls from Gemini response in OpenAI-compatible format."""
+    try:
+        # Check if response has function calls
+        if not hasattr(response, "candidates") or not response.candidates:
+            return None
+
+        candidate = response.candidates[0]
+        if not hasattr(candidate, "content") or not candidate.content.parts:
+            return None
+
+        tool_calls = []
+        for part in candidate.content.parts:
+            if hasattr(part, "function_call") and part.function_call:
+                fc = part.function_call
+                tool_calls.append(
+                    {
+                        "id": f"call_{fc.name}",
+                        "type": "function",
+                        "function": {
+                            "name": fc.name,
+                            "arguments": dict(fc.args) if fc.args else {},
+                        },
+                    }
+                )
+
+        return tool_calls if tool_calls else None
+    except Exception:
+        return None
+
 
 # Type for stats callback
 StatsCallback = Callable[
@@ -85,8 +166,14 @@ class GeminiProvider:
         content_preview: str = "",
         backend_obj: BackendConfig | None = None,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> LLMResponse:
-        """Call Google Gemini API with stats tracking and circuit breaker."""
+        """Call Google Gemini API with stats tracking and circuit breaker.
+
+        When tools are provided, converts from OpenAI format to Gemini function
+        calling format and returns tool_calls in response metadata.
+        """
         start_time = time.time()
 
         # Dependency Check - import at call time since it's optional
@@ -144,8 +231,20 @@ class GeminiProvider:
                 status_msg="Sending request to Gemini...",
             )
 
-            # Instantiate model
-            gen_model = genai.GenerativeModel(model_name=model_name, system_instruction=system)
+            # Instantiate model with optional tools
+            model_kwargs: dict[str, Any] = {
+                "model_name": model_name,
+                "system_instruction": system,
+            }
+
+            # Convert and add tools if provided
+            gemini_tools = None
+            if tools:
+                gemini_tools = _convert_openai_tools_to_gemini(tools)
+                if gemini_tools:
+                    model_kwargs["tools"] = gemini_tools
+
+            gen_model = genai.GenerativeModel(**model_kwargs)
 
             # Run in thread executor because the SDK is synchronous
             response = await asyncio.to_thread(
@@ -156,8 +255,15 @@ class GeminiProvider:
 
             elapsed_ms = int((time.time() - start_time) * 1000)
 
-            # Extract text and usage
-            response_text = response.text
+            # Extract text - may be empty if tool call response
+            try:
+                response_text = response.text
+            except ValueError:
+                # Response may not have text if it's a function call
+                response_text = ""
+
+            # Extract tool calls if any
+            tool_calls = _extract_gemini_tool_calls(response)
 
             # Usage metadata
             prompt_tokens = 0
@@ -199,11 +305,15 @@ class GeminiProvider:
             if self.save_stats_callback:
                 self.save_stats_callback()
 
+            metadata: dict[str, Any] = {"backend": "gemini", "model": model_name, "tier": "moe"}
+            if tool_calls:
+                metadata["tool_calls"] = tool_calls
+
             return create_success_response(
                 response_text=response_text,
                 tokens=total_tokens,
                 elapsed_ms=elapsed_ms,
-                metadata={"backend": "gemini", "model": model_name, "tier": "moe"},
+                metadata=metadata,
             )
 
         except google_exceptions.ResourceExhausted:
@@ -226,10 +336,15 @@ class GeminiProvider:
         content_preview: str = "",
         backend_obj: BackendConfig | None = None,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from Gemini API.
 
         Uses the Gemini SDK's streaming mode with async wrapper.
+
+        Note: tools/tool_choice are accepted for signature compatibility but
+        tool calling with streaming is not currently supported.
         """
         start_time = time.time()
 
@@ -406,3 +521,48 @@ class GeminiProvider:
             log.error("gemini_stream_error", error=str(e))
             health.record_failure("exception", len(prompt))
             yield StreamChunk(done=True, error=f"Gemini streaming error: {e!s}")
+
+    async def load_model(
+        self,
+        model: str,
+        backend_obj: BackendConfig | None = None,
+    ) -> ModelLoadResult:
+        """No-op for cloud provider - Gemini models are always available.
+
+        Cloud providers don't require model loading as the infrastructure
+        handles model management transparently.
+        """
+        return ModelLoadResult(
+            success=True,
+            model=model,
+            action="load",
+            metadata={"backend": "gemini", "note": "cloud_provider_noop"},
+        )
+
+    async def unload_model(
+        self,
+        model: str,
+        backend_obj: BackendConfig | None = None,
+    ) -> ModelLoadResult:
+        """No-op for cloud provider - no local resources to release.
+
+        Cloud providers don't have GPU memory to free, so unloading
+        is a no-op that always succeeds.
+        """
+        return ModelLoadResult(
+            success=True,
+            model=model,
+            action="unload",
+            metadata={"backend": "gemini", "note": "cloud_provider_noop"},
+        )
+
+    async def list_loaded_models(
+        self,
+        backend_obj: BackendConfig | None = None,
+    ) -> list[str]:
+        """Return empty list for cloud provider - all models always available.
+
+        For cloud providers, the concept of "loaded" models doesn't apply.
+        All available models are ready to use at any time.
+        """
+        return []

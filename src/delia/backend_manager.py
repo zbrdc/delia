@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Backend Manager - Unified configuration from settings.json
 
@@ -86,10 +87,19 @@ class BackendConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BackendConfig":
         """Create a BackendConfig from a dictionary."""
+        provider = data.get("provider", "unknown")
+        
+        # Auto-detect native tool calling if not explicitly set
+        if "supports_native_tool_calling" in data:
+            supports_native = data["supports_native_tool_calling"]
+        else:
+            capabilities = cls.detect_capabilities(provider)
+            supports_native = capabilities["supports_native_tool_calling"]
+        
         return cls(
             id=data.get("id", "unknown"),
             name=data.get("name", "Unknown Backend"),
-            provider=data.get("provider", "unknown"),
+            provider=provider,
             type=data.get("type", "local"),
             url=data.get("url", "http://localhost:8080"),
             enabled=data.get("enabled", True),
@@ -102,7 +112,7 @@ class BackendConfig:
             timeout_seconds=data.get("timeout_seconds", 300.0),
             connect_timeout=data.get("connect_timeout", 10.0),
             api_key=data.get("api_key"),
-            supports_native_tool_calling=data.get("supports_native_tool_calling", False),
+            supports_native_tool_calling=supports_native,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -254,6 +264,7 @@ class BackendManager:
         self.routing_config: dict[str, Any] = {}
         self.system_config: dict[str, Any] = {}
         self.models_config: dict[str, Any] = {}
+        self.mcp_servers_config: list[dict[str, Any]] = []  # MCP server configurations
         self._active_backend_id: str | None = None
 
         # Health check cache with TTL
@@ -284,6 +295,7 @@ class BackendManager:
             self.routing_config = data.get("routing", {})
             self.system_config = data.get("system", {})
             self.models_config = data.get("models", {})
+            self.mcp_servers_config = data.get("mcp_servers", [])
 
             # Set active backend (first enabled one with highest priority)
             enabled = [b for b in self.backends.values() if b.enabled]
@@ -295,6 +307,7 @@ class BackendManager:
                 "settings_loaded",
                 backends=len(self.backends),
                 enabled=[b.id for b in self.backends.values() if b.enabled],
+                mcp_servers=len(self.mcp_servers_config),
             )
 
         except Exception as e:
@@ -321,6 +334,7 @@ class BackendManager:
                 "enabled": False,
                 "tracking_enabled": True,
             },
+            "mcp_servers": [],  # External MCP servers for tool passthrough
         }
 
         # Try to auto-detect available backends
@@ -458,56 +472,9 @@ class BackendManager:
         return models
 
     def _assign_models_to_tiers(self, available_models: list[str]) -> dict[str, str]:
-        """
-        Intelligently assign available models to tiers.
-
-        If only one model is available, use it for ALL tiers.
-        Otherwise, try to match models to appropriate tiers based on their names.
-        """
-        from .config import detect_model_tier
-
-        # Filter out vocab/test files
-        real_models = [m for m in available_models if not m.startswith("ggml-vocab")]
-
-        if not real_models:
-            return {"quick": "", "coder": "", "moe": "", "thinking": ""}
-
-        # CRITICAL FIX: If only one model, use it for ALL tiers
-        if len(real_models) == 1:
-            model = real_models[0]
-            _get_log().info("single_model_detected", model=model, action="assigning_to_all_tiers")
-            return {
-                "quick": model,
-                "coder": model,
-                "moe": model,
-                "thinking": model,
-            }
-
-        # Multiple models - try to classify each
-        tier_candidates: dict[str, list[str]] = {
-            "quick": [],
-            "coder": [],
-            "moe": [],
-            "thinking": [],
-        }
-
-        for model in real_models:
-            tier = detect_model_tier(model)
-            tier_candidates[tier].append(model)
-
-            # Check for thinking/reasoning models
-            model_lower = model.lower()
-            if any(x in model_lower for x in ["think", "reason", "r1", "o1"]):
-                tier_candidates["thinking"].append(model)
-
-        # Assign best candidate for each tier, falling back to first available
-        first_model = real_models[0]
-        return {
-            "quick": tier_candidates["quick"][0] if tier_candidates["quick"] else first_model,
-            "coder": tier_candidates["coder"][0] if tier_candidates["coder"] else first_model,
-            "moe": tier_candidates["moe"][0] if tier_candidates["moe"] else first_model,
-            "thinking": tier_candidates["thinking"][0] if tier_candidates["thinking"] else first_model,
-        }
+        """Assign available models to tiers using shared logic."""
+        from .model_detection import assign_models_to_tiers
+        return assign_models_to_tiers(available_models)
 
     def save_settings(self, data: dict[str, Any] | None = None) -> bool:
         """Save current settings to the JSON file."""
@@ -518,6 +485,7 @@ class BackendManager:
                 "backends": [b.to_dict() for b in self.backends.values()],
                 "routing": self.routing_config,
                 "models": self.models_config,
+                "mcp_servers": self.mcp_servers_config,
             }
 
         try:
@@ -714,6 +682,81 @@ class BackendManager:
         self.save_settings()
         _get_log().info("backend_removed", backend_id=backend_id)
         return True
+
+    # ===== MCP Server Management =====
+
+    def get_mcp_servers(self) -> list[dict[str, Any]]:
+        """Get configured MCP servers.
+
+        Returns:
+            List of MCP server configurations
+        """
+        return self.mcp_servers_config
+
+    def add_mcp_server(self, server_config: dict[str, Any]) -> bool:
+        """Add a new MCP server configuration.
+
+        Args:
+            server_config: Server configuration dict with at least 'id' and 'command'
+
+        Returns:
+            True if added successfully
+        """
+        if not server_config.get("id") or not server_config.get("command"):
+            _get_log().error("mcp_server_invalid_config", config=server_config)
+            return False
+
+        # Check for duplicate ID
+        for existing in self.mcp_servers_config:
+            if existing.get("id") == server_config["id"]:
+                _get_log().error("mcp_server_duplicate_id", server_id=server_config["id"])
+                return False
+
+        self.mcp_servers_config.append(server_config)
+        self.save_settings()
+        _get_log().info("mcp_server_added", server_id=server_config["id"])
+        return True
+
+    def update_mcp_server(self, server_id: str, updates: dict[str, Any]) -> bool:
+        """Update an existing MCP server configuration.
+
+        Args:
+            server_id: ID of server to update
+            updates: Fields to update
+
+        Returns:
+            True if updated successfully
+        """
+        for i, server in enumerate(self.mcp_servers_config):
+            if server.get("id") == server_id:
+                # Don't allow changing ID
+                updates.pop("id", None)
+                self.mcp_servers_config[i].update(updates)
+                self.save_settings()
+                _get_log().info("mcp_server_updated", server_id=server_id)
+                return True
+
+        _get_log().error("mcp_server_not_found", server_id=server_id)
+        return False
+
+    def remove_mcp_server(self, server_id: str) -> bool:
+        """Remove an MCP server configuration.
+
+        Args:
+            server_id: ID of server to remove
+
+        Returns:
+            True if removed successfully
+        """
+        for i, server in enumerate(self.mcp_servers_config):
+            if server.get("id") == server_id:
+                del self.mcp_servers_config[i]
+                self.save_settings()
+                _get_log().info("mcp_server_removed", server_id=server_id)
+                return True
+
+        _get_log().error("mcp_server_not_found", server_id=server_id)
+        return False
 
 
 # Global instance

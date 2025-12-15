@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Tool call parser for LLM responses.
 
@@ -34,6 +35,14 @@ log = structlog.get_logger()
 # Pattern for text-based tool calls: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
 TOOL_CALL_PATTERN = re.compile(
     r'<tool_call>\s*(\{.*?\})\s*</tool_call>',
+    re.DOTALL
+)
+
+# Fallback pattern for raw JSON tool calls without XML wrapper
+# Matches: {"name": "tool_name", "arguments": {...}}
+# Requires "name" key to avoid false positives on arbitrary JSON
+RAW_JSON_TOOL_PATTERN = re.compile(
+    r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})\s*\}',
     re.DOTALL
 )
 
@@ -137,23 +146,84 @@ def _parse_native_format(response: dict[str, Any]) -> list[ParsedToolCall]:
 
 
 def _parse_text_format(text: str) -> list[ParsedToolCall]:
-    """Parse text-based tool call format using XML markers.
+    """Parse text-based tool call format.
 
-    Expected format:
-    <tool_call>
-    {"name": "tool_name", "arguments": {"arg": "value"}}
-    </tool_call>
+    Supports two formats:
+    1. XML markers: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+    2. Raw JSON fallback: {"name": "...", "arguments": {...}}
+
+    The XML format is preferred; raw JSON is used as fallback when XML markers
+    are not present.
     """
     tool_calls = []
 
+    # Try XML-wrapped format first (preferred)
     matches = TOOL_CALL_PATTERN.findall(text)
     for match in matches:
+        parsed = _parse_tool_json(match)
+        if parsed:
+            tool_calls.append(parsed)
+
+    # If no XML-wrapped calls found, try raw JSON fallback
+    if not tool_calls:
+        tool_calls = _parse_raw_json_tools(text)
+
+    return tool_calls
+
+
+def _parse_tool_json(json_str: str) -> ParsedToolCall | None:
+    """Parse a single tool call JSON string.
+
+    Args:
+        json_str: JSON string with "name" and "arguments" keys
+
+    Returns:
+        ParsedToolCall if valid, None otherwise
+    """
+    try:
+        data = json.loads(json_str)
+        name = data.get("name", "")
+        arguments = data.get("arguments", {})
+
+        # Handle case where arguments is a string
+        if isinstance(arguments, str):
+            arguments = json.loads(arguments)
+
+        if name:
+            return ParsedToolCall(
+                id=f"call_{uuid.uuid4().hex[:8]}",
+                name=name,
+                arguments=arguments,
+            )
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        log.warning("tool_call_parse_error", json_str=json_str[:100], error=str(e))
+
+    return None
+
+
+def _parse_raw_json_tools(text: str) -> list[ParsedToolCall]:
+    """Parse raw JSON tool calls without XML wrapper.
+
+    This is a fallback for models that output tool calls as plain JSON
+    without the <tool_call> wrapper tags.
+
+    Args:
+        text: Raw text potentially containing JSON tool calls
+
+    Returns:
+        List of parsed tool calls
+    """
+    tool_calls = []
+
+    # Find all potential raw JSON tool calls
+    for match in RAW_JSON_TOOL_PATTERN.finditer(text):
         try:
-            data = json.loads(match)
+            # Reconstruct the full JSON from captured groups
+            full_match = match.group(0)
+            data = json.loads(full_match)
             name = data.get("name", "")
             arguments = data.get("arguments", {})
 
-            # Handle case where arguments is a string
             if isinstance(arguments, str):
                 arguments = json.loads(arguments)
 
@@ -163,8 +233,9 @@ def _parse_text_format(text: str) -> list[ParsedToolCall]:
                     name=name,
                     arguments=arguments,
                 ))
+                log.debug("raw_json_tool_parsed", name=name)
         except (json.JSONDecodeError, KeyError, TypeError) as e:
-            log.warning("tool_call_parse_error", match=match[:100], error=str(e))
+            log.debug("raw_json_tool_parse_skip", match=match.group(0)[:50], error=str(e))
 
     return tool_calls
 
@@ -173,7 +244,10 @@ def has_tool_calls(response: str | dict[str, Any]) -> bool:
     """Quick check if response contains tool calls.
 
     More efficient than parsing when you just need to know if
-    tool calls are present.
+    tool calls are present. Checks for:
+    1. Native OpenAI format (tool_calls in dict)
+    2. XML-wrapped format (<tool_call> tags)
+    3. Raw JSON format ({"name": "...", "arguments": {...}})
 
     Args:
         response: LLM response (string or dict)
@@ -195,8 +269,12 @@ def has_tool_calls(response: str | dict[str, Any]) -> bool:
             return True
 
     if isinstance(response, str):
-        # Quick text check
-        return "<tool_call>" in response
+        # Check XML-wrapped format first (fast string check)
+        if "<tool_call>" in response:
+            return True
+        # Check raw JSON format (quick heuristic then regex)
+        if '"name"' in response and '"arguments"' in response:
+            return bool(RAW_JSON_TOOL_PATTERN.search(response))
 
     return False
 

@@ -1,6 +1,18 @@
 # Copyright (C) 2024 Delia Contributors
-# SPDX-License-Identifier: GPL-3.0-or-later
-# ruff: noqa: T201  # CLI tool - print statements are intentional
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Delia CLI - Setup wizard and client installation commands.
 
@@ -24,6 +36,8 @@ from typing import Any
 
 import httpx
 import typer
+
+from .paths import SETTINGS_FILE, USER_DELIA_DIR
 
 # Rich console for pretty output (optional, graceful fallback)
 try:
@@ -271,67 +285,8 @@ def detect_backends() -> list[DetectedBackend]:
     return detected
 
 
-def assign_models_to_tiers(models: list[str]) -> dict[str, str]:
-    """
-    Assign detected models to tiers based on naming patterns.
-
-    Returns a dict mapping tier names to model names.
-    """
-    if not models:
-        return {}
-
-    # Filter out vocab files, test files, and other non-model entries
-    excluded_patterns = ["ggml-vocab", "vocab-", "test", "dummy", "template", "example"]
-    filtered_models = [
-        m for m in models
-        if not any(excl in m.lower() for excl in excluded_patterns)
-    ]
-
-    # Fall back to original list if everything was filtered
-    if not filtered_models:
-        filtered_models = models
-
-    tiers: dict[str, str | None] = {
-        "quick": None,
-        "coder": None,
-        "moe": None,
-        "thinking": None,
-    }
-
-    # If only one model, use it for everything
-    if len(filtered_models) == 1:
-        return dict.fromkeys(tiers, filtered_models[0])
-
-    # Classify models
-    for model in filtered_models:
-        model_lower = model.lower()
-
-        # Thinking/reasoning models
-        if any(kw in model_lower for kw in ["think", "reason", "r1", "o1", "deepseek-r"]):
-            if not tiers["thinking"]:
-                tiers["thinking"] = model
-
-        # Coder models
-        elif any(kw in model_lower for kw in ["code", "coder", "codestral", "starcoder"]):
-            if not tiers["coder"]:
-                tiers["coder"] = model
-
-        # Large/MoE models (by size indicators)
-        elif any(kw in model_lower for kw in ["30b", "32b", "70b", "72b", "moe", "mixtral", "qwen3:30"]):
-            if not tiers["moe"]:
-                tiers["moe"] = model
-
-        # Small/quick models
-        elif any(kw in model_lower for kw in ["7b", "8b", "3b", "1b", "small", "mini", "tiny"]) and not tiers["quick"]:
-            tiers["quick"] = model
-
-    # Fill in gaps with first available model
-    first_model = filtered_models[0]
-    for tier in tiers:
-        if not tiers[tier]:
-            tiers[tier] = first_model
-
-    return {k: v for k, v in tiers.items() if v is not None}
+# Import shared model tier assignment (canonical implementation)
+from .model_detection import assign_models_to_tiers  # noqa: E402
 
 
 # ============================================================
@@ -395,17 +350,20 @@ def generate_client_config(client_id: str, delia_root: Path) -> dict[str, Any]:
     if not client_info:
         raise ValueError(f"Unknown client: {client_id}")
 
-    # Always use uv to run from the source directory
-    # This is more reliable than checking shutil.which("delia") because:
-    # 1. When run via `uv run delia init`, delia appears in PATH temporarily
-    # 2. But it won't be available when the MCP client tries to spawn it
-    # Using uv ensures the command works regardless of installation method
-    server_config = {
+    # Prioritize global 'delia' executable if available in PATH
+    delia_path = shutil.which("delia")
+    if delia_path:
+        return {
+            "command": delia_path,
+            "args": ["serve"],
+        }
+
+    # Fallback: use uv to run from the source directory
+    # This is more reliable for dev/editable installs where 'delia' might not be in PATH
+    return {
         "command": "uv",
         "args": ["--directory", str(delia_root), "run", "delia", "serve"],
     }
-
-    return server_config
 
 
 def install_to_client(client_id: str, delia_root: Path, force: bool = False) -> bool:
@@ -531,11 +489,23 @@ def init(
         print("=" * 40)
 
     delia_root = get_delia_root()
-    settings_path = delia_root / "settings.json"
+
+    # Determine target path for settings
+    # Default: Global user directory (~/.delia/settings.json)
+    target_path = USER_DELIA_DIR / "settings.json"
+
+    # Override: If local settings.json exists in CWD, use that instead
+    cwd_settings = Path.cwd() / "settings.json"
+    if cwd_settings.exists():
+        target_path = cwd_settings
+        print_info(f"Detected local configuration at {target_path}")
+    else:
+        # Ensure global directory exists
+        USER_DELIA_DIR.mkdir(parents=True, exist_ok=True)
 
     # Check existing settings
-    if settings_path.exists() and not force:
-        print_warning(f"settings.json already exists at {settings_path}")
+    if target_path.exists() and not force:
+        print_warning(f"settings.json already exists at {target_path}")
         if not prompt_confirm("Overwrite existing configuration?", default=False):
             print_info("Setup cancelled. Use --force to overwrite.")
             raise typer.Exit(0)
@@ -577,9 +547,9 @@ def init(
 
     # Step 3: Save settings
     try:
-        with open(settings_path, "w") as f:
+        with open(target_path, "w") as f:
             json.dump(settings, f, indent=2)
-        print_success(f"Configuration saved to {settings_path}")
+        print_success(f"Configuration saved to {target_path}")
     except Exception as e:
         print_error(f"Failed to save settings: {e}")
         raise typer.Exit(1) from None
@@ -706,11 +676,11 @@ def doctor() -> None:
     # Check settings.json
     print_header("Configuration")
 
-    settings_path = delia_root / "settings.json"
-    if settings_path.exists():
-        print_success(f"settings.json found at {settings_path}")
+    # Use resolved settings file path
+    if SETTINGS_FILE.exists():
+        print_success(f"settings.json found at {SETTINGS_FILE}")
         try:
-            with open(settings_path) as f:
+            with open(SETTINGS_FILE) as f:
                 settings = json.load(f)
             backend_count = len(settings.get("backends", []))
             print_info(f"     {backend_count} backend(s) configured")
@@ -820,12 +790,11 @@ def config(
     """
     View or edit Delia configuration.
     """
-    delia_root = get_delia_root()
-    settings_path = delia_root / "settings.json"
-
-    if not settings_path.exists():
+    if not SETTINGS_FILE.exists():
         print_error("No configuration found. Run 'delia init' first.")
         raise typer.Exit(1)
+
+    print_info(f"Using configuration at {SETTINGS_FILE}")
 
     if edit:
         # Try to open in default editor
@@ -833,13 +802,13 @@ def config(
         if get_platform() == "Windows":
             editor = os.environ.get("EDITOR", "notepad")
 
-        subprocess.run([editor, str(settings_path)], check=False)
+        subprocess.run([editor, str(SETTINGS_FILE)], check=False)
         return
 
     # Show configuration
     if show or not edit:
         try:
-            with open(settings_path) as f:
+            with open(SETTINGS_FILE) as f:
                 settings = json.load(f)
 
             if RICH_AVAILABLE and console:

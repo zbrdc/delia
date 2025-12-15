@@ -1,9 +1,18 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 MCP Client Detection and Configuration Tests.
 
@@ -100,18 +109,29 @@ class TestConfigGeneration:
         assert "command" in config
         assert "args" in config
 
-    def test_generated_config_uses_uv(self, tmp_path):
-        """Generated config should use uv to run delia."""
+    def test_generated_config_uses_delia_or_uv(self, tmp_path):
+        """Generated config should use delia directly or uv as fallback."""
+        import shutil
+
         from delia.cli import generate_client_config
 
         config = generate_client_config("claude", tmp_path)
 
-        assert config["command"] == "uv"
-        assert "--directory" in config["args"]
-        assert str(tmp_path) in config["args"]
-        assert "run" in config["args"]
-        assert "delia" in config["args"]
-        assert "serve" in config["args"]
+        # If delia is in PATH, command is the delia path; otherwise it's uv
+        delia_in_path = shutil.which("delia") is not None
+
+        if delia_in_path:
+            # Direct delia execution
+            assert config["command"].endswith("delia")
+            assert config["args"] == ["serve"]
+        else:
+            # UV fallback
+            assert config["command"] == "uv"
+            assert "--directory" in config["args"]
+            assert str(tmp_path) in config["args"]
+            assert "run" in config["args"]
+            assert "delia" in config["args"]
+            assert "serve" in config["args"]
 
     def test_generated_config_has_valid_json_structure(self, tmp_path):
         """Generated config should be valid JSON."""
@@ -418,7 +438,9 @@ class TestMCPIntegration:
             # Verify structure
             assert "mcpServers" in config
             assert "delia" in config["mcpServers"]
-            assert config["mcpServers"]["delia"]["command"] == "uv"
+            # Command is either delia path (if in PATH) or uv (fallback)
+            command = config["mcpServers"]["delia"]["command"]
+            assert command.endswith("delia") or command == "uv"
             assert "serve" in config["mcpServers"]["delia"]["args"]
 
     def test_config_command_is_executable(self, isolated_env):

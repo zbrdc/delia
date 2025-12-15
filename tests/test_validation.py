@@ -1,10 +1,25 @@
+# Copyright (C) 2024 Delia Contributors
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Comprehensive unit tests for input validation functions in mcp_server.py.
 
 Tests cover boundary conditions, edge cases, and security considerations.
 """
 import pytest
-from hypothesis import given, strategies as st, assume, settings
+from hypothesis import given, strategies as st, assume
 
 from pathlib import Path
 
@@ -48,7 +63,6 @@ class TestValidateTask:
 
     @pytest.mark.fuzz
     @given(st.text(min_size=1, max_size=50))
-    @settings(max_examples=100)
     def test_arbitrary_strings_handled(self, task):
         """Arbitrary strings should be handled without crashing."""
         assume(task not in VALID_TASKS)
@@ -110,7 +124,6 @@ class TestValidateContent:
 
     @pytest.mark.fuzz
     @given(st.text(min_size=1, max_size=1000))
-    @settings(max_examples=100)
     def test_arbitrary_content_handled(self, content):
         """Arbitrary content should be handled without crashing."""
         is_valid, error = validate_content(content)
@@ -181,7 +194,6 @@ class TestValidateFilePath:
 
     @pytest.mark.fuzz
     @given(st.text(min_size=1, max_size=500))
-    @settings(max_examples=100)
     def test_arbitrary_paths_handled(self, path):
         """Arbitrary paths should be handled without crashing."""
         is_valid, error = validate_file_path(path)
@@ -224,7 +236,6 @@ class TestValidateModelHint:
 
     @pytest.mark.fuzz
     @given(st.text(min_size=1, max_size=50))
-    @settings(max_examples=100)
     def test_arbitrary_hints_handled(self, hint):
         """Arbitrary model hints should be handled without crashing."""
         assume(hint not in VALID_MODELS and hint.strip() != "")

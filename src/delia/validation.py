@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,10 +12,12 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """Input validation functions for Delia MCP tools."""
 
-VALID_TASKS = frozenset({"review", "analyze", "generate", "summarize", "critique", "quick", "plan", "think"})
-VALID_MODELS = frozenset({"quick", "coder", "moe", "thinking"})
+from .types import VALID_MODELS, VALID_TASKS
+
+# Keep VALID_BACKENDS here as it's validation-specific (not all providers are valid backends)
 VALID_BACKENDS = frozenset({"ollama", "llamacpp"})
 MAX_CONTENT_LENGTH = 500_000  # 500KB max content
 MAX_FILE_PATH_LENGTH = 1000

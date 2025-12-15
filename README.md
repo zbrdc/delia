@@ -1,244 +1,147 @@
 # Delia
 
-A Model Context Protocol (MCP) server that cultivates your local LLM garden. Plant a seed, let Delia pick the right vine, and harvest a fresh melon.
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![MCP](https://img.shields.io/badge/MCP-1.23.0-green)](https://modelcontextprotocol.io/)
 
-*Delia - from Greek Δηλία, "from Delos" (the sacred island). Also, she grows watermelons.*
+**Delia** is an intelligent Model Context Protocol (MCP) server that orchestrates your local LLM infrastructure. It acts as a smart router and delegation layer, automatically selecting the best model tier ("Quick", "Coder", "MoE", or "Thinking") for a given task, balancing performance, quality, and resource usage.
+
+Delia turns a collection of local models (via Ollama, llama.cpp, vLLM) and optional cloud fallbacks (Gemini, OpenAI) into a cohesive, fault-tolerant AI system available to any MCP-compliant client (Claude Desktop, VS Code, Cursor, Windsurf, etc.).
 
 ## Features
 
-- **Smart Model Selection**: Automatically routes prompts to optimal model tier (quick/coder/moe/thinking)
-- **Multi-Backend Support**: Ollama, llama.cpp, Gemini, vLLM, OpenAI-compatible APIs with automatic failover
-- **Context-Aware Routing**: Routes large prompts to models with sufficient context windows
-- **Circuit Breaker**: Protects against cascading failures with automatic recovery
-- **Parallel Processing**: Batch multiple requests across backends simultaneously
-- **Authentication**: Optional user auth with per-user quotas (HTTP mode)
-- **Usage Tracking**: Token counts, cost estimates, and performance metrics
-- **Dashboard**: Real-time status monitoring with activity feed
-
-## Requirements
-
-### Hardware
-| Component | Minimum | Recommended | Large Models |
-|-----------|---------|-------------|--------------|
-| GPU | 4GB VRAM | 12GB VRAM | 24GB+ VRAM |
-| RAM | 8GB | 16GB | 32GB+ |
-| Storage | 10GB | 30GB | 50GB+ |
-
-### Software
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/) package manager
-- One or more backends:
-  - [Ollama](https://ollama.ai) (recommended)
-  - [llama.cpp](https://github.com/ggerganov/llama.cpp)
-  - Google Gemini API (optional cloud fallback)
+- **🧠 Intelligent Routing**: Automatically routes tasks to the optimal model tier:
+    - **Quick**: Fast 7B-14B models for summaries and simple queries.
+    - **Coder**: Specialized 14B-30B models for code generation and review.
+    - **MoE** (Mixture of Experts): Large 30B+ models for complex planning and architectural critique.
+    - **Thinking**: Models with extended reasoning capabilities (e.g., DeepSeek-R1) for deep analysis.
+- **🔌 Multi-Backend Support**: Seamlessly integrates:
+    - **Ollama** (Recommended for ease of use)
+    - **llama.cpp / server** (For maximum performance)
+    - **vLLM** (For high-throughput production setups)
+    - **Google Gemini** (Optional cloud fallback)
+    - **OpenAI-compatible APIs** (Local or remote)
+- **🛠️ Powerful MCP Tools**:
+    - `delegate`: The core tool for routing tasks to the right model.
+    - `think`: Dedicated tool for deep, multi-step reasoning on complex problems.
+    - `batch`: Parallel execution of multiple tasks across available GPUs.
+    - `chain` & `workflow`: Execute sequential or DAG-based task pipelines.
+    - `agent`: Autonomous agent capable of multi-step tool use.
+- **🛡️ Resilience**:
+    - **Circuit Breaker**: Automatically disables failing backends to prevent cascading errors.
+    - **Queue System**: Manages concurrency to prevent OOM errors on local hardware.
+    - **Failover**: Automatically retries on alternative backends if primary fails.
+- **📊 Observability**:
+    - **Real-time Dashboard**: Next.js-based dashboard for monitoring requests, token usage, and backend health.
+    - **Usage Tracking**: Detailed stats on tokens, costs (saved vs. cloud), and model performance.
+- **🔐 Enterprise Ready**:
+    - **Authentication**: Optional JWT-based auth with per-user quotas.
+    - **Session Management**: Stateful conversations with `session_create/get/list`.
 
 ## Quick Start
 
 ### Prerequisites
 
-1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
-2. Install [Ollama](https://ollama.ai/download) and ensure it's running (`ollama serve`)
+- **Python 3.11+**
+- **[uv](https://docs.astral.sh/uv/)** (Recommended package manager)
+- A running local LLM backend (e.g., [Ollama](https://ollama.ai/))
 
 ### Installation
 
-**Global Installation (Recommended for Users)**
-```bash
-# Install directly from source
-uv tool install git+https://github.com/zbrdc/delia.git
-
-# Or if you've cloned the repo
-cd delia
-uv tool install .
-```
-
-**Development Installation**
-```bash
-# Clone the repository
-git clone https://github.com/zbrdc/delia.git
-cd delia
-
-# Install Delia in editable mode
-uv sync
-uv pip install -e .
-```
-
-### Quick Start
-
-1.  **Install & Setup**
+1.  **Clone and Install:**
     ```bash
-    # install (see above)
+    git clone https://github.com/zbrdc/delia.git
+    cd delia
     uv tool install .
-    
-    # Run the setup wizard
+    ```
+
+2.  **Initialize & Configure:**
+    Run the setup wizard to detect your local models and configure MCP clients.
+    ```bash
     delia init
     ```
+    This command will:
+    - Detect running backends (Ollama, etc.).
+    - Auto-assign models to tiers (Quick, Coder, MoE).
+    - Generate a `~/.delia/settings.json` configuration.
+    - Offer to auto-configure detected clients (Claude, VS Code, etc.).
 
-    The setup wizard will:
-    -   Detect available backends (Ollama, llama.cpp, vLLM)
-    -   Auto-assign models to tiers based on capabilities
-    -   Create a global configuration at `~/.delia/settings.json`
-    -   Configure detected MCP clients (Claude Code, VS Code, etc.)
+### Using with MCP Clients
 
-2.  **Pull Models (if using Ollama)**
-    ```bash
-    # Pull at least one model (choose based on your VRAM)
-    ollama pull qwen2.5:14b           # 12GB+ VRAM - general purpose
-    ollama pull qwen2.5-coder:14b     # 12GB+ VRAM - code specialized
-    ollama pull qwen2.5:32b           # 24GB+ VRAM - complex reasoning
+If you didn't use the auto-install feature in `delia init`, you can manually add Delia to your client configuration.
+
+**Command:** `delia`
+**Args:** `serve`
+
+**Example `mcp.json` (Claude Desktop):**
+```json
+{
+  "mcpServers": {
+    "delia": {
+      "command": "delia",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+## Usage
+
+### Core Tools
+
+Once connected to an MCP client (like Claude), you can use natural language to leverage Delia's power.
+
+-   **Delegation (Smart Routing):**
+    > "Review this code using your coder model."
+    > "Plan a microservices architecture using the MoE model."
+    
+    *Behind the scenes, Delia uses the `delegate` tool:*
+    ```python
+    delegate(task="review", content="...", model="coder")
     ```
 
-## Integration
+-   **Deep Thinking:**
+    > "Think deeply about the potential race conditions in this async logic."
+    
+    *Delia uses the `think` tool:*
+    ```python
+    think(problem="Analyze race conditions...", depth="deep")
+    ```
 
-Delia works with AI coding assistants via MCP. The setup wizard (`delia init`) automatically configures these clients.
+-   **Batch Processing:**
+    > "Summarize these 5 files in parallel."
+    
+    *Delia uses the `batch` tool to distribute work:*
+    ```python
+    batch(tasks='[{"task": "summarize", "content": "..."}, ...]')
+    ```
 
-### VS Code / GitHub Copilot
+### CLI Commands
 
-Add to `~/.config/Code/User/mcp.json`:
-```json
-{
-  "servers": {
-    "delia": {
-      "command": "delia",
-      "args": ["serve"],
-      "type": "stdio"
-    }
-  }
-}
-```
-
-### Claude Code
-
-Create `~/.claude/mcp.json`:
-```json
-{
-  "mcpServers": {
-    "delia": {
-      "command": "delia",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-*Note: If you installed Delia in development mode (editable), use the following configuration instead:*
-```json
-{
-  "command": "uv",
-  "args": ["--directory", "/path/to/delia", "run", "delia", "serve"]
-}
-```
-
-### Gemini CLI
-
-**Option 1: HTTP Mode (Recommended)**
-```bash
-# Start server
-delia serve --transport sse --port 8200
-```
-
-Add to `~/.gemini/settings.json`:
-```json
-{
-  "mcpServers": {
-    "delia": {
-      "url": "http://localhost:8200/sse",
-      "transport": "sse"
-    }
-  }
-}
-```
-
-**Option 2: STDIO Mode**
-
-Add to `~/.gemini/settings.json`:
-```json
-{
-  "mcpServers": {
-    "delia": {
-      "command": "delia",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-### GitHub Copilot CLI
-
-Create `~/.copilot-cli/mcp.json`:
-```json
-{
-  "servers": {
-    "delia": {
-      "command": "delia",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-### Manual Configuration
-
-The examples above show how to manually configure Delia. The `delia init` command automates this process:
-
-```bash
-# Run the setup wizard - it will auto-detect your Delia path and configure your clients
-delia init
-```
-
-Or to manually install to a specific client after setup:
-
-```bash
-# Install to VS Code
-delia install vscode
-
-# Install to Claude Code
-delia install claude
-
-# Install to all detected clients
-delia install
-```
+-   `delia init`: Run the setup wizard.
+-   `delia doctor`: Diagnose configuration and connectivity issues.
+-   `delia install [client]`: Install Delia to a specific client (e.g., `delia install vscode`).
+-   `delia serve`: Start the MCP server (STDIO mode by default).
+-   `delia run --transport sse`: Start the server in HTTP/SSE mode (useful for remote access).
+-   `delia config --edit`: Edit the global configuration.
 
 ## Configuration
 
-### Backend Configuration
+Configuration is stored in `~/.delia/settings.json`.
 
-Delia stores configuration in `~/.delia/settings.json` by default. You can view or edit it using:
-
-```bash
-delia config --show
-delia config --edit
-```
-
-You can also create a local `settings.json` in your current directory to override global settings for a specific project.
-
-#### Configuration Fields
-
-| Field | Description |
-|-------|-------------|
-| `id` | Unique identifier for the backend |
-| `provider` | Backend type: `ollama`, `llamacpp`, `gemini`, `vllm`, `openai` |
-| `type` | `local` (GPU on this machine) or `remote` (cloud/network) |
-| `url` | API endpoint URL |
-| `priority` | Lower = preferred (used for failover ordering) |
-| `models` | Map of tier → model name for this backend |
-
-Example `settings.json`:
-
+**Example Structure:**
 ```json
 {
   "backends": [
     {
       "id": "ollama-local",
-      "name": "Ollama Local",
       "provider": "ollama",
       "type": "local",
       "url": "http://localhost:11434",
-      "enabled": true,
-      "priority": 1,
       "models": {
-        "quick": "qwen3:14b",
+        "quick": "qwen2.5:14b",
         "coder": "qwen2.5-coder:14b",
-        "moe": "qwen3:30b-a3b",
+        "moe": "qwen2.5:32b",
         "thinking": "deepseek-r1:14b"
       }
     }
@@ -250,171 +153,67 @@ Example `settings.json`:
 }
 ```
 
-### Gemini Cloud Backend (Optional)
+### Model Tiers
 
-Add Gemini as a cloud fallback:
+-   **Quick**: General purpose, low latency. *Triggers: "summarize", "explain", simple queries.*
+-   **Coder**: Code specialization. *Triggers: "write code", "refactor", "review", "test".*
+-   **MoE**: Complex reasoning, large context. *Triggers: "plan", "critique", "architecture".*
+-   **Thinking**: Extended chain-of-thought. *Triggers: "think", "reason", "analyze deeply".*
 
-```bash
-# Install dependency
-uv add google-generativeai
+## Dashboard
 
-# Set API key
-export GEMINI_API_KEY="your-key-from-aistudio.google.com"
-```
+Delia includes a real-time Next.js dashboard for monitoring request activity, token usage, and system health.
 
-Add to `settings.json`:
-```json
-{
-  "id": "gemini-cloud",
-  "name": "Gemini Cloud",
-  "provider": "gemini",
-  "type": "remote",
-  "url": "https://generativelanguage.googleapis.com",
-  "enabled": true,
-  "priority": 10,
-  "models": {
-    "quick": "gemini-2.0-flash",
-    "coder": "gemini-2.0-flash",
-    "moe": "gemini-2.0-flash"
-  }
-}
-```
+**To start the dashboard:**
 
-### Authentication (Optional)
+1.  Navigate to the dashboard directory:
+    ```bash
+    cd dashboard
+    ```
 
-For HTTP mode with multiple users:
+2.  Install dependencies:
+    ```bash
+    npm install
+    # or
+    yarn install
+    ```
 
-```bash
-# Quick setup
-python setup_auth.py
+3.  Run the development server:
+    ```bash
+    npm run dev
+    ```
 
-# Or manually
-export DELIA_AUTH_ENABLED=true
-export DELIA_JWT_SECRET="your-secure-secret"
-```
+4.  Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-Supports username/password and Microsoft 365 OAuth.
+The dashboard connects to Delia's log files (typically in `~/.cache/delia/`) to display live activity.
 
-## Transport Modes
+## Development
 
-```bash
-# STDIO (default) - for VS Code, Claude Code, Copilot CLI
-delia serve
+To develop on Delia:
 
-# HTTP/SSE - for Gemini CLI, web clients, remote access
-delia serve --transport sse --port 8200
+1.  **Clone the repo:**
+    ```bash
+    git clone https://github.com/zbrdc/delia.git
+    cd delia
+    ```
 
-# View all options
-delia serve --help
-```
+2.  **Install dependencies:**
+    ```bash
+    uv sync
+    ```
 
-## Tools
+3.  **Run in dev mode:**
+    ```bash
+    uv run delia serve
+    ```
 
-Delia provides these MCP tools:
-
-### Core Tools
-
-| Tool | Description | Example |
-|------|-------------|---------|
-| `delegate` | Route a task to the optimal model tier | `delegate(task="review", content="<code>")` |
-| `think` | Deep reasoning with extended thinking | `think(problem="Design auth system", depth="deep")` |
-| `batch` | Process multiple tasks in parallel | `batch(tasks='[{"task":"review","content":"..."}]')` |
-
-### Management Tools
-
-| Tool | Description |
-|------|-------------|
-| `health` | Check backend availability, circuit breaker status, and usage statistics |
-| `models` | List configured models per tier and currently loaded models |
-| `switch_backend` | Change active backend at runtime (e.g., switch from Ollama to llama.cpp) |
-| `switch_model` | Swap the model for a specific tier without restart |
-| `get_model_info` | Get VRAM requirements and context window for any model |
-
-## Model Tiers (Vine Selection)
-
-Delia automatically routes requests to the optimal model tier based on task complexity. In garden terminology: prompts are "seeds," model tiers are "vines," and responses are "melons."
-
-| Tier | Model Size | Task Types | Triggers |
-|------|------------|------------|----------|
-| **quick** | 7B-14B | Summaries, simple Q&A | `task="quick"`, `task="summarize"` |
-| **coder** | 14B-30B | Code generation, review, analysis | `task="generate"`, `task="review"`, `task="analyze"` |
-| **moe** | 30B+ | Architecture, planning, critique | `task="plan"`, `task="critique"` |
-| **thinking** | Specialized | Extended reasoning, research | `model="thinking"` or complex prompts |
-
-Override automatic selection with: `model="quick"`, `model="coder"`, `model="moe"`, or natural hints like "use the large model".
-
-## Troubleshooting
-
-### "Error spawn delia ENOENT"
-This means the `delia` command isn't in your PATH. Fix with:
-```bash
-cd /path/to/delia
-uv pip install -e .
-```
-Verify installation: `which delia` should return a path.
-
-Alternatively, use the [Manual Configuration](#manual-configuration) approach.
-
-### Server won't start
-```bash
-# Check Ollama is running
-curl http://localhost:11434/api/tags
-
-# Test server import
-delia doctor
-```
-
-### MCP not connecting
-- Run `delia doctor` to check configuration
-- Reload VS Code / restart Claude Code
-- Check logs: `~/.cache/delia/live_logs.json`
-
-### "Unknown" responses
-- Backend not running or unreachable
-- Check `settings.json` configuration
-- Run `curl http://localhost:11434/health`
-
-### Slow responses
-- Try smaller models
-- Check system resources (`nvidia-smi`, `htop`)
-- Reduce context size in `settings.json`
-
-## Performance
-
-Typical response times on modern hardware (RTX 3090/4090):
-
-| Tier | Response Time | Use Case |
-|------|---------------|----------|
-| Quick | 2-5 seconds | Simple queries, summaries |
-| Coder | 5-15 seconds | Code review, generation |
-| MoE | 15-45 seconds | Complex analysis, planning |
-| Thinking | 30-90 seconds | Deep reasoning, research |
-
-Times vary based on prompt length, model size, and hardware.
-
-## Development & Testing
-
-### Running Tests
-
-```bash
-# Run all tests
-uv run pytest
-
-# Run specific test file
-uv run pytest tests/test_backend_manager.py -v
-
-# Run with coverage
-uv run pytest --cov=delia --cov-report=html
-```
-
-
+4.  **Run tests:**
+    ```bash
+    uv run pytest
+    ```
 
 ## License
 
-BSD 3-Clause
+Delia is licensed under the **GNU General Public License v3 (GPLv3)**.
 
-## Acknowledgments
-
-- [Ollama](https://ollama.ai) - Local LLM runtime
-- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) - Protocol implementation
-- [Qwen](https://qwenlm.github.io/) - Base models
+You are free to use, modify, and distribute this software, but all modifications and derived works must also be open-source under the same license. See [LICENSE](LICENSE) for details.

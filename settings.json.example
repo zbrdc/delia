@@ -2,13 +2,28 @@
   "version": "1.0",
   "backends": [
     {
+      "id": "llamacpp-local",
+      "name": "llama.cpp Local",
+      "provider": "llamacpp",
+      "type": "local",
+      "url": "http://localhost:8080",
+      "enabled": true,
+      "priority": 1,
+      "models": {
+        "quick": "current",
+        "coder": "current",
+        "moe": "current",
+        "thinking": "current"
+      }
+    },
+    {
       "id": "ollama-local",
       "name": "Ollama Local",
       "provider": "ollama",
       "type": "local",
       "url": "http://localhost:11434",
-      "enabled": true,
-      "priority": 1,
+      "enabled": false,
+      "priority": 2,
       "models": {
         "quick": "qwen3:14b",
         "coder": "qwen2.5-coder:14b",

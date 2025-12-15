@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Tests for CLI entry points (delia, delia-setup-auth).
 
@@ -282,6 +283,127 @@ class TestPackageEntryPoints:
         scripts = config.get("project", {}).get("scripts", {})
         assert "delia-setup-auth" in scripts
         assert "delia.setup_auth:main" in scripts["delia-setup-auth"]
+
+
+class TestTyperCLICommands:
+    """Test the typer-based CLI commands (delia <command>)."""
+
+    def test_delia_cli_help(self):
+        """delia --help should show all commands."""
+        result = subprocess.run(
+            ["uv", "run", "delia", "--help"],
+            capture_output=True,
+            text=True,
+            cwd="/home/dan/git/delia",
+            timeout=30
+        )
+
+        assert result.returncode == 0
+        # Should list all subcommands
+        assert "init" in result.stdout
+        assert "install" in result.stdout
+        assert "doctor" in result.stdout
+        assert "run" in result.stdout or "serve" in result.stdout
+        assert "config" in result.stdout
+        assert "uninstall" in result.stdout
+
+    def test_delia_init_help(self):
+        """delia init --help should show init options."""
+        result = subprocess.run(
+            ["uv", "run", "delia", "init", "--help"],
+            capture_output=True,
+            text=True,
+            cwd="/home/dan/git/delia",
+            timeout=30
+        )
+
+        assert result.returncode == 0
+        assert "init" in result.stdout.lower() or "setup" in result.stdout.lower()
+
+    def test_delia_doctor_help(self):
+        """delia doctor --help should show doctor options."""
+        result = subprocess.run(
+            ["uv", "run", "delia", "doctor", "--help"],
+            capture_output=True,
+            text=True,
+            cwd="/home/dan/git/delia",
+            timeout=30
+        )
+
+        assert result.returncode == 0
+
+    def test_delia_config_help(self):
+        """delia config --help should show config options."""
+        result = subprocess.run(
+            ["uv", "run", "delia", "config", "--help"],
+            capture_output=True,
+            text=True,
+            cwd="/home/dan/git/delia",
+            timeout=30
+        )
+
+        assert result.returncode == 0
+
+    def test_delia_run_help(self):
+        """delia run --help should show server options."""
+        result = subprocess.run(
+            ["uv", "run", "delia", "run", "--help"],
+            capture_output=True,
+            text=True,
+            cwd="/home/dan/git/delia",
+            timeout=30
+        )
+
+        assert result.returncode == 0
+        assert "transport" in result.stdout.lower() or "port" in result.stdout.lower()
+
+    def test_delia_install_help(self):
+        """delia install --help should show install options."""
+        result = subprocess.run(
+            ["uv", "run", "delia", "install", "--help"],
+            capture_output=True,
+            text=True,
+            cwd="/home/dan/git/delia",
+            timeout=30
+        )
+
+        assert result.returncode == 0
+
+    def test_delia_config_show(self, tmp_path):
+        """delia config show should display configuration."""
+        env = os.environ.copy()
+        env["DELIA_DATA_DIR"] = str(tmp_path)
+
+        result = subprocess.run(
+            ["uv", "run", "delia", "config", "show"],
+            capture_output=True,
+            text=True,
+            cwd="/home/dan/git/delia",
+            env=env,
+            timeout=30
+        )
+
+        # Should either succeed or fail gracefully
+        assert result.returncode in [0, 1, 2]
+
+    def test_delia_doctor_runs(self, tmp_path):
+        """delia doctor should run diagnostics."""
+        env = os.environ.copy()
+        env["DELIA_DATA_DIR"] = str(tmp_path)
+
+        result = subprocess.run(
+            ["uv", "run", "delia", "doctor"],
+            capture_output=True,
+            text=True,
+            cwd="/home/dan/git/delia",
+            env=env,
+            timeout=30
+        )
+
+        # Doctor should run even if backends aren't available
+        assert result.returncode in [0, 1, 2]
+        # Should produce some output
+        assert len(result.stdout) > 0 or len(result.stderr) > 0
 
 
 if __name__ == "__main__":

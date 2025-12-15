@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """Base provider interface for LLM orchestration.
 
 This module defines the protocol-based interface that all LLM providers must implement.
@@ -108,6 +109,27 @@ class LLMResponse:
             metadata=data.get("metadata"),
             circuit_breaker=data.get("circuit_breaker", False),
         )
+
+
+@dataclass
+class ModelLoadResult:
+    """Result of a model load/unload operation.
+
+    Attributes:
+        success: Whether the operation succeeded
+        model: Model name that was loaded/unloaded
+        action: The operation performed ("load" or "unload")
+        error: Error message if success=False
+        elapsed_ms: Time taken in milliseconds
+        metadata: Provider-specific metadata
+    """
+
+    success: bool
+    model: str
+    action: str  # "load" | "unload"
+    error: str | None = None
+    elapsed_ms: int = 0
+    metadata: dict[str, Any] | None = None
 
 
 @runtime_checkable
@@ -238,6 +260,88 @@ class LLMProvider(Protocol):
                 done=True,
                 error=response.error,
             )
+
+    async def load_model(
+        self,
+        model: str,
+        backend_obj: BackendConfig | None = None,
+    ) -> ModelLoadResult:
+        """Preload a model into GPU memory.
+
+        This method triggers the backend to load a model before it's needed,
+        reducing latency on the first inference request.
+
+        Args:
+            model: Model name to load (provider-specific format)
+            backend_obj: Backend configuration (or None to auto-select)
+
+        Returns:
+            ModelLoadResult indicating success/failure with timing info
+
+        Note:
+            - For cloud providers (Gemini), this should be a no-op returning success
+            - For local providers (Ollama, llama.cpp), this triggers actual model loading
+            - Implementations should NOT raise exceptions
+        """
+        # Default: no-op returning success (for cloud providers)
+        return ModelLoadResult(
+            success=True,
+            model=model,
+            action="load",
+            metadata={"note": "default_noop"},
+        )
+
+    async def unload_model(
+        self,
+        model: str,
+        backend_obj: BackendConfig | None = None,
+    ) -> ModelLoadResult:
+        """Unload a model from GPU memory.
+
+        This method releases GPU memory by unloading a model that's no longer needed.
+        Called by ModelQueue when making room for other models.
+
+        Args:
+            model: Model name to unload
+            backend_obj: Backend configuration (or None to auto-select)
+
+        Returns:
+            ModelLoadResult indicating success/failure
+
+        Note:
+            - For cloud providers (Gemini), this should be a no-op returning success
+            - For local providers, this triggers actual model unloading
+            - Safe to call even if model is not currently loaded
+        """
+        # Default: no-op returning success (for cloud providers)
+        return ModelLoadResult(
+            success=True,
+            model=model,
+            action="unload",
+            metadata={"note": "default_noop"},
+        )
+
+    async def list_loaded_models(
+        self,
+        backend_obj: BackendConfig | None = None,
+    ) -> list[str]:
+        """Get list of currently loaded models.
+
+        Returns the models currently resident in GPU memory for this provider.
+        Used by ModelQueue to synchronize its internal state with actual backend state.
+
+        Args:
+            backend_obj: Backend configuration (or None to auto-select)
+
+        Returns:
+            List of model names currently loaded in GPU memory
+
+        Note:
+            - For cloud providers, return empty list (all models always available)
+            - For local providers, query the backend for actual loaded models
+        """
+        # Default: empty list (for cloud providers)
+        return []
 
 
 # ============================================================

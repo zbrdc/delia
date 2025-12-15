@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,17 +12,31 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""Model queue system for GPU memory management."""
+
+"""Model queue system for GPU memory management.
+
+This module provides intelligent queue management for GPU-based LLM inference.
+It coordinates model loading/unloading across providers to efficiently manage
+limited GPU memory while handling concurrent requests.
+"""
+
+from __future__ import annotations
 
 import asyncio
 import heapq
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import structlog
 
 from .messages import StatusEvent, get_display_event, get_status_message
+
+if TYPE_CHECKING:
+    from .providers.base import LLMProvider
+
+# Type alias for provider getter callback
+ProviderGetter = Callable[[str], "LLMProvider | None"]
 
 log = structlog.get_logger()
 
@@ -55,12 +69,22 @@ class ModelQueue:
     Queues requests when models need loading, prioritizes by model size and urgency.
     """
 
-    def __init__(self):
+    def __init__(self, provider_getter: ProviderGetter | None = None):
+        """Initialize the model queue.
+
+        Args:
+            provider_getter: Callable that returns a provider instance given a provider name.
+                           Used to call provider-specific load/unload methods.
+                           If None, lifecycle methods are not called (soft tracking only).
+        """
         self.loaded_models: dict[str, dict[str, Any]] = {}  # model_name -> metadata
         self.loading_models: set[str] = set()  # Models currently being loaded
         self.request_queues: dict[str, list[QueuedRequest]] = {}  # model_name -> priority queue
         self.lock = asyncio.Lock()
         self.request_counter = 0
+
+        # Provider lifecycle integration
+        self._get_provider = provider_getter
 
         # Model size estimates (in GB VRAM, rough estimates)
         self.model_sizes = {
@@ -140,10 +164,20 @@ class ModelQueue:
         return priority
 
     async def acquire_model(
-        self, model_name: str, task_type: str = "unknown", content_length: int = 0
+        self,
+        model_name: str,
+        task_type: str = "unknown",
+        content_length: int = 0,
+        provider_name: str = "ollama",
     ) -> tuple[bool, asyncio.Future | None]:
         """
         Acquire a model for use.
+
+        Args:
+            model_name: Name of the model to acquire
+            task_type: Type of task for priority calculation
+            content_length: Size of content for priority calculation
+            provider_name: Name of the provider (used for lifecycle callbacks)
 
         Returns:
             - (True, None) if model is immediately available
@@ -226,7 +260,7 @@ class ModelQueue:
             # Model not loaded - check if we can load it
             if not self.can_load_model(model_name):
                 # Need to unload some models first
-                await self._make_room_for_model(model_name)
+                await self._make_room_for_model(model_name, provider_name)
 
             # Start loading the model
             self.loading_models.add(model_name)
@@ -234,14 +268,54 @@ class ModelQueue:
             log.info(
                 get_display_event("model_loading_start"),
                 model=model_name,
+                provider=provider_name,
                 available_memory_gb=round(self.get_available_memory(), 1),
                 status_msg=get_status_message(StatusEvent.MODEL_LOADING),
             )
 
+            # Trigger provider-specific model preloading if available
+            if self._get_provider:
+                provider = self._get_provider(provider_name)
+                if provider and hasattr(provider, "load_model"):
+                    try:
+                        result = await provider.load_model(model_name)
+                        if not result.success:
+                            log.warning(
+                                "model_preload_failed",
+                                model=model_name,
+                                provider=provider_name,
+                                error=result.error,
+                                # Continue anyway - model may load on first request
+                            )
+                        else:
+                            log.info(
+                                "model_preload_success",
+                                model=model_name,
+                                provider=provider_name,
+                                elapsed_ms=result.elapsed_ms,
+                            )
+                    except Exception as e:
+                        log.warning(
+                            "model_preload_error",
+                            model=model_name,
+                            provider=provider_name,
+                            error=str(e),
+                        )
+
+            # Store provider name for later unloading
+            self._pending_provider = provider_name
+
             return (True, None)
 
-    async def _make_room_for_model(self, new_model_name: str) -> None:
-        """Unload least recently used models to make room for new model."""
+    async def _make_room_for_model(
+        self, new_model_name: str, provider_name: str = "ollama"
+    ) -> None:
+        """Unload least recently used models to make room for new model.
+
+        Args:
+            new_model_name: Name of the model we need to make room for
+            provider_name: Provider to use for unload operations
+        """
         new_model_size = self.get_model_size(new_model_name)
         available_memory = self.get_available_memory()
 
@@ -260,33 +334,85 @@ class ModelQueue:
             freed_memory += self.get_model_size(model_name)
             to_unload.append(model_name)
 
-        # Unload the selected models
+        # Actually unload the selected models via provider API
         for model_name in to_unload:
-            del self.loaded_models[model_name]
-            log.info(
-                get_display_event("model_unloaded"),
-                model=model_name,
-                reason="memory_pressure",
-                status_msg=get_status_message(StatusEvent.CLEANUP),
-            )
+            model_meta = self.loaded_models.get(model_name, {})
+            # Use the provider that loaded this model, or fall back to the requested one
+            model_provider = model_meta.get("provider", provider_name)
 
-    async def release_model(self, model_name: str, success: bool = True) -> None:
-        """Release a model after use and process queued requests."""
+            # Call provider-specific unload if available
+            if self._get_provider:
+                provider = self._get_provider(model_provider)
+                if provider and hasattr(provider, "unload_model"):
+                    try:
+                        result = await provider.unload_model(model_name)
+                        if result.success:
+                            log.info(
+                                get_display_event("model_unloaded"),
+                                model=model_name,
+                                provider=model_provider,
+                                reason="memory_pressure",
+                                elapsed_ms=result.elapsed_ms,
+                                status_msg=get_status_message(StatusEvent.CLEANUP),
+                            )
+                        else:
+                            log.warning(
+                                "model_unload_failed",
+                                model=model_name,
+                                provider=model_provider,
+                                error=result.error,
+                            )
+                    except Exception as e:
+                        log.warning(
+                            "model_unload_error",
+                            model=model_name,
+                            provider=model_provider,
+                            error=str(e),
+                        )
+            else:
+                # No provider getter - just log the soft unload
+                log.info(
+                    get_display_event("model_unloaded"),
+                    model=model_name,
+                    reason="memory_pressure",
+                    status_msg=get_status_message(StatusEvent.CLEANUP),
+                )
+
+            # Remove from tracking regardless (provider may have already unloaded)
+            del self.loaded_models[model_name]
+
+    async def release_model(
+        self, model_name: str, success: bool = True, provider_name: str = "ollama"
+    ) -> None:
+        """Release a model after use and process queued requests.
+
+        Args:
+            model_name: Name of the model to release
+            success: Whether the model call was successful
+            provider_name: Provider that handled this model (for tracking)
+        """
         async with self.lock:
             if model_name in self.loading_models:
                 self.loading_models.remove(model_name)
 
+                # Use stored provider if available, otherwise use passed one
+                actual_provider = getattr(self, "_pending_provider", provider_name)
+                if hasattr(self, "_pending_provider"):
+                    delattr(self, "_pending_provider")
+
                 if success:
-                    # Mark model as loaded
+                    # Mark model as loaded with provider info
                     self.loaded_models[model_name] = {
                         "loaded_at": datetime.now(),
                         "last_used": datetime.now(),
                         "size_gb": self.get_model_size(model_name),
+                        "provider": actual_provider,  # Track which provider loaded this
                     }
 
                     log.info(
                         get_display_event("model_loaded"),
                         model=model_name,
+                        provider=actual_provider,
                         loaded_count=len(self.loaded_models),
                         available_memory_gb=round(self.get_available_memory(), 1),
                         status_msg=get_status_message(StatusEvent.READY),
@@ -353,3 +479,78 @@ class ModelQueue:
                 "rejected_requests": self.rejected_requests,
             },
         }
+
+    async def sync_with_backend(self, provider_name: str = "ollama") -> dict[str, Any]:
+        """Synchronize queue state with actual backend loaded models.
+
+        This method queries the backend to find which models are actually loaded,
+        then updates the queue's internal state to match reality. Useful for:
+        - Initial startup synchronization
+        - Recovery after queue state corruption
+        - Periodic reconciliation
+
+        Args:
+            provider_name: Provider to sync with
+
+        Returns:
+            Dict with sync results (added, removed, unchanged counts)
+        """
+        if not self._get_provider:
+            return {"error": "No provider getter configured", "synced": False}
+
+        provider = self._get_provider(provider_name)
+        if not provider or not hasattr(provider, "list_loaded_models"):
+            return {"error": f"Provider {provider_name} does not support list_loaded_models", "synced": False}
+
+        try:
+            actual_loaded = await provider.list_loaded_models()
+        except Exception as e:
+            return {"error": f"Failed to query backend: {e}", "synced": False}
+
+        async with self.lock:
+            added = 0
+            removed = 0
+            unchanged = 0
+
+            # Remove models from tracking that are no longer loaded
+            tracked_models = list(self.loaded_models.keys())
+            for model in tracked_models:
+                # Only remove if this model was loaded by this provider
+                model_provider = self.loaded_models[model].get("provider", provider_name)
+                if model_provider == provider_name and model not in actual_loaded:
+                    del self.loaded_models[model]
+                    removed += 1
+                    log.info(
+                        "model_sync_removed",
+                        model=model,
+                        provider=provider_name,
+                        reason="not_in_backend",
+                    )
+
+            # Add models that are loaded but not tracked
+            for model in actual_loaded:
+                if model not in self.loaded_models:
+                    self.loaded_models[model] = {
+                        "loaded_at": datetime.now(),
+                        "last_used": datetime.now(),
+                        "size_gb": self.get_model_size(model),
+                        "provider": provider_name,
+                    }
+                    added += 1
+                    log.info(
+                        "model_sync_added",
+                        model=model,
+                        provider=provider_name,
+                        reason="found_in_backend",
+                    )
+                else:
+                    unchanged += 1
+
+            return {
+                "synced": True,
+                "provider": provider_name,
+                "added": added,
+                "removed": removed,
+                "unchanged": unchanged,
+                "total_loaded": len(self.loaded_models),
+            }

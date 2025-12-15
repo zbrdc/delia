@@ -1,5 +1,18 @@
-# Copyright (C) 2023 the project owner
-# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024 Delia Contributors
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """Tests for newly extracted modules to validate refactoring correctness."""
 
 import asyncio
@@ -8,8 +21,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
+from hypothesis import given, strategies as st
 
 from delia.queue import ModelQueue, QueuedRequest
 from delia.routing import CODE_INDICATORS, detect_code_content
@@ -65,7 +77,6 @@ class TestTokensModule:
         assert enc1 is enc2  # Same instance
 
     @given(st.text(max_size=1000))
-    @settings(max_examples=50)
     def test_count_tokens_never_crashes(self, text):
         """Token counting never crashes on arbitrary input."""
         result = count_tokens(text)
@@ -138,7 +149,6 @@ class TestValidationModuleEdgeCases:
         assert valid
 
     @given(st.text(max_size=100))
-    @settings(max_examples=50)
     def test_validate_task_never_crashes(self, task):
         """Task validation never crashes."""
         valid, msg = validate_task(task)
@@ -146,7 +156,6 @@ class TestValidationModuleEdgeCases:
         assert isinstance(msg, str)
 
     @given(st.text(max_size=10000))
-    @settings(max_examples=30)
     def test_validate_content_never_crashes(self, content):
         """Content validation never crashes."""
         valid, msg = validate_content(content)
@@ -250,7 +259,6 @@ Remember to handle edge cases.
         assert 0 <= confidence <= 1
 
     @given(st.text(min_size=50, max_size=2000))
-    @settings(max_examples=50)
     def test_detect_code_never_crashes(self, content):
         """Code detection never crashes on arbitrary input."""
         is_code, confidence, reason = detect_code_content(content)

@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """Ollama LLM provider implementation.
 
 This module provides the OllamaProvider class that implements the LLMProvider protocol
@@ -43,7 +44,13 @@ from ..messages import (
     get_status_message,
     get_tier_message,
 )
-from .base import LLMResponse, StreamChunk, create_error_response, create_success_response
+from .base import (
+    LLMResponse,
+    ModelLoadResult,
+    StreamChunk,
+    create_error_response,
+    create_success_response,
+)
 from .models import OllamaResponse
 
 if TYPE_CHECKING:
@@ -139,8 +146,14 @@ class OllamaProvider:
         content_preview: str = "",
         backend_obj: BackendConfig | None = None,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> LLMResponse:
-        """Call Ollama API with Pydantic validation, retry logic, and circuit breaker."""
+        """Call Ollama API with Pydantic validation, retry logic, and circuit breaker.
+
+        When tools are provided, uses /api/chat endpoint for native tool calling support.
+        Otherwise uses /api/generate for standard completions.
+        """
         start_time = time.time()
 
         # Resolve backend
@@ -198,14 +211,38 @@ class OllamaProvider:
         if max_tokens:
             options["num_predict"] = max_tokens
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": options,
-        }
-        if system:
-            payload["system"] = system
+        # Determine endpoint and payload format based on whether tools are provided
+        # /api/chat supports tools, /api/generate does not
+        use_chat_endpoint = tools is not None
+
+        if use_chat_endpoint:
+            # Use chat endpoint for tool calling support
+            messages: list[dict[str, str]] = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
+
+            payload: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "options": options,
+                "tools": tools,
+            }
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
+            endpoint = "/api/chat"
+        else:
+            # Use generate endpoint for standard completions
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": options,
+            }
+            if system:
+                payload["system"] = system
+            endpoint = "/api/generate"
 
         client = backend_obj.get_client()
 
@@ -216,7 +253,7 @@ class OllamaProvider:
             reraise=True,
         )
         async def _make_request():
-            return await client.post("/api/generate", json=payload)
+            return await client.post(endpoint, json=payload)
 
         data: dict[str, Any] = {}
         try:
@@ -236,19 +273,30 @@ class OllamaProvider:
             if response.status_code == 200:
                 try:
                     data = response.json()
-                    validated = OllamaResponse.model_validate(data)
                 except json.JSONDecodeError:
                     return create_error_response("Ollama returned non-JSON response")
-                except ValidationError as e:
-                    log.warning("ollama_validation_failed", error=str(e))
-                    validated = None
 
-                if validated:
-                    tokens = validated.eval_count
-                    response_text = validated.response
-                else:
+                # Handle response based on endpoint used
+                tool_calls = None
+                if use_chat_endpoint:
+                    # Chat endpoint response format
+                    message = data.get("message", {})
+                    response_text = message.get("content", "")
+                    tool_calls = message.get("tool_calls")
+                    # Token counts in chat response
                     tokens = data.get("eval_count", 0)
-                    response_text = data.get("response", "")
+                    if tokens == 0:
+                        tokens = data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
+                else:
+                    # Generate endpoint response format
+                    try:
+                        validated = OllamaResponse.model_validate(data)
+                        tokens = validated.eval_count
+                        response_text = validated.response
+                    except ValidationError as e:
+                        log.warning("ollama_validation_failed", error=str(e))
+                        tokens = data.get("eval_count", 0)
+                        response_text = data.get("response", "")
 
                 # Stats tracking
                 if self.stats_callback:
@@ -281,11 +329,15 @@ class OllamaProvider:
                 if self.save_stats_callback:
                     self.save_stats_callback()
 
+                metadata: dict[str, Any] = {"backend": "ollama", "model": model, "tier": model_tier}
+                if tool_calls:
+                    metadata["tool_calls"] = tool_calls
+
                 return create_success_response(
                     response_text=response_text,
                     tokens=tokens,
                     elapsed_ms=elapsed_ms,
-                    metadata={"backend": "ollama", "model": model, "tier": model_tier},
+                    metadata=metadata,
                 )
 
             # HTTP error handling
@@ -329,11 +381,16 @@ class OllamaProvider:
         content_preview: str = "",
         backend_obj: BackendConfig | None = None,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from Ollama API token by token.
 
         Yields StreamChunk objects as the model generates tokens.
         The final chunk has done=True and includes total token count.
+
+        Note: tools/tool_choice are accepted for signature compatibility but
+        tool calling with streaming is not currently supported.
         """
         start_time = time.time()
 
@@ -501,3 +558,195 @@ class OllamaProvider:
         except Exception as e:
             health.record_failure("exception", content_size)
             yield StreamChunk(done=True, error=f"Ollama streaming error: {e!s}")
+
+    def _find_ollama_backend(self) -> BackendConfig | None:
+        """Find the first enabled Ollama backend."""
+        for b in self.backend_manager.get_enabled_backends():
+            if b.provider == "ollama":
+                return b
+        return None
+
+    async def load_model(
+        self,
+        model: str,
+        backend_obj: BackendConfig | None = None,
+    ) -> ModelLoadResult:
+        """Preload a model into Ollama's GPU memory.
+
+        Uses Ollama's keep_alive=-1 to load and keep the model indefinitely.
+        This reduces latency on the first inference request.
+        """
+        start_time = time.time()
+
+        if not backend_obj:
+            backend_obj = self._find_ollama_backend()
+        if not backend_obj:
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="load",
+                error="No enabled Ollama backend found",
+            )
+
+        client = backend_obj.get_client()
+
+        try:
+            # Empty prompt with keep_alive=-1 preloads model indefinitely
+            payload = {"model": model, "keep_alive": -1}
+            response = await client.post("/api/generate", json=payload, timeout=300.0)
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            if response.status_code == 200:
+                log.info(
+                    "model_preloaded",
+                    model=model,
+                    elapsed_ms=elapsed_ms,
+                    backend="ollama",
+                )
+                return ModelLoadResult(
+                    success=True,
+                    model=model,
+                    action="load",
+                    elapsed_ms=elapsed_ms,
+                    metadata={"backend": "ollama"},
+                )
+            elif response.status_code == 404:
+                return ModelLoadResult(
+                    success=False,
+                    model=model,
+                    action="load",
+                    error=f"Model '{model}' not found. Run: ollama pull {model}",
+                    elapsed_ms=elapsed_ms,
+                )
+            else:
+                return ModelLoadResult(
+                    success=False,
+                    model=model,
+                    action="load",
+                    error=f"HTTP {response.status_code}: {response.text[:200]}",
+                    elapsed_ms=elapsed_ms,
+                )
+        except httpx.TimeoutException:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="load",
+                error="Timeout loading model (waited 5 minutes)",
+                elapsed_ms=elapsed_ms,
+            )
+        except Exception as e:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="load",
+                error=str(e),
+                elapsed_ms=elapsed_ms,
+            )
+
+    async def unload_model(
+        self,
+        model: str,
+        backend_obj: BackendConfig | None = None,
+    ) -> ModelLoadResult:
+        """Unload a model from Ollama's GPU memory.
+
+        Uses Ollama's keep_alive=0 to immediately unload the model,
+        freeing GPU memory for other models.
+        """
+        start_time = time.time()
+
+        if not backend_obj:
+            backend_obj = self._find_ollama_backend()
+        if not backend_obj:
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="unload",
+                error="No enabled Ollama backend found",
+            )
+
+        client = backend_obj.get_client()
+
+        try:
+            # Empty prompt with keep_alive=0 unloads model immediately
+            payload = {"model": model, "keep_alive": 0}
+            response = await client.post("/api/generate", json=payload, timeout=30.0)
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            if response.status_code == 200:
+                data = response.json()
+                # Verify unload succeeded (Ollama returns done_reason: "unload")
+                done_reason = data.get("done_reason", "")
+                log.info(
+                    "model_unloaded_ollama",
+                    model=model,
+                    elapsed_ms=elapsed_ms,
+                    done_reason=done_reason,
+                    backend="ollama",
+                )
+                return ModelLoadResult(
+                    success=True,
+                    model=model,
+                    action="unload",
+                    elapsed_ms=elapsed_ms,
+                    metadata={"backend": "ollama", "done_reason": done_reason},
+                )
+            elif response.status_code == 404:
+                # Model not found - consider unload successful
+                return ModelLoadResult(
+                    success=True,
+                    model=model,
+                    action="unload",
+                    elapsed_ms=elapsed_ms,
+                    metadata={"backend": "ollama", "note": "model_not_found"},
+                )
+            else:
+                return ModelLoadResult(
+                    success=False,
+                    model=model,
+                    action="unload",
+                    error=f"HTTP {response.status_code}: {response.text[:200]}",
+                    elapsed_ms=elapsed_ms,
+                )
+        except Exception as e:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="unload",
+                error=str(e),
+                elapsed_ms=elapsed_ms,
+            )
+
+    async def list_loaded_models(
+        self,
+        backend_obj: BackendConfig | None = None,
+    ) -> list[str]:
+        """Get list of currently loaded models in Ollama.
+
+        Uses Ollama's /api/ps endpoint to query running models.
+        """
+        if not backend_obj:
+            backend_obj = self._find_ollama_backend()
+        if not backend_obj:
+            return []
+
+        client = backend_obj.get_client()
+
+        try:
+            response = await client.get("/api/ps", timeout=10.0)
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("models", [])
+                # Extract model names, stripping :latest suffix for consistency
+                return [
+                    m.get("name", "").replace(":latest", "")
+                    for m in models
+                    if m.get("name")
+                ]
+        except Exception as e:
+            log.warning("list_loaded_models_failed", backend="ollama", error=str(e))
+
+        return []

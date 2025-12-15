@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """Tests for delia.tools module - agentic tool use for local LLMs."""
 
 import json
@@ -181,6 +182,57 @@ class TestToolParser:
         """Test detecting tool calls in text."""
         assert has_tool_calls("some <tool_call>...</tool_call> text")
         assert not has_tool_calls("no tools here")
+
+    def test_parse_raw_json_fallback(self):
+        """Test parsing raw JSON tool calls without XML wrapper."""
+        # Model outputs raw JSON without <tool_call> tags
+        text = '{"name": "list_directory", "arguments": {"path": "/home/dan"}}'
+        calls = parse_tool_calls(text, native_mode=False)
+
+        assert len(calls) == 1
+        assert calls[0].name == "list_directory"
+        assert calls[0].arguments["path"] == "/home/dan"
+
+    def test_parse_raw_json_with_surrounding_text(self):
+        """Test parsing raw JSON with surrounding explanation text."""
+        text = '''I'll list the directory for you.
+{"name": "list_directory", "arguments": {"path": "/tmp"}}
+'''
+        calls = parse_tool_calls(text, native_mode=False)
+
+        assert len(calls) == 1
+        assert calls[0].name == "list_directory"
+        assert calls[0].arguments["path"] == "/tmp"
+
+    def test_parse_raw_json_multiple(self):
+        """Test parsing multiple raw JSON tool calls."""
+        text = '''{"name": "read_file", "arguments": {"path": "a.py"}}
+
+{"name": "read_file", "arguments": {"path": "b.py"}}'''
+
+        calls = parse_tool_calls(text, native_mode=False)
+        assert len(calls) == 2
+        assert calls[0].arguments["path"] == "a.py"
+        assert calls[1].arguments["path"] == "b.py"
+
+    def test_has_tool_calls_raw_json(self):
+        """Test detecting raw JSON tool calls."""
+        assert has_tool_calls('{"name": "tool", "arguments": {"x": 1}}')
+        assert has_tool_calls('Some text {"name": "tool", "arguments": {}}')
+        # Should not match if missing required structure
+        assert not has_tool_calls('{"name": "not a tool"}')
+        assert not has_tool_calls('{"arguments": {"x": 1}}')
+
+    def test_xml_format_takes_precedence(self):
+        """Test that XML format is preferred over raw JSON."""
+        # When both formats are present, XML should be used
+        text = '''<tool_call>{"name": "xml_tool", "arguments": {"source": "xml"}}</tool_call>
+{"name": "json_tool", "arguments": {"source": "json"}}'''
+
+        calls = parse_tool_calls(text, native_mode=False)
+        # Should only parse the XML one (fallback not triggered)
+        assert len(calls) == 1
+        assert calls[0].name == "xml_tool"
 
     def test_has_tool_calls_native(self):
         """Test detecting tool calls in native format."""

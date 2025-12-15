@@ -1,6 +1,4 @@
-# Delia - Local LLM Orchestration
-# Copyright (C) 2024 Dan Yishai
-# Licensed under GPL-3.0
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -61,13 +59,13 @@ class ChainStep:
     def from_dict(cls, data: dict) -> "ChainStep":
         """Create ChainStep from dictionary."""
         return cls(
-            id=data.get("id", ""),
-            task=data.get("task", "quick"),
-            content=data.get("content", ""),
+            id=str(data.get("id", "")),
+            task=str(data.get("task", "quick")),
+            content=str(data.get("content", "")),
             model=data.get("model"),
             language=data.get("language"),
             output_var=data.get("output_var"),
-            pass_to_next=data.get("pass_to_next", False),
+            pass_to_next=bool(data.get("pass_to_next", False)),
         )
 
 

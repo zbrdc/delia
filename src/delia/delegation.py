@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Delegation helper functions for the delegate tool.
 
@@ -22,7 +23,6 @@ dependencies (like call_llm, tracker) receive them via a context object.
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +34,7 @@ from .config import config
 from .file_helpers import read_files, read_serena_memory
 from .language import detect_language, get_system_prompt
 from .prompt_templates import create_structured_prompt
-from .response_cache import get_cache
+from .text_utils import strip_thinking_tags
 from .tokens import count_tokens
 from .validation import (
     VALID_MODELS,
@@ -262,7 +262,6 @@ async def execute_delegate_call(
     target_backend: Any,
     backend_obj: Any | None = None,
     max_tokens: int | None = None,
-    use_cache: bool = True,
 ) -> tuple[str, int]:
     """Execute the LLM call and return response with metadata.
 
@@ -277,7 +276,6 @@ async def execute_delegate_call(
         target_backend: Backend to use
         backend_obj: Optional backend config object
         max_tokens: Optional token limit
-        use_cache: If True, use response cache (default). Set False to bypass cache.
 
     Returns:
         Tuple of (response_text, tokens_used)
@@ -286,23 +284,6 @@ async def execute_delegate_call(
         Exception: If LLM call fails
     """
     enable_thinking = task_type in config.thinking_tasks
-
-    # Check cache before calling LLM
-    if use_cache:
-        cache = get_cache()
-        cached_response = cache.get(
-            selected_model,
-            content,
-            system,
-            enable_thinking,
-            max_tokens,
-        )
-        if cached_response:
-            log.info("cache_hit", model=selected_model, task_type=task_type)
-            # Return cached response (tokens not saved in current implementation)
-            # Estimate tokens from cached response for tracking
-            estimated_tokens = count_tokens(cached_response)
-            return cached_response, estimated_tokens
 
     # Create a preview for the recent calls log
     content_preview = content[:200].replace("\n", " ").strip()
@@ -328,30 +309,8 @@ async def execute_delegate_call(
     response_text = result.get("response", "")
     tokens = result.get("tokens", 0)
 
-    # Strip thinking tags - extract content after </think>, or thinking content if nothing follows
-    if "</think>" in response_text:
-        after_think = response_text.split("</think>")[-1].strip()
-        if after_think:
-            # Use content after thinking block
-            response_text = after_think
-        else:
-            # No content after thinking - extract thinking content itself
-            think_match = re.search(r"<think>(.*?)</think>", response_text, re.DOTALL)
-            if think_match:
-                response_text = think_match.group(1).strip()
-
-    # Store in cache after successful LLM call
-    if use_cache:
-        cache = get_cache()
-        cache.put(
-            selected_model,
-            content,
-            response_text,
-            tokens,
-            system,
-            enable_thinking,
-            max_tokens,
-        )
+    # Strip thinking tags from models like Qwen3, DeepSeek-R1
+    response_text = strip_thinking_tags(response_text)
 
     return response_text, tokens
 
@@ -417,7 +376,6 @@ async def delegate_impl(
     files: str | None = None,
     include_metadata: bool = True,
     max_tokens: int | None = None,
-    use_cache: bool = True,
     session_id: str | None = None,
 ) -> str:
     """Core implementation for delegate - can be called directly by batch().
@@ -437,7 +395,6 @@ async def delegate_impl(
         files: Comma-separated file paths (Delia reads directly)
         include_metadata: If False, skip the metadata footer
         max_tokens: Limit response tokens
-        use_cache: If True, use response cache (default). Set False to bypass cache.
         session_id: Optional session ID for conversation history tracking
 
     Returns:
@@ -515,7 +472,6 @@ async def delegate_impl(
             target_backend,
             backend_obj,
             max_tokens=max_tokens,
-            use_cache=use_cache,
         )
     except Exception as e:
         return f"Error: {e!s}"

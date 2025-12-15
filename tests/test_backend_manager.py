@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import json
 from pathlib import Path
 import tempfile
@@ -146,6 +147,53 @@ class TestBackendManager:
         await self.manager.remove_backend("llamacpp-1")
         # Should fall back to the enabled one
         assert self.manager.get_active_backend().id == "ollama-1"
+
+    def test_native_tool_calling_auto_detection(self):
+        """Test that from_dict auto-detects native tool calling capability."""
+        # llamacpp supports native tool calling
+        llamacpp_data = {
+            "id": "test-llamacpp",
+            "name": "LlamaCpp Test",
+            "provider": "llamacpp",
+            "type": "local",
+            "url": "http://localhost:8080",
+        }
+        config = BackendConfig.from_dict(llamacpp_data)
+        assert config.supports_native_tool_calling is True
+
+        # openai supports native tool calling
+        openai_data = {
+            "id": "test-openai",
+            "name": "OpenAI Test",
+            "provider": "openai",
+            "type": "remote",
+            "url": "https://api.openai.com/v1",
+        }
+        config = BackendConfig.from_dict(openai_data)
+        assert config.supports_native_tool_calling is True
+
+        # ollama does NOT support native tool calling (text-based fallback)
+        ollama_data = {
+            "id": "test-ollama",
+            "name": "Ollama Test",
+            "provider": "ollama",
+            "type": "local",
+            "url": "http://localhost:11434",
+        }
+        config = BackendConfig.from_dict(ollama_data)
+        assert config.supports_native_tool_calling is False
+
+        # Explicit override should be respected
+        explicit_data = {
+            "id": "test-explicit",
+            "name": "Explicit Test",
+            "provider": "ollama",
+            "type": "local",
+            "url": "http://localhost:11434",
+            "supports_native_tool_calling": True,  # Explicit override
+        }
+        config = BackendConfig.from_dict(explicit_data)
+        assert config.supports_native_tool_calling is True
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -140,11 +140,14 @@ from .providers import (
     StreamChunk,
 )
 
+# Import LLM calling infrastructure (call_llm, call_llm_stream)
+from .llm import call_llm, call_llm_stream, init_llm_module
+
 # Import model queue system
 from .queue import ModelQueue, QueuedRequest
 
-# Import routing utilities (content detection, model override parsing)
-from .routing import CODE_INDICATORS, detect_code_content, parse_model_override
+# Import routing utilities (content detection, model override parsing, model selection)
+from .routing import CODE_INDICATORS, detect_code_content, parse_model_override, select_model
 
 # Import language detection (LANGUAGE_CONFIGS, detect_language, get_system_prompt, optimize_prompt)
 from .language import (
@@ -157,6 +160,8 @@ from .language import (
 
 # Import file helpers (read_files, read_serena_memory, read_file_safe, MEMORY_DIR)
 from .file_helpers import MEMORY_DIR, read_file_safe
+from .text_utils import strip_thinking_tags
+from .types import Workspace
 
 # Import delegation helpers
 from .delegation import (
@@ -186,6 +191,7 @@ from .tools import (
     get_default_tools,
     run_agent_loop,
     ToolRegistry,
+    MCPClientManager,
 )
 
 # Conditional authentication imports (based on config.auth_enabled)
@@ -416,7 +422,13 @@ log = structlog.get_logger()
 
 
 # Global model queue instance (imported from queue.py)
+# Note: provider_getter is set later after _get_provider is defined
 model_queue = ModelQueue()
+
+
+# Global MCP client manager for external tool passthrough
+# Connects to external MCP servers and imports their tools into Delia
+mcp_client_manager = MCPClientManager()
 
 
 # ============================================================
@@ -524,6 +536,10 @@ paths.ensure_directories()
 # Load stats immediately at module import time
 stats_service.load()
 load_live_logs()
+
+# Load MCP server configurations (but don't start servers yet - that's async)
+mcp_client_manager.load_config(backend_manager.get_mcp_servers())
+
 
 # ============================================================
 # BACKEND CLIENT MANAGEMENT
@@ -651,129 +667,9 @@ def get_model_info(model_name: str) -> dict:
 
 
 
-
-
-async def select_model(
-    task_type: str, content_size: int = 0, model_override: str | None = None, content: str = ""
-) -> str:
-    """
-    Select the best model for the task with intelligent code-aware routing.
-
-    Tiers (configured in settings.json):
-    - quick: Fast general tasks, text analysis, summarize
-    - coder: Code generation, review, analysis
-    - moe: Complex reasoning - plan, critique, large text
-
-    Strategy:
-    1. Honor explicit overrides
-    2. MoE tasks (plan, critique) always use MoE model
-    3. Detect if content is CODE or TEXT:
-       - Large CODE → coder (specialized for programming)
-       - Large TEXT → moe (better reasoning for prose)
-    4. Code-focused tasks on code content → coder
-    5. Default to quick for everything else
-    """
-    # Get models from active backend
-    backend = backend_manager.get_active_backend()
-    if backend:
-        model_quick = backend.models.get("quick", config.model_quick.ollama_model)
-        model_coder = backend.models.get("coder", config.model_coder.ollama_model)
-        model_moe = backend.models.get("moe", config.model_moe.ollama_model)
-        model_thinking = backend.models.get("thinking", config.model_thinking.ollama_model)
-    else:
-        # Fallback to config defaults
-        model_quick = config.model_quick.ollama_model
-        model_coder = config.model_coder.ollama_model
-        model_moe = config.model_moe.ollama_model
-        model_thinking = config.model_thinking.ollama_model
-
-    # Helper to resolve tier name to model name
-    def resolve_tier(tier_name):
-        if tier_name == "quick":
-            return model_quick
-        if tier_name == "coder":
-            return model_coder
-        if tier_name == "moe":
-            return model_moe
-        if tier_name == "thinking":
-            return model_thinking
-        return tier_name  # Assume it's a model name if not a tier
-
-    # Priority 1: Explicit override
-    if model_override:
-        resolved = resolve_tier(model_override)
-        log.info("model_selected", source="override", tier=model_override, model=resolved)
-        return resolved
-
-    # Priority 2: Tasks that REQUIRE MoE (complex multi-step reasoning)
-    if task_type in config.moe_tasks:
-        log.info("model_selected", source="moe_task", task=task_type, tier="moe")
-        return model_moe
-
-    # Detect code content once (cache result for reuse below)
-    code_detection = None
-    if content and (content_size > config.large_content_threshold or task_type in config.coder_tasks):
-        code_detection = detect_code_content(content)
-
-    # Priority 3: Large content - detect if code or text
-    if content_size > config.large_content_threshold and code_detection:
-        is_code, confidence, reasoning = code_detection
-        if is_code and confidence > 0.5:
-            log.info(
-                "model_selected",
-                source="large_code",
-                content_kb=content_size // 1000,
-                confidence=f"{confidence:.0%}",
-                tier="coder",
-                reasoning=reasoning,
-            )
-            return model_coder
-        else:
-            # Large text content benefits from MoE's reasoning
-            log.info(
-                "model_selected",
-                source="large_text",
-                content_kb=content_size // 1000,
-                confidence=f"{1 - confidence:.0%}",
-                tier="moe",
-                reasoning=reasoning,
-            )
-            return model_moe
-
-    # Priority 4: Code-focused tasks - check if content is actually code (reuse cached detection)
-    if task_type in config.coder_tasks and code_detection:
-        is_code, confidence, reasoning = code_detection
-        if is_code or confidence > 0.3:
-            log.info("model_selected", source="coder_task_code", task=task_type, tier="coder", reasoning=reasoning)
-            return model_coder
-        else:
-            # Task like "analyze" on text should use quick/moe, not coder
-            log.info("model_selected", source="coder_task_text", task=task_type, tier="quick", reasoning=reasoning)
-            # Fall through to default
-
-    # Priority 5: Default to quick (fastest model)
-    log.info("model_selected", source="default", task=task_type, tier="quick")
-    return model_quick
-
-
 # ============================================================
-# PROVIDER FACTORY (lazy initialization)
+# LLM MODULE INITIALIZATION
 # ============================================================
-
-# Cache for provider instances (created lazily on first use)
-_provider_cache: dict[str, OllamaProvider | LlamaCppProvider | GeminiProvider] = {}
-
-# Provider name to class mapping (includes aliases)
-_PROVIDER_CLASS_MAP: dict[str, type[OllamaProvider | LlamaCppProvider | GeminiProvider]] = {
-    "ollama": OllamaProvider,
-    "llamacpp": LlamaCppProvider,
-    "llama.cpp": LlamaCppProvider,
-    "lmstudio": LlamaCppProvider,
-    "vllm": LlamaCppProvider,
-    "openai": LlamaCppProvider,
-    "custom": LlamaCppProvider,
-    "gemini": GeminiProvider,
-}
 
 
 def _save_stats_background() -> None:
@@ -781,253 +677,16 @@ def _save_stats_background() -> None:
     _schedule_background_task(save_all_stats_async())
 
 
-def _get_provider(provider_name: str) -> OllamaProvider | LlamaCppProvider | GeminiProvider | None:
-    """Get or create a provider instance for the given provider name.
-
-    Uses lazy initialization - providers are created on first use and cached.
-    This avoids circular dependency issues with _update_stats_sync.
-
-    Args:
-        provider_name: Provider type (ollama, llamacpp, gemini, etc.)
-
-    Returns:
-        Provider instance or None if provider not found
-    """
-    if provider_name not in _PROVIDER_CLASS_MAP:
-        return None
-
-    # Return cached instance if available
-    if provider_name in _provider_cache:
-        return _provider_cache[provider_name]
-
-    # Create new instance with dependencies
-    # Note: save_stats_callback is wrapped to schedule async task properly
-    provider_class = _PROVIDER_CLASS_MAP[provider_name]
-    provider = provider_class(
-        config=config,
-        backend_manager=backend_manager,
-        stats_callback=_update_stats_sync,
-        save_stats_callback=_save_stats_background,
-    )
-    _provider_cache[provider_name] = provider
-    return provider
+# Initialize the LLM module with callbacks and model queue
+# This wires up the provider factory and queue lifecycle management
+init_llm_module(
+    stats_callback=_update_stats_sync,
+    save_stats_callback=_save_stats_background,
+    model_queue=model_queue,
+)
 
 
-
-async def call_llm(
-    model: str,
-    prompt: str,
-    system: str | None = None,
-    enable_thinking: bool = False,
-    task_type: str = "unknown",
-    original_task: str = "unknown",
-    language: str = "unknown",
-    content_preview: str = "",
-    backend: str | BackendConfig | None = None,
-    backend_obj: BackendConfig | None = None,
-    max_tokens: int | None = None,
-) -> dict[str, Any]:
-    """
-    Unified LLM call dispatcher that routes to the appropriate backend.
-
-    Args:
-        model: Model name/tier
-        prompt: The prompt to send
-        system: Optional system prompt
-        enable_thinking: Enable thinking mode for supported models
-        task_type: Type of task for tracking
-        language: Detected language for tracking
-        content_preview: Preview for logging
-        backend: Override backend ID or provider name
-        backend_obj: Optional BackendConfig object to use directly
-        max_tokens: Maximum response tokens (limits verbosity)
-    """
-    # Acquire model from queue (prevents concurrent loading)
-    # Note: Gemini is cloud-based so we might skip local queue for it,
-    # but the queue also manages concurrency limits which is good.
-    content_length = len(prompt) + len(system or "")
-    is_available, queue_future = await model_queue.acquire_model(model, task_type, content_length)
-
-    # If model is not immediately available, wait for it to be queued and processed
-    if not is_available and queue_future:
-        try:
-            await asyncio.wait_for(queue_future, timeout=300)  # Wait up to 5 minutes for model to load
-        except TimeoutError:
-            model_queue.queue_timeouts += 1
-            await model_queue.release_model(model, success=False)
-            log.warning(
-                "queue_timeout",
-                model=model,
-                wait_seconds=300,
-                total_timeouts=model_queue.queue_timeouts,
-                log_type="QUEUE",
-            )
-            return {"success": False, "error": f"Timeout waiting for model {model} to load (waited 5 minutes)"}
-        except Exception as e:
-            await model_queue.release_model(model, success=False)
-            log.error("queue_error", model=model, error=str(e), log_type="QUEUE")
-            return {"success": False, "error": f"Error waiting for model {model}: {e!s}"}
-
-    try:
-        # Determine backend to use
-        active_backend = None
-
-        # 1. Use passed object if available
-        if backend_obj:
-            active_backend = backend_obj
-        # 2. Resolve by ID or provider name
-        elif backend:
-            # If backend is already a BackendConfig, use it directly
-            if isinstance(backend, BackendConfig):
-                active_backend = backend
-            else:
-                # Try as ID
-                active_backend = backend_manager.get_backend(backend)
-                if not active_backend:
-                    # Try as provider name
-                    for b in backend_manager.get_enabled_backends():
-                        if b.provider == backend:
-                            active_backend = b
-                            break
-        # 3. Use default active backend
-        else:
-            active_backend = backend_manager.get_active_backend()
-
-        if not active_backend:
-            await model_queue.release_model(model, success=False)
-            return {"success": False, "error": "No active backend found"}
-
-        # Dispatch using provider factory (lazy initialization, cached)
-        provider = _get_provider(active_backend.provider)
-        if not provider:
-            await model_queue.release_model(model, success=False)
-            return {"success": False, "error": f"Unsupported provider: {active_backend.provider}"}
-
-        response = await provider.call(
-            model=model,
-            prompt=prompt,
-            system=system,
-            enable_thinking=enable_thinking,
-            task_type=task_type,
-            original_task=original_task,
-            language=language,
-            content_preview=content_preview,
-            backend_obj=active_backend,
-            max_tokens=max_tokens,
-        )
-        result = response.to_dict()
-
-        # Release model on success
-        await model_queue.release_model(model, success=result.get("success", False))
-        return result
-    except Exception:
-        # Release model on failure
-        await model_queue.release_model(model, success=False)
-        raise
-
-
-async def call_llm_stream(
-    model: str,
-    prompt: str,
-    system: str | None = None,
-    enable_thinking: bool = False,
-    task_type: str = "unknown",
-    original_task: str = "unknown",
-    language: str = "unknown",
-    content_preview: str = "",
-    backend: str | BackendConfig | None = None,
-    backend_obj: BackendConfig | None = None,
-    max_tokens: int | None = None,
-) -> AsyncIterator[StreamChunk]:
-    """
-    Unified LLM streaming dispatcher that routes to the appropriate backend.
-
-    Yields StreamChunk objects as the model generates tokens.
-
-    Args:
-        model: Model name/tier
-        prompt: The prompt to send
-        system: Optional system prompt
-        enable_thinking: Enable thinking mode for supported models
-        task_type: Type of task for tracking
-        language: Detected language for tracking
-        content_preview: Preview for logging
-        backend: Override backend ID or provider name
-        backend_obj: Optional BackendConfig object to use directly
-        max_tokens: Maximum response tokens
-
-    Yields:
-        StreamChunk objects with incremental text and final metadata
-    """
-    # Note: For streaming, we skip the queue for now to reduce complexity
-    # The queue is primarily for preventing concurrent model loads
-
-    # Determine backend to use
-    active_backend = None
-
-    if backend_obj:
-        active_backend = backend_obj
-    elif backend:
-        if isinstance(backend, BackendConfig):
-            active_backend = backend
-        else:
-            active_backend = backend_manager.get_backend(backend)
-            if not active_backend:
-                for b in backend_manager.get_enabled_backends():
-                    if b.provider == backend:
-                        active_backend = b
-                        break
-    else:
-        active_backend = backend_manager.get_active_backend()
-
-    if not active_backend:
-        yield StreamChunk(done=True, error="No active backend found")
-        return
-
-    # Get provider and stream
-    provider = _get_provider(active_backend.provider)
-    if not provider:
-        yield StreamChunk(done=True, error=f"Unsupported provider: {active_backend.provider}")
-        return
-
-    # Check if provider supports streaming
-    if hasattr(provider, "call_stream"):
-        async for chunk in provider.call_stream(
-            model=model,
-            prompt=prompt,
-            system=system,
-            enable_thinking=enable_thinking,
-            task_type=task_type,
-            original_task=original_task,
-            language=language,
-            content_preview=content_preview,
-            backend_obj=active_backend,
-            max_tokens=max_tokens,
-        ):
-            yield chunk
-    else:
-        # Fallback to non-streaming call
-        response = await provider.call(
-            model=model,
-            prompt=prompt,
-            system=system,
-            enable_thinking=enable_thinking,
-            task_type=task_type,
-            original_task=original_task,
-            language=language,
-            content_preview=content_preview,
-            backend_obj=active_backend,
-            max_tokens=max_tokens,
-        )
-        if response.success:
-            yield StreamChunk(
-                text=response.response,
-                done=True,
-                tokens=response.tokens,
-                metadata=response.metadata or {},
-            )
-        else:
-            yield StreamChunk(done=True, error=response.error)
+# NOTE: call_llm and call_llm_stream are imported from .llm module
 
 
 # ============================================================
@@ -1237,7 +896,6 @@ async def select_delegate_model(
     """Select model and backend for delegate tasks.
 
     Wrapper for delegation.select_delegate_model that provides context.
-    Used by structured_tools.py for backwards compatibility.
     """
     ctx = _get_delegate_context()
     return await _select_delegate_model_impl(
@@ -1431,17 +1089,8 @@ async def delegate(
         if elapsed_ms == 0:
             elapsed_ms = int((time.time() - start_time) * 1000)
 
-        # Strip thinking tags - extract content after </think>, or thinking content if nothing follows
-        if "</think>" in full_response:
-            after_think = full_response.split("</think>")[-1].strip()
-            if after_think:
-                # Use content after thinking block
-                full_response = after_think
-            else:
-                # No content after thinking - extract thinking content itself
-                think_match = re.search(r"<think>(.*?)</think>", full_response, re.DOTALL)
-                if think_match:
-                    full_response = think_match.group(1).strip()
+        # Strip thinking tags from models like Qwen3, DeepSeek-R1
+        full_response = strip_thinking_tags(full_response)
 
         # Format response with metadata
         if include_metadata:
@@ -2115,6 +1764,7 @@ async def agent(
     max_iterations: int = 10,
     tools: str | None = None,
     backend_type: str | None = None,
+    workspace: str | None = None,
 ) -> str:
     """
     Run an autonomous agent that can use tools to complete tasks.
@@ -2137,6 +1787,10 @@ async def agent(
             - "web_fetch" - Fetch URL contents
             If not specified, all tools are enabled.
         backend_type: Force backend type - "local" | "remote"
+        workspace: Optional workspace directory to confine file operations.
+            If provided, all file operations (read_file, list_directory, search_code)
+            are restricted to this directory. Prevents agent from accessing files
+            outside the project. If not provided, agent can access any file.
 
     AVAILABLE TOOLS:
     - read_file(path, start_line?, end_line?) - Read file with line numbers
@@ -2158,6 +1812,7 @@ async def agent(
         agent(prompt="Read config.py and explain the main class")
         agent(prompt="Search for all usages of 'async def' in .py files")
         agent(prompt="Analyze the error handling patterns in this codebase", model="moe")
+        agent(prompt="Review the code", workspace="/home/user/project")
     """
     import json as json_module
 
@@ -2176,8 +1831,14 @@ async def agent(
         content=prompt,
     )
 
-    # Set up tool registry
-    registry = get_default_tools()
+    # Set up tool registry with optional workspace confinement
+    workspace_obj = Workspace(root=workspace) if workspace else None
+    registry = get_default_tools(workspace=workspace_obj)
+
+    # Register MCP tools if any servers are running
+    if mcp_client_manager.get_all_tools():
+        mcp_client_manager.register_tools(registry)
+
     if tools:
         tool_list = [t.strip() for t in tools.split(",") if t.strip()]
         registry = registry.filter(tool_list)
@@ -2257,11 +1918,12 @@ async def agent(
         tool_names = [tc.name for tc in result.tool_calls]
         tool_summary = f"\nTools used: {', '.join(tool_names)}"
 
+    workspace_info = f" | Workspace: {workspace}" if workspace else ""
     status = "✓" if result.success else "⚠"
     return f"""{result.response}
 
 ---
-_{status} Agent completed | Iterations: {result.iterations} | Time: {elapsed_ms}ms | Model: {selected_model}{tool_summary}_"""
+_{status} Agent completed | Iterations: {result.iterations} | Time: {elapsed_ms}ms | Model: {selected_model}{workspace_info}{tool_summary}_"""
 
 
 @mcp.tool()
@@ -2599,6 +2261,184 @@ async def get_model_info_tool(model_name: str) -> str:
 
 
 # ============================================================
+# MCP SERVERS (External tool passthrough)
+# ============================================================
+
+
+@mcp.tool()
+async def mcp_servers(
+    action: str = "status",
+    server_id: str | None = None,
+    command: str | None = None,
+    name: str | None = None,
+    env: str | None = None,
+) -> str:
+    """
+    Manage external MCP servers for tool passthrough to local LLMs.
+
+    This enables Delia's local LLMs to use tools from any MCP server.
+    Configure servers in settings.json under "mcp_servers" array.
+
+    WHEN TO USE:
+    - Check status of connected MCP servers
+    - Start/stop MCP servers dynamically
+    - Add/remove MCP server configurations
+    - List available tools from external servers
+
+    Args:
+        action: Action to perform:
+            - "status" - Show all configured servers and their status (default)
+            - "start" - Start a specific server (requires server_id)
+            - "stop" - Stop a specific server (requires server_id)
+            - "start_all" - Start all enabled servers
+            - "stop_all" - Stop all running servers
+            - "add" - Add a new server configuration (requires command, name optional)
+            - "remove" - Remove a server configuration (requires server_id)
+            - "tools" - List all available tools from running servers
+        server_id: Server ID for start/stop/remove actions
+        command: JSON array of command args for 'add' action (e.g., '["npx", "mcp-server"]')
+        name: Human-readable name for 'add' action
+        env: JSON object of environment variables for 'add' action
+
+    Returns:
+        JSON with action result and server status
+
+    Examples:
+        mcp_servers()  # Show status
+        mcp_servers(action="start_all")  # Start all enabled servers
+        mcp_servers(action="tools")  # List all available tools
+        mcp_servers(action="add", command='["npx", "@anthropic/mcp-server-filesystem", "/home"]', name="Filesystem")
+        mcp_servers(action="start", server_id="filesystem")
+    """
+    import json as json_mod
+    import uuid
+
+    if action == "status":
+        status = mcp_client_manager.get_status()
+        return json_mod.dumps(status, indent=2)
+
+    elif action == "start_all":
+        results = await mcp_client_manager.start_all()
+        return json_mod.dumps({
+            "action": "start_all",
+            "results": results,
+            "status": mcp_client_manager.get_status(),
+        }, indent=2)
+
+    elif action == "stop_all":
+        await mcp_client_manager.stop_all()
+        return json_mod.dumps({
+            "action": "stop_all",
+            "success": True,
+            "status": mcp_client_manager.get_status(),
+        }, indent=2)
+
+    elif action == "start":
+        if not server_id:
+            return json_mod.dumps({"error": "server_id required for start action"})
+        success = await mcp_client_manager.start_server(server_id)
+        return json_mod.dumps({
+            "action": "start",
+            "server_id": server_id,
+            "success": success,
+            "status": mcp_client_manager.get_status(),
+        }, indent=2)
+
+    elif action == "stop":
+        if not server_id:
+            return json_mod.dumps({"error": "server_id required for stop action"})
+        success = await mcp_client_manager.stop_server(server_id)
+        return json_mod.dumps({
+            "action": "stop",
+            "server_id": server_id,
+            "success": success,
+            "status": mcp_client_manager.get_status(),
+        }, indent=2)
+
+    elif action == "add":
+        if not command:
+            return json_mod.dumps({"error": "command required for add action (JSON array)"})
+        try:
+            cmd_list = json_mod.loads(command)
+        except json_mod.JSONDecodeError:
+            return json_mod.dumps({"error": "Invalid command JSON - must be array"})
+
+        if not isinstance(cmd_list, list):
+            return json_mod.dumps({"error": "command must be a JSON array"})
+
+        # Parse optional env
+        env_dict = {}
+        if env:
+            try:
+                env_dict = json_mod.loads(env)
+            except json_mod.JSONDecodeError:
+                return json_mod.dumps({"error": "Invalid env JSON - must be object"})
+
+        # Create server config
+        new_id = server_id or str(uuid.uuid4())[:8]
+        config = {
+            "id": new_id,
+            "name": name or f"MCP Server {new_id}",
+            "command": cmd_list,
+            "enabled": True,
+            "env": env_dict,
+        }
+
+        # Add to backend manager (persists to settings.json)
+        success = backend_manager.add_mcp_server(config)
+        if success:
+            # Reload manager config
+            mcp_client_manager.load_config(backend_manager.get_mcp_servers())
+
+        return json_mod.dumps({
+            "action": "add",
+            "success": success,
+            "server_id": new_id,
+            "config": config if success else None,
+        }, indent=2)
+
+    elif action == "remove":
+        if not server_id:
+            return json_mod.dumps({"error": "server_id required for remove action"})
+
+        # Stop if running
+        await mcp_client_manager.stop_server(server_id)
+
+        # Remove from config
+        success = backend_manager.remove_mcp_server(server_id)
+        if success:
+            mcp_client_manager.load_config(backend_manager.get_mcp_servers())
+
+        return json_mod.dumps({
+            "action": "remove",
+            "server_id": server_id,
+            "success": success,
+        }, indent=2)
+
+    elif action == "tools":
+        tools = mcp_client_manager.get_all_tools()
+        return json_mod.dumps({
+            "action": "tools",
+            "total_tools": len(tools),
+            "tools": [
+                {
+                    "name": f"mcp_{t.server_id}_{t.name}",
+                    "server_id": t.server_id,
+                    "original_name": t.name,
+                    "description": t.description,
+                }
+                for t in tools
+            ],
+        }, indent=2)
+
+    else:
+        return json_mod.dumps({
+            "error": f"Unknown action: {action}",
+            "valid_actions": ["status", "start", "stop", "start_all", "stop_all", "add", "remove", "tools"],
+        })
+
+
+# ============================================================
 # MCP RESOURCES (Expose data for cross-server communication)
 # ============================================================
 
@@ -2713,16 +2553,6 @@ async def resource_memories() -> str:
         for f in MEMORY_DIR.glob("*.md"):
             memories.append(f.stem)
     return json.dumps({"memories": sorted(memories)}, indent=2)
-
-
-# ============================================================
-# STRUCTURED TOOLS (LLM-to-LLM optimized JSON interfaces)
-# ============================================================
-
-# Import structured tools module - this registers additional MCP tools
-# with typed JSON input/output for programmatic use by AI assistants.
-# The import must happen after mcp and all helper functions are defined.
-from . import structured_tools  # noqa: F401
 
 
 # ============================================================

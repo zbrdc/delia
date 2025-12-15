@@ -1,3 +1,18 @@
+# Copyright (C) 2024 Delia Contributors
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Aggressive bug-hunting tests designed to find edge cases and potential issues.
 
@@ -426,8 +441,9 @@ class TestRaceConditions:
     @pytest.mark.asyncio
     async def test_concurrent_model_selection(self):
         """Concurrent model selection shouldn't race."""
-        from delia.mcp_server import select_model
+        from delia.routing import select_model, _router, get_router
         from delia.backend_manager import BackendConfig
+        import delia.routing as routing_module
 
         mock_backend = BackendConfig(
             id="test", name="Test", provider="ollama", type="local",
@@ -435,7 +451,10 @@ class TestRaceConditions:
             models={"quick": "q", "coder": "c", "moe": "m", "thinking": "t"}
         )
 
-        with patch("delia.mcp_server.backend_manager") as mock_manager:
+        # Reset the singleton so we get fresh state
+        routing_module._router = None
+
+        with patch("delia.backend_manager.backend_manager") as mock_manager:
             mock_manager.get_active_backend.return_value = mock_backend
 
             async def select():
@@ -446,6 +465,9 @@ class TestRaceConditions:
 
             # All should return the same model
             assert all(r == "q" for r in results)
+
+        # Reset singleton after test
+        routing_module._router = None
 
     @pytest.mark.asyncio
     async def test_stats_concurrent_updates(self):

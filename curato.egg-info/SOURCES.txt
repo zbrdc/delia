@@ -1,9 +1,0 @@
-LICENSE
-README.md
-pyproject.toml
-curato.egg-info/PKG-INFO
-curato.egg-info/SOURCES.txt
-curato.egg-info/dependency_links.txt
-curato.egg-info/entry_points.txt
-curato.egg-info/requires.txt
-curato.egg-info/top_level.txt
