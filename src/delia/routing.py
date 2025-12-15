@@ -16,13 +16,22 @@
 """Content detection and routing utilities for Delia."""
 
 import os
+import random
 import re
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from .config import (
+    get_affinity_tracker,
+    get_backend_health,
+    get_backend_metrics,
+    get_provider_cost,
+)
+
 if TYPE_CHECKING:
-    from .backend_manager import BackendManager
+    from .backend_manager import BackendConfig, BackendManager
     from .config import Config
 
 log = structlog.get_logger()
@@ -196,6 +205,348 @@ def parse_model_override(model_hint: str | None, content: str) -> str | None:
     return None
 
 
+# =============================================================================
+# Backend Scoring for Latency-Aware Routing
+# =============================================================================
+
+
+@dataclass
+class ScoringWeights:
+    """Configurable weights for backend scoring.
+
+    All weights should sum to approximately 1.0 for normalized scoring.
+    Cost weight defaults to 0.0 (disabled) - enable it by reducing other weights.
+    """
+
+    latency: float = 0.35  # Lower latency = better
+    throughput: float = 0.15  # Higher tokens/sec = better
+    reliability: float = 0.35  # Higher success rate = better
+    availability: float = 0.15  # Circuit breaker state
+    cost: float = 0.0  # Lower cost = better (disabled by default)
+
+    def __post_init__(self) -> None:
+        """Validate weights are non-negative."""
+        for attr in ("latency", "throughput", "reliability", "availability", "cost"):
+            if getattr(self, attr) < 0:
+                raise ValueError(f"Weight {attr} must be non-negative")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, float]) -> "ScoringWeights":
+        """Create ScoringWeights from a dictionary.
+
+        Only uses recognized keys; ignores unknown keys.
+        """
+        valid_keys = {"latency", "throughput", "reliability", "availability", "cost"}
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered)
+
+
+class BackendScorer:
+    """Score backends for optimal routing based on performance metrics.
+
+    Higher scores indicate better backend choices. Scoring considers:
+    - Latency: Lower P50 latency = better
+    - Throughput: Higher tokens per second = better
+    - Reliability: Higher success rate = better
+    - Availability: Circuit breaker state (open = unavailable)
+    - Cost: Lower cost per token = better (optional, disabled by default)
+    """
+
+    # Reference values for normalization
+    _REFERENCE_LATENCY_MS: float = 1000.0  # 1s = 0.5 score
+    _REFERENCE_THROUGHPUT_TPS: float = 100.0  # 100 tok/s = 1.0 score cap
+    _REFERENCE_COST_PER_1K: float = 0.01  # $0.01/1K = 0.5 score
+
+    def __init__(self, weights: ScoringWeights | None = None) -> None:
+        """Initialize the scorer with optional custom weights.
+
+        Args:
+            weights: Custom scoring weights. Uses defaults if not specified.
+        """
+        self.weights = weights or ScoringWeights()
+
+    def score(
+        self, backend: "BackendConfig", task_type: str | None = None
+    ) -> float:
+        """Calculate a 0.0-1.0 score for a backend.
+
+        Higher score = better backend choice. New backends with no metrics
+        start with a neutral/optimistic score.
+
+        Args:
+            backend: Backend configuration to score
+            task_type: Optional task type for affinity-based scoring boost
+
+        Returns:
+            Score from 0.0 to 1.0 (may exceed 1.0 with affinity boost)
+        """
+        metrics = get_backend_metrics(backend.id)
+        health = get_backend_health(backend.id)
+
+        # Calculate component scores (all 0.0 to 1.0)
+        latency_score = self._score_latency(metrics.latency_p50)
+        throughput_score = self._score_throughput(metrics.tokens_per_second)
+        reliability_score = metrics.success_rate
+        availability_score = 1.0 if health.is_available() else 0.0
+        cost_score = self._score_cost(backend.provider)
+
+        # Weighted sum
+        total = (
+            self.weights.latency * latency_score
+            + self.weights.throughput * throughput_score
+            + self.weights.reliability * reliability_score
+            + self.weights.availability * availability_score
+            + self.weights.cost * cost_score
+        )
+
+        # Apply task-specific affinity boost if task_type provided
+        affinity = None
+        if task_type:
+            tracker = get_affinity_tracker()
+            affinity = tracker.get_affinity(backend.id, task_type)
+            total = tracker.boost_score(total, backend.id, task_type)
+
+        log.debug(
+            "backend_scored",
+            backend=backend.id,
+            score=round(total, 3),
+            latency=round(latency_score, 3),
+            throughput=round(throughput_score, 3),
+            reliability=round(reliability_score, 3),
+            availability=availability_score,
+            cost=round(cost_score, 3),
+            affinity=round(affinity, 3) if affinity is not None else None,
+            task_type=task_type,
+        )
+
+        return total
+
+    def _score_latency(self, latency_ms: float) -> float:
+        """Convert latency to 0-1 score (lower latency = higher score).
+
+        Uses inverse relationship: score = 1 / (1 + latency/reference)
+        - 0ms = 1.0 (optimal)
+        - 500ms = 0.67
+        - 1000ms = 0.5
+        - 2000ms = 0.33
+
+        Args:
+            latency_ms: P50 latency in milliseconds (0 = no data)
+
+        Returns:
+            Score from 0.0 to 1.0
+        """
+        if latency_ms <= 0:
+            return 1.0  # No data = optimistic
+        return 1.0 / (1.0 + latency_ms / self._REFERENCE_LATENCY_MS)
+
+    def _score_throughput(self, tps: float) -> float:
+        """Convert tokens per second to 0-1 score (higher = better).
+
+        Linear scaling capped at reference throughput.
+        - 0 tok/s = 0.5 (neutral for no data)
+        - 50 tok/s = 0.5
+        - 100+ tok/s = 1.0
+
+        Args:
+            tps: Tokens per second (0 = no data)
+
+        Returns:
+            Score from 0.0 to 1.0
+        """
+        if tps <= 0:
+            return 0.5  # No data = neutral
+        return min(tps / self._REFERENCE_THROUGHPUT_TPS, 1.0)
+
+    def _score_cost(self, provider: str) -> float:
+        """Convert provider cost to 0-1 score (lower cost = higher score).
+
+        Uses inverse relationship similar to latency scoring.
+        - $0.00/1K (local) = 1.0 (optimal)
+        - $0.005/1K = 0.67
+        - $0.01/1K = 0.5
+        - $0.02/1K = 0.33
+
+        Args:
+            provider: Provider name (e.g., 'ollama', 'gemini', 'openai')
+
+        Returns:
+            Score from 0.0 to 1.0
+        """
+        cost_per_1k = get_provider_cost(provider)
+        if cost_per_1k <= 0:
+            return 1.0  # Free = optimal
+        return 1.0 / (1.0 + cost_per_1k / self._REFERENCE_COST_PER_1K)
+
+    def select_best(
+        self,
+        backends: list["BackendConfig"],
+        backend_type: str | None = None,
+        task_type: str | None = None,
+    ) -> "BackendConfig | None":
+        """Select the best backend from a list based on scoring.
+
+        Filters by enabled status and optionally by backend type,
+        then scores remaining candidates and returns the best.
+
+        Args:
+            backends: List of backends to choose from
+            backend_type: Optional filter ("local" or "remote")
+            task_type: Optional task type for affinity-based scoring
+
+        Returns:
+            Best backend or None if none available
+        """
+        # Filter to enabled backends matching type
+        candidates = [
+            b
+            for b in backends
+            if b.enabled and (backend_type is None or b.type == backend_type)
+        ]
+
+        if not candidates:
+            log.debug("no_candidates", backend_type=backend_type)
+            return None
+
+        # Further filter by circuit breaker availability
+        available = [b for b in candidates if get_backend_health(b.id).is_available()]
+
+        if not available:
+            # All circuit breakers open - return highest priority as fallback
+            log.warning(
+                "all_backends_unavailable",
+                backend_type=backend_type,
+                falling_back_to_priority=True,
+            )
+            return max(candidates, key=lambda b: b.priority)
+
+        # Score and select best
+        best = max(available, key=lambda b: self.score(b, task_type))
+        log.info(
+            "backend_selected",
+            backend=best.id,
+            score=round(self.score(best, task_type), 3),
+            candidates=len(available),
+            task_type=task_type,
+        )
+        return best
+
+    def select_weighted(
+        self,
+        backends: list["BackendConfig"],
+        backend_type: str | None = None,
+        task_type: str | None = None,
+    ) -> "BackendConfig | None":
+        """Select a backend using weighted random selection for load distribution.
+
+        Uses scores as weights for random selection - higher scoring backends
+        are more likely to be chosen, but lower scoring backends still get
+        some traffic for load balancing.
+
+        Args:
+            backends: List of backends to choose from
+            backend_type: Optional filter ("local" or "remote")
+            task_type: Optional task type for affinity-based scoring
+
+        Returns:
+            Selected backend or None if none available
+        """
+        # Filter to enabled backends matching type
+        candidates = [
+            b
+            for b in backends
+            if b.enabled and (backend_type is None or b.type == backend_type)
+        ]
+
+        if not candidates:
+            log.debug("no_candidates", backend_type=backend_type)
+            return None
+
+        # Further filter by circuit breaker availability
+        available = [b for b in candidates if get_backend_health(b.id).is_available()]
+
+        if not available:
+            # All circuit breakers open - return highest priority as fallback
+            log.warning(
+                "all_backends_unavailable_weighted",
+                backend_type=backend_type,
+                falling_back_to_priority=True,
+            )
+            return max(candidates, key=lambda b: b.priority)
+
+        # Single backend - no need for weighted selection
+        if len(available) == 1:
+            return available[0]
+
+        # Calculate scores as weights (ensure non-zero minimum)
+        scores = [max(self.score(b, task_type), 0.01) for b in available]
+
+        # Weighted random selection
+        selected = random.choices(available, weights=scores, k=1)[0]
+        log.info(
+            "backend_selected_weighted",
+            backend=selected.id,
+            score=round(self.score(selected, task_type), 3),
+            candidates=len(available),
+            weights=[round(s, 3) for s in scores],
+            task_type=task_type,
+        )
+        return selected
+
+    def select_top_n(
+        self,
+        backends: list["BackendConfig"],
+        n: int = 2,
+        backend_type: str | None = None,
+        task_type: str | None = None,
+    ) -> list["BackendConfig"]:
+        """Select top N backends by score for hedged requests.
+
+        Returns multiple backends sorted by score (best first).
+        Used for speculative execution where requests are sent
+        to multiple backends with staggered starts.
+
+        Args:
+            backends: List of backends to choose from
+            n: Maximum number of backends to return (default 2)
+            backend_type: Optional filter ("local" or "remote")
+            task_type: Optional task type for affinity-based scoring
+
+        Returns:
+            List of up to N backends, sorted by score (best first)
+        """
+        # Filter to enabled backends matching type
+        candidates = [
+            b
+            for b in backends
+            if b.enabled and (backend_type is None or b.type == backend_type)
+        ]
+
+        if not candidates:
+            log.debug("no_candidates_for_hedging", backend_type=backend_type)
+            return []
+
+        # Filter by circuit breaker availability
+        available = [b for b in candidates if get_backend_health(b.id).is_available()]
+
+        if not available:
+            log.debug("no_available_backends_for_hedging", backend_type=backend_type)
+            return []
+
+        # Sort by score descending and take top N
+        scored = [(b, self.score(b, task_type)) for b in available]
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        result = [b for b, _ in scored[:n]]
+        log.debug(
+            "hedging_candidates_selected",
+            backends=[b.id for b in result],
+            scores=[round(s, 3) for _, s in scored[:n]],
+            task_type=task_type,
+        )
+        return result
+
+
 class ModelRouter:
     """Intelligent model and backend selection for Delia."""
 
@@ -357,27 +708,36 @@ class ModelRouter:
         backend_type: str | None = None,
     ) -> tuple[str | None, Any | None]:
         """
-        Select optimal backend.
+        Select optimal backend using performance-based scoring.
 
-        If backend_type is specified ("local" or "remote"), tries to find a matching backend.
-        Otherwise uses the active backend.
+        Uses BackendScorer to select the best backend based on:
+        - Latency (lower is better)
+        - Throughput (higher is better)
+        - Reliability (success rate)
+        - Availability (circuit breaker status)
 
         Args:
-            content: The content to process
+            content: The content to process (for future content-based routing)
             file_path: Optional file path for context
             task_type: Type of task being performed
             backend_type: Optional backend type constraint ("local" or "remote")
 
         Returns:
-            Tuple of (backend_provider, backend_obj) where backend_provider may be None
+            Tuple of (None, backend_obj) where backend_obj is the selected backend
         """
-        if backend_type:
-            # Try to find a backend of the requested type
-            for b in self.backend_manager.get_enabled_backends():
-                if b.type == backend_type:
-                    return (None, b)
+        enabled_backends = self.backend_manager.get_enabled_backends()
 
-        # Default to active backend
+        if not enabled_backends:
+            return (None, None)
+
+        # Use BackendScorer for intelligent selection
+        scorer = BackendScorer()
+        selected = scorer.select_best(enabled_backends, backend_type=backend_type)
+
+        if selected:
+            return (None, selected)
+
+        # Fallback to active backend if no matching type found
         active_backend = self.backend_manager.get_active_backend()
         return (None, active_backend)
 

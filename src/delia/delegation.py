@@ -23,6 +23,7 @@ dependencies (like call_llm, tracker) receive them via a context object.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +31,9 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 import structlog
 
-from .config import config
+from .config import config, get_affinity_tracker, get_prewarm_tracker
+from .backend_manager import backend_manager
+from .routing import BackendScorer
 from .file_helpers import read_files, read_serena_memory
 from .language import detect_language, get_system_prompt
 from .prompt_templates import create_structured_prompt
@@ -302,7 +305,15 @@ async def execute_delegate_call(
         max_tokens=max_tokens,
     )
 
-    if not result.get("success"):
+    # Record task-backend affinity (success/failure)
+    success = result.get("success", False)
+    if backend_obj is not None:
+        backend_id = getattr(backend_obj, "id", None)
+        if backend_id:
+            tracker = get_affinity_tracker()
+            tracker.update(backend_id, task_type, success)
+
+    if not success:
         error_msg = result.get("error", "Unknown error")
         raise Exception(f"LLM call failed: {error_msg}")
 
@@ -313,6 +324,157 @@ async def execute_delegate_call(
     response_text = strip_thinking_tags(response_text)
 
     return response_text, tokens
+
+
+async def execute_hedged_call(
+    ctx: DelegateContext,
+    backends: list["BackendConfig"],
+    selected_model: str,
+    content: str,
+    system: str,
+    task_type: str,
+    original_task: str,
+    detected_language: str,
+    delay_ms: int = 50,
+    max_tokens: int | None = None,
+) -> tuple[str, int, "BackendConfig"]:
+    """Execute hedged LLM calls to multiple backends with staggered starts.
+
+    Sends requests to multiple backends with a delay between starts.
+    Returns the first successful response and cancels remaining tasks.
+    Only the winning backend is recorded for affinity tracking.
+
+    Args:
+        ctx: Delegate context with runtime dependencies
+        backends: List of backends to try (sorted by preference)
+        selected_model: Model name to use
+        content: Prepared content/prompt
+        system: System prompt
+        task_type: Internal task type
+        original_task: Original user task name
+        detected_language: Detected programming language
+        delay_ms: Milliseconds between starting each backend request
+        max_tokens: Optional token limit
+
+    Returns:
+        Tuple of (response_text, tokens_used, winning_backend)
+
+    Raises:
+        Exception: If all backends fail
+    """
+    if not backends:
+        raise ValueError("No backends provided for hedged call")
+
+    # Single backend - fall back to regular execution
+    if len(backends) == 1:
+        response_text, tokens = await execute_delegate_call(
+            ctx=ctx,
+            selected_model=selected_model,
+            content=content,
+            system=system,
+            task_type=task_type,
+            original_task=original_task,
+            detected_language=detected_language,
+            target_backend=backends[0].id,
+            backend_obj=backends[0],
+            max_tokens=max_tokens,
+        )
+        return response_text, tokens, backends[0]
+
+    enable_thinking = task_type in config.thinking_tasks
+    content_preview = content[:200].replace("\n", " ").strip()
+
+    # Create tasks with staggered starts
+    async def call_with_delay(
+        backend: "BackendConfig", delay: float
+    ) -> tuple[dict[str, Any], "BackendConfig"]:
+        """Execute a backend call after an optional delay."""
+        if delay > 0:
+            await asyncio.sleep(delay)
+        result = await ctx.call_llm(
+            selected_model,
+            content,
+            system,
+            enable_thinking,
+            task_type=task_type,
+            original_task=original_task,
+            language=detected_language,
+            content_preview=content_preview,
+            backend=backend.id,
+            backend_obj=backend,
+            max_tokens=max_tokens,
+        )
+        return result, backend
+
+    # Start tasks with staggered delays
+    delay_seconds = delay_ms / 1000.0
+    tasks = {
+        asyncio.create_task(
+            call_with_delay(backend, i * delay_seconds),
+            name=f"hedge_{backend.id}",
+        ): backend
+        for i, backend in enumerate(backends)
+    }
+
+    pending = set(tasks.keys())
+    winner: tuple[str, int, "BackendConfig"] | None = None
+    errors: list[str] = []
+
+    try:
+        while pending and winner is None:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for task in done:
+                backend = tasks[task]
+                try:
+                    result, winning_backend = task.result()
+                    if result.get("success", False):
+                        response_text = result.get("response", "")
+                        tokens = result.get("tokens", 0)
+                        # Strip thinking tags
+                        response_text = strip_thinking_tags(response_text)
+                        winner = (response_text, tokens, winning_backend)
+
+                        # Record affinity for winning backend only
+                        tracker = get_affinity_tracker()
+                        tracker.update(winning_backend.id, task_type, True)
+
+                        log.info(
+                            "hedged_call_winner",
+                            backend=winning_backend.id,
+                            tokens=tokens,
+                            remaining_cancelled=len(pending),
+                        )
+                        break
+                    else:
+                        error = result.get("error", "Unknown error")
+                        errors.append(f"{backend.id}: {error}")
+                        # Record failure for this backend
+                        tracker = get_affinity_tracker()
+                        tracker.update(backend.id, task_type, False)
+                except asyncio.CancelledError:
+                    # Task was cancelled by us, ignore
+                    pass
+                except Exception as e:
+                    errors.append(f"{backend.id}: {e!s}")
+                    tracker = get_affinity_tracker()
+                    tracker.update(backend.id, task_type, False)
+    finally:
+        # Cancel any remaining pending tasks
+        for task in pending:
+            task.cancel()
+        # Wait for cancellations to complete
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    if winner:
+        return winner
+
+    # All backends failed
+    error_summary = "; ".join(errors) if errors else "All backends failed"
+    raise Exception(f"Hedged call failed: {error_summary}")
 
 
 def finalize_delegate_response(
@@ -459,20 +621,82 @@ async def delegate_impl(
         ctx, task_type, prepared_content, model, backend, backend_obj
     )
 
-    # Execute the LLM call
+    # Check if hedging should be used
+    # Only use hedging when:
+    # 1. Hedging is enabled in routing config
+    # 2. No specific backend was explicitly requested
+    hedging_config = backend_manager.routing_config.get("hedging", {})
+    use_hedging = (
+        hedging_config.get("enabled", False)
+        and backend is None
+        and backend_obj is None
+    )
+
+    # Execute the LLM call (with or without hedging)
     try:
-        response_text, tokens = await execute_delegate_call(
-            ctx,
-            selected_model,
-            prepared_content,
-            system,
-            task_type,
-            task,
-            detected_language,
-            target_backend,
-            backend_obj,
-            max_tokens=max_tokens,
-        )
+        if use_hedging:
+            # Get multiple backends for hedged execution
+            enabled_backends = backend_manager.get_enabled_backends()
+            weights = backend_manager.get_scoring_weights()
+            scorer = BackendScorer(weights=weights)
+
+            hedge_max = hedging_config.get("max_backends", 2)
+            hedge_delay = hedging_config.get("delay_ms", 50)
+
+            # Get top N backends by score
+            hedge_backends = scorer.select_top_n(
+                enabled_backends,
+                n=hedge_max,
+                task_type=task_type,
+            )
+
+            if len(hedge_backends) > 1:
+                log.info(
+                    "using_hedged_execution",
+                    backends=[b.id for b in hedge_backends],
+                    delay_ms=hedge_delay,
+                )
+                response_text, tokens, winning_backend = await execute_hedged_call(
+                    ctx,
+                    hedge_backends,
+                    selected_model,
+                    prepared_content,
+                    system,
+                    task_type,
+                    task,
+                    detected_language,
+                    delay_ms=hedge_delay,
+                    max_tokens=max_tokens,
+                )
+                # Update target_backend with winner for metadata
+                target_backend = winning_backend.id
+            else:
+                # Only one backend available, use normal execution
+                response_text, tokens = await execute_delegate_call(
+                    ctx,
+                    selected_model,
+                    prepared_content,
+                    system,
+                    task_type,
+                    task,
+                    detected_language,
+                    target_backend,
+                    backend_obj,
+                    max_tokens=max_tokens,
+                )
+        else:
+            response_text, tokens = await execute_delegate_call(
+                ctx,
+                selected_model,
+                prepared_content,
+                system,
+                task_type,
+                task,
+                detected_language,
+                target_backend,
+                backend_obj,
+                max_tokens=max_tokens,
+            )
     except Exception as e:
         return f"Error: {e!s}"
 
@@ -486,6 +710,10 @@ async def delegate_impl(
             model=selected_model,
             task_type=task
         )
+
+    # Update prewarm tracker with tier usage
+    prewarm_tracker = get_prewarm_tracker()
+    prewarm_tracker.update(tier)
 
     # Calculate timing
     elapsed_ms = int((time.time() - start_time) * 1000)

@@ -96,7 +96,20 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from .backend_manager import BackendConfig, backend_manager
 
 # Import configuration (all tunable values in config.py)
-from .config import STATS_FILE, config, detect_model_tier, get_backend_health
+from .config import (
+    STATS_FILE,
+    config,
+    detect_model_tier,
+    get_affinity_tracker,
+    get_backend_health,
+    get_prewarm_tracker,
+    load_affinity,
+    load_backend_metrics,
+    load_prewarm,
+    save_affinity,
+    save_backend_metrics,
+    save_prewarm,
+)
 
 # Import status messages for logging and dashboard
 from .messages import (
@@ -147,7 +160,13 @@ from .llm import call_llm, call_llm_stream, init_llm_module
 from .queue import ModelQueue, QueuedRequest
 
 # Import routing utilities (content detection, model override parsing, model selection)
-from .routing import CODE_INDICATORS, detect_code_content, parse_model_override, select_model
+from .routing import (
+    CODE_INDICATORS,
+    BackendScorer,
+    detect_code_content,
+    parse_model_override,
+    select_model,
+)
 
 # Import language detection (LANGUAGE_CONFIGS, detect_language, get_system_prompt, optimize_prompt)
 from .language import (
@@ -269,6 +288,76 @@ def _schedule_background_task(coro: Any) -> None:
         task.add_done_callback(_background_tasks.discard)
     except RuntimeError:
         pass  # No running loop
+
+
+# Pre-warming state
+_prewarm_task_started = False
+
+
+async def _prewarm_check_loop() -> None:
+    """
+    Background task that periodically checks and pre-warms predicted models.
+
+    Runs until cancelled, checking every N minutes if models should be pre-loaded
+    based on hourly usage patterns learned by PrewarmTracker.
+    """
+    global _prewarm_task_started
+    _prewarm_task_started = True
+
+    while True:
+        try:
+            # Get prewarm config
+            prewarm_config = backend_manager.routing_config.get("prewarm", {})
+            if not prewarm_config.get("enabled", False):
+                # If disabled, wait a bit then check again (in case config changes)
+                await asyncio.sleep(60)
+                continue
+
+            interval_minutes = prewarm_config.get("check_interval_minutes", 5)
+
+            # Get predicted tiers for current hour
+            tracker = get_prewarm_tracker()
+            predicted_tiers = tracker.get_predicted_tiers()
+
+            if predicted_tiers:
+                # Get active backend to resolve tier -> model name
+                active_backend = backend_manager.get_active_backend()
+                if active_backend:
+                    for tier in predicted_tiers:
+                        model_name = active_backend.models.get(tier)
+                        if model_name:
+                            try:
+                                # Trigger model loading via queue
+                                await model_queue.acquire_model(
+                                    model_name,
+                                    task_type="prewarm",
+                                    content_length=0,
+                                    provider_name=active_backend.provider,
+                                )
+                                log.debug(
+                                    "prewarm_model_acquired",
+                                    tier=tier,
+                                    model=model_name,
+                                    backend=active_backend.id,
+                                )
+                            except Exception as e:
+                                log.debug("prewarm_model_failed", tier=tier, error=str(e))
+
+            # Wait for next check interval
+            await asyncio.sleep(interval_minutes * 60)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.warning("prewarm_loop_error", error=str(e))
+            await asyncio.sleep(60)  # Wait before retrying
+
+
+def start_prewarm_task() -> None:
+    """Start the pre-warming background task if not already running."""
+    global _prewarm_task_started
+    if not _prewarm_task_started:
+        _schedule_background_task(_prewarm_check_loop())
 
 
 current_client_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_client_id", default=None)
@@ -521,13 +610,18 @@ async def save_all_stats_async():
     Saves:
     - Model usage and task stats via stats_service
     - Live logs and circuit breaker status
+    - Backend performance metrics
+    - Task-backend affinity scores
     """
     # Save model/task stats via service
     await stats_service.save_all()
 
-    # Save other data (live logs, circuit breaker)
+    # Save other data (live logs, circuit breaker, backend metrics, affinity)
     await asyncio.to_thread(_save_live_logs_sync)
     await asyncio.to_thread(save_circuit_breaker_stats)
+    await asyncio.to_thread(save_backend_metrics)
+    await asyncio.to_thread(save_affinity)
+    await asyncio.to_thread(save_prewarm)
 
 
 # Ensure all data directories exist
@@ -536,6 +630,9 @@ paths.ensure_directories()
 # Load stats immediately at module import time
 stats_service.load()
 load_live_logs()
+load_backend_metrics()
+load_affinity()
+load_prewarm()
 
 # Load MCP server configurations (but don't start servers yet - that's async)
 mcp_client_manager.load_config(backend_manager.get_mcp_servers())
@@ -1009,6 +1106,9 @@ async def delegate(
         delegate(task="review", content="...", session_id="abc-123")  # Use session
         delegate(task="plan", content="<large content>", stream=True)  # Use streaming for long responses
     """
+    # Start prewarm task if not already running
+    start_prewarm_task()
+
     # Dry run mode: return estimation signals without executing
     if dry_run:
         import json as json_mod
@@ -1229,19 +1329,61 @@ async def _select_optimal_backend_v2(
     backend_type: str | None = None,
 ) -> tuple[str | None, Any | None]:
     """
-    Select optimal backend.
+    Select optimal backend using performance-based scoring.
 
-    If backend_type is specified ("local" or "remote"), tries to find a matching backend.
-    Otherwise uses the active backend.
+    Uses BackendScorer to select the best backend based on:
+    - Latency (lower is better)
+    - Throughput (higher is better)
+    - Reliability (success rate)
+    - Availability (circuit breaker status)
+
+    Args:
+        content: The content to process (for future content-based routing)
+        file_path: Optional file path for context
+        task_type: Type of task being performed
+        backend_type: Optional backend type constraint ("local" or "remote")
+
+    Returns:
+        Tuple of (None, backend_obj) where backend_obj is the selected backend
     """
-    if backend_type:
-        # Try to find a backend of the requested type
-        for b in backend_manager.get_enabled_backends():
-            if b.type == backend_type:
-                return (None, b)
+    enabled_backends = backend_manager.get_enabled_backends()
 
-    # Default to active backend
+    if not enabled_backends:
+        return (None, None)
+
+    # Use BackendScorer for intelligent selection with configured weights
+    weights = backend_manager.get_scoring_weights()
+    scorer = BackendScorer(weights=weights)
+
+    # Use weighted random selection if load balancing is enabled
+    load_balance = backend_manager.routing_config.get("load_balance", False)
+    if load_balance:
+        selected = scorer.select_weighted(
+            enabled_backends, backend_type=backend_type, task_type=task_type
+        )
+    else:
+        selected = scorer.select_best(
+            enabled_backends, backend_type=backend_type, task_type=task_type
+        )
+
+    if selected:
+        log.debug(
+            "selected_backend_by_score",
+            backend_id=selected.id,
+            backend_type=selected.type,
+            requested_type=backend_type,
+            load_balanced=load_balance,
+        )
+        return (None, selected)
+
+    # Fallback to active backend if no matching type found
     active_backend = backend_manager.get_active_backend()
+    if active_backend:
+        log.debug(
+            "fallback_to_active_backend",
+            backend_id=active_backend.id,
+            requested_type=backend_type,
+        )
     return (None, active_backend)
 
 
@@ -1943,13 +2085,34 @@ async def health() -> str:
     Returns:
         JSON with:
         - status: "healthy" | "degraded" | "unhealthy"
-        - backends: Array of configured backend status
+        - backends: Array of configured backend status with performance scores
         - usage: Token counts and call statistics per tier
         - cost_savings: Estimated savings vs cloud API
         - routing: Current routing configuration
     """
     # Get health status from BackendManager (only checks enabled backends)
     health_status = await backend_manager.get_health_status()
+
+    # Add performance scores to each backend using configured weights
+    weights = backend_manager.get_scoring_weights()
+    scorer = BackendScorer(weights=weights)
+    backend_lookup = {b.id: b for b in backend_manager.backends.values()}
+    for backend_info in health_status["backends"]:
+        backend_obj = backend_lookup.get(backend_info["id"])
+        if backend_obj and backend_info["enabled"]:
+            score = scorer.score(backend_obj)
+            backend_info["score"] = round(score, 3)
+            # Add metrics summary if available
+            from .config import get_backend_metrics
+
+            metrics = get_backend_metrics(backend_info["id"])
+            if metrics.total_requests > 0:
+                backend_info["metrics"] = {
+                    "success_rate": f"{metrics.success_rate * 100:.1f}%",
+                    "latency_p50_ms": round(metrics.latency_p50, 1),
+                    "throughput_tps": round(metrics.tokens_per_second, 1),
+                    "total_requests": metrics.total_requests,
+                }
 
     # Get usage stats from StatsService
     model_usage, _, _, _ = stats_service.get_snapshot()

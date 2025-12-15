@@ -135,6 +135,52 @@ interface CircuitBreakerState {
   timestamp: string
 }
 
+interface ScoringWeights {
+  latency: number
+  throughput: number
+  reliability: number
+  availability: number
+  cost: number
+}
+
+interface HedgingConfig {
+  enabled: boolean
+  delay_ms: number
+  max_backends: number
+}
+
+interface PrewarmConfig {
+  enabled: boolean
+  threshold: number
+  check_interval_minutes: number
+}
+
+interface AffinityPair {
+  backend: string
+  task: string
+  score: number
+}
+
+interface RoutingIntelligence {
+  scoring: ScoringWeights
+  hedging: HedgingConfig
+  prewarm: PrewarmConfig
+  affinity: {
+    alpha: number
+    trackedPairs: number
+    topPairs: AffinityPair[]
+  }
+  prewarmStatus: {
+    alpha: number
+    threshold: number
+    trackedEntries: number
+    currentHour: number
+    currentPredictions: string[]
+    nextHourPredictions: string[]
+  }
+  timestamp: string
+}
+
 const PROVIDER_COLORS: Record<string, string> = {
   ollama: "#689B8A",
   llamacpp: "#4A7D6D",
@@ -225,7 +271,8 @@ function ScatteredSeeds({ count = 5, className = "" }: { count?: number; classNa
   )
 }
 
-const normalizeModel = (model: string): "quick" | "coder" | "moe" | "thinking" => {
+const normalizeModel = (model: string | undefined | null): "quick" | "coder" | "moe" | "thinking" => {
+  if (!model) return "quick" // default for undefined/null
   const m = model.toLowerCase()
   if (m === "14b" || m === "quick") return "quick"
   if (m === "30b" || m === "coder") return "coder"
@@ -269,6 +316,7 @@ export default function Dashboard() {
   const [circuitBreaker, setCircuitBreaker] = useState<CircuitBreakerState | null>(null)
   const [user, setUser] = useState<User | null>(null)
   const [selectedLogProvider, setSelectedLogProvider] = useState<string>("all")
+  const [routingIntelligence, setRoutingIntelligence] = useState<RoutingIntelligence | null>(null)
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -378,6 +426,17 @@ export default function Dashboard() {
     }
   }, [])
 
+  const fetchRoutingIntelligence = useCallback(async () => {
+    try {
+      const res = await fetch("/api/routing")
+      if (res.ok) {
+        const data = await res.json()
+        setRoutingIntelligence(data)
+      }
+    } catch {
+    }
+  }, [])
+
   const fetchUser = useCallback(async () => {
     try {
       const res = await fetch("/api/auth/me")
@@ -437,15 +496,17 @@ export default function Dashboard() {
   useEffect(() => {
     fetchStats()
     fetchCircuitBreaker()
+    fetchRoutingIntelligence()
     fetchUser()
     const statsInterval = setInterval(() => {
       fetchStats()
       fetchCircuitBreaker()
+      fetchRoutingIntelligence()
     }, 10000)  // Increased to 10s since backends use SSE for real-time updates
     return () => {
       clearInterval(statsInterval)
     }
-  }, [fetchStats, fetchCircuitBreaker, fetchUser])
+  }, [fetchStats, fetchCircuitBreaker, fetchRoutingIntelligence, fetchUser])
 
   useEffect(() => {
     if (activeTab === "logs") {
@@ -1151,8 +1212,145 @@ export default function Dashboard() {
                       </button>
                     </div>
                   </div>
+
+
+                  <div className="pt-2 border-t">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-medium">Hedged Requests</span>
+                        <p className="text-xs text-muted-foreground">
+                          Send to multiple backends, use fastest response
+                          {routingIntelligence?.hedging?.enabled && (
+                            <span className="ml-1 text-primary">
+                              ({routingIntelligence.hedging.delay_ms}ms delay, {routingIntelligence.hedging.max_backends} backends)
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const newValue = !routingIntelligence?.hedging?.enabled
+                          try {
+                            const res = await fetch("/api/routing", {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ hedging: { enabled: newValue } })
+                            })
+                            if (res.ok) {
+                              fetchRoutingIntelligence()
+                            }
+                          } catch (e) { console.error(e) }
+                        }}
+                        className={`w-10 h-5 rounded-full transition-colors relative ${
+                          routingIntelligence?.hedging?.enabled ? "bg-primary" : "bg-muted"
+                        }`}
+                      >
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                          routingIntelligence?.hedging?.enabled ? "left-5" : "left-0.5"
+                        }`} />
+                      </button>
+                    </div>
+                  </div>
+
+
+                  <div className="pt-2 border-t">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-medium">Predictive Pre-warming</span>
+                        <p className="text-xs text-muted-foreground">
+                          Pre-load models based on hourly patterns
+                          {(routingIntelligence?.prewarmStatus?.currentPredictions?.length ?? 0) > 0 && (
+                            <span className="ml-1 text-primary">
+                              (next: {routingIntelligence?.prewarmStatus?.currentPredictions?.join(", ")})
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const newValue = !routingIntelligence?.prewarm?.enabled
+                          try {
+                            const res = await fetch("/api/routing", {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ prewarm: { enabled: newValue } })
+                            })
+                            if (res.ok) {
+                              fetchRoutingIntelligence()
+                            }
+                          } catch (e) { console.error(e) }
+                        }}
+                        className={`w-10 h-5 rounded-full transition-colors relative ${
+                          routingIntelligence?.prewarm?.enabled ? "bg-primary" : "bg-muted"
+                        }`}
+                      >
+                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                          routingIntelligence?.prewarm?.enabled ? "left-5" : "left-0.5"
+                        }`} />
+                      </button>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
+
+
+              {routingIntelligence && (routingIntelligence.affinity?.trackedPairs > 0 || routingIntelligence.prewarmStatus?.trackedEntries > 0) && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Learning Status</CardTitle>
+                    <CardDescription className="text-xs">
+                      Adaptive routing intelligence
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-sm">
+                    {routingIntelligence.affinity?.trackedPairs > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium">Task Affinity</span>
+                          <span className="text-xs text-muted-foreground">
+                            {routingIntelligence.affinity.trackedPairs} pairs learned
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {routingIntelligence.affinity.topPairs?.slice(0, 3).map((pair, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">{pair.backend} + {pair.task}</span>
+                              <span
+                                className="px-1.5 py-0.5 rounded"
+                                style={{
+                                  backgroundColor: pair.score > 0.6 ? '#689B8A20' : pair.score > 0.4 ? '#8BB5A620' : '#FF6B7A20',
+                                  color: pair.score > 0.6 ? '#689B8A' : pair.score > 0.4 ? '#8BB5A6' : '#FF6B7A'
+                                }}
+                              >
+                                {(pair.score * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {routingIntelligence.prewarmStatus?.trackedEntries > 0 && (
+                      <div className="pt-2 border-t">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium">Usage Patterns</span>
+                          <span className="text-xs text-muted-foreground">
+                            Hour {routingIntelligence.prewarmStatus.currentHour}:00
+                          </span>
+                        </div>
+                        {routingIntelligence.prewarmStatus.nextHourPredictions?.length > 0 ? (
+                          <div className="text-xs text-muted-foreground">
+                            Next hour: <span className="text-primary">{routingIntelligence.prewarmStatus.nextHourPredictions.join(", ")}</span>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-muted-foreground">
+                            Learning patterns... ({routingIntelligence.prewarmStatus.trackedEntries} entries)
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </div>
         )}

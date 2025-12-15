@@ -36,7 +36,7 @@ from pydantic import ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from ..backend_manager import BackendConfig
-from ..config import detect_model_tier, get_backend_health
+from ..config import detect_model_tier, get_backend_health, get_backend_metrics
 from ..messages import (
     StatusEvent,
     format_completion_stats,
@@ -325,6 +325,9 @@ class OllamaProvider:
                 )
 
                 health.record_success(content_size)
+                get_backend_metrics(backend_obj.id).record_success(
+                    elapsed_ms=float(elapsed_ms), tokens=tokens
+                )
 
                 if self.save_stats_callback:
                     self.save_stats_callback()
@@ -341,6 +344,7 @@ class OllamaProvider:
                 )
 
             # HTTP error handling
+            error_elapsed_ms = int((time.time() - start_time) * 1000)
             error_msg = f"Ollama HTTP {response.status_code}"
             if response.status_code == 404:
                 error_msg += f": Model '{model}' not found. Run: ollama pull {model}"
@@ -352,21 +356,28 @@ class OllamaProvider:
                 error_text = response.text[:500] if len(response.text) > 500 else response.text
                 error_msg += f": {error_text}"
             health.record_failure("http_error", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(error_elapsed_ms))
             return create_error_response(error_msg)
 
         except httpx.TimeoutException:
+            timeout_elapsed_ms = int((time.time() - start_time) * 1000)
             log.error("ollama_timeout", model=model, timeout_seconds=self.config.ollama_timeout_seconds)
             health.record_failure("timeout", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(timeout_elapsed_ms))
             return create_error_response(
                 f"Ollama timeout after {self.config.ollama_timeout_seconds}s. Model may be loading or prompt too large."
             )
         except httpx.ConnectError:
             log.error("ollama_connection_refused", base_url=backend_obj.url)
             health.record_failure("connection", content_size)
+            # Connection errors don't have meaningful latency - record as 0
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=0)
             return create_error_response(f"Cannot connect to Ollama at {backend_obj.url}. Is Ollama running?")
         except Exception as e:
+            exc_elapsed_ms = int((time.time() - start_time) * 1000)
             log.error("ollama_error", model=model, error=str(e))
             health.record_failure("exception", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(exc_elapsed_ms))
             return create_error_response(f"Ollama error: {e!s}")
 
     async def call_stream(
@@ -473,7 +484,9 @@ class OllamaProvider:
                     error_text = ""
                     async for chunk in response.aiter_text():
                         error_text += chunk
+                    stream_error_ms = int((time.time() - start_time) * 1000)
                     health.record_failure("http_error", content_size)
+                    get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(stream_error_ms))
                     yield StreamChunk(
                         done=True,
                         error=f"Ollama HTTP {response.status_code}: {error_text[:500]}",
@@ -514,6 +527,9 @@ class OllamaProvider:
                             )
 
                         health.record_success(content_size)
+                        get_backend_metrics(backend_obj.id).record_success(
+                            elapsed_ms=float(elapsed_ms), tokens=total_tokens
+                        )
 
                         if self.save_stats_callback:
                             self.save_stats_callback()
@@ -544,19 +560,25 @@ class OllamaProvider:
                         return
 
         except httpx.TimeoutException:
+            stream_timeout_ms = int((time.time() - start_time) * 1000)
             health.record_failure("timeout", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(stream_timeout_ms))
             yield StreamChunk(
                 done=True,
                 error=f"Ollama timeout after {self.config.ollama_timeout_seconds}s.",
             )
         except httpx.ConnectError:
             health.record_failure("connection", content_size)
+            # Connection errors don't have meaningful latency - record as 0
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=0)
             yield StreamChunk(
                 done=True,
                 error=f"Cannot connect to Ollama at {backend_obj.url}. Is Ollama running?",
             )
         except Exception as e:
+            stream_exc_ms = int((time.time() - start_time) * 1000)
             health.record_failure("exception", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(stream_exc_ms))
             yield StreamChunk(done=True, error=f"Ollama streaming error: {e!s}")
 
     def _find_ollama_backend(self) -> BackendConfig | None:

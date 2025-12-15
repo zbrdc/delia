@@ -19,8 +19,9 @@ import { NextResponse } from "next/server"
 import { readFile } from "fs/promises"
 import { join } from "path"
 
-// Paths derived from DELIA_DATA_DIR env var (default: ../data/)
-const DATA_DIR = process.env.DELIA_DATA_DIR || join(process.cwd(), "..", "data")
+// Paths derived from DELIA_DATA_DIR env var (default: ~/.cache/delia)
+import { homedir } from "os"
+const DATA_DIR = process.env.DELIA_DATA_DIR || join(homedir(), ".cache", "delia")
 const CACHE_DIR = join(DATA_DIR, "cache")
 const STATS_FILE = join(CACHE_DIR, "usage_stats.json")
 const ENHANCED_STATS_FILE = join(CACHE_DIR, "enhanced_stats.json")

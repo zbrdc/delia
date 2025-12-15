@@ -30,7 +30,7 @@ import humanize
 import structlog
 
 from ..backend_manager import BackendConfig
-from ..config import get_backend_health
+from ..config import get_backend_health, get_backend_metrics
 from ..messages import format_completion_stats, get_display_event
 from ..tokens import count_tokens
 from .base import (
@@ -301,6 +301,9 @@ class GeminiProvider:
             )
 
             health.record_success(len(prompt))
+            get_backend_metrics(backend_obj.id).record_success(
+                elapsed_ms=float(elapsed_ms), tokens=total_tokens
+            )
 
             if self.save_stats_callback:
                 self.save_stats_callback()
@@ -317,11 +320,15 @@ class GeminiProvider:
             )
 
         except google_exceptions.ResourceExhausted:
+            rate_limit_elapsed_ms = int((time.time() - start_time) * 1000)
             health.record_failure("rate_limit", len(prompt))
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(rate_limit_elapsed_ms))
             return create_error_response("Gemini rate limit exceeded (429).")
         except Exception as e:
+            exc_elapsed_ms = int((time.time() - start_time) * 1000)
             log.error("gemini_error", error=str(e))
             health.record_failure("exception", len(prompt))
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(exc_elapsed_ms))
             return create_error_response(f"Gemini error: {e!s}")
 
     async def call_stream(
@@ -487,6 +494,9 @@ class GeminiProvider:
                 )
 
             health.record_success(len(prompt))
+            get_backend_metrics(backend_obj.id).record_success(
+                elapsed_ms=float(elapsed_ms), tokens=total_tokens
+            )
 
             if self.save_stats_callback:
                 self.save_stats_callback()
@@ -515,11 +525,15 @@ class GeminiProvider:
             )
 
         except google_exceptions.ResourceExhausted:
+            rate_limit_elapsed_ms = int((time.time() - start_time) * 1000)
             health.record_failure("rate_limit", len(prompt))
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(rate_limit_elapsed_ms))
             yield StreamChunk(done=True, error="Gemini rate limit exceeded (429).")
         except Exception as e:
+            stream_exc_ms = int((time.time() - start_time) * 1000)
             log.error("gemini_stream_error", error=str(e))
             health.record_failure("exception", len(prompt))
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(stream_exc_ms))
             yield StreamChunk(done=True, error=f"Gemini streaming error: {e!s}")
 
     async def load_model(

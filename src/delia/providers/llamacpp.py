@@ -31,7 +31,7 @@ from pydantic import ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from ..backend_manager import BackendConfig
-from ..config import detect_model_tier, get_backend_health
+from ..config import detect_model_tier, get_backend_health, get_backend_metrics
 from ..messages import (
     StatusEvent,
     format_completion_stats,
@@ -265,6 +265,9 @@ class LlamaCppProvider:
                 )
 
                 health.record_success(content_size)
+                get_backend_metrics(backend_obj.id).record_success(
+                    elapsed_ms=float(elapsed_ms), tokens=tokens
+                )
 
                 if self.save_stats_callback:
                     self.save_stats_callback()
@@ -298,22 +301,30 @@ class LlamaCppProvider:
             except (json.JSONDecodeError, KeyError):
                 error_text = response.text[:500] if len(response.text) > 500 else response.text
                 error_msg += f": {error_text}"
+            http_error_elapsed_ms = int((time.time() - start_time) * 1000)
             health.record_failure("http_error", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(http_error_elapsed_ms))
             return create_error_response(error_msg)
 
         except httpx.TimeoutException:
+            timeout_elapsed_ms = int((time.time() - start_time) * 1000)
             log.error("llamacpp_timeout", timeout_seconds=self.config.llamacpp_timeout_seconds)
             health.record_failure("timeout", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(timeout_elapsed_ms))
             return create_error_response(
                 f"Timeout after {self.config.llamacpp_timeout_seconds}s. Model may be loading or prompt too large."
             )
         except httpx.ConnectError:
             log.error("llamacpp_connection_refused", base_url=backend_obj.url)
             health.record_failure("connection", content_size)
+            # Connection errors don't have meaningful latency - record as 0
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=0)
             return create_error_response(f"Cannot connect to {backend_obj.url}. Is the server running?")
         except Exception as e:
+            exc_elapsed_ms = int((time.time() - start_time) * 1000)
             log.error("llamacpp_error", error=str(e))
             health.record_failure("exception", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(exc_elapsed_ms))
             return create_error_response(f"Error: {e!s}")
 
     async def call_stream(
@@ -415,7 +426,9 @@ class LlamaCppProvider:
                     error_text = ""
                     async for chunk in response.aiter_text():
                         error_text += chunk
+                    stream_error_ms = int((time.time() - start_time) * 1000)
                     health.record_failure("http_error", content_size)
+                    get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(stream_error_ms))
                     yield StreamChunk(
                         done=True,
                         error=f"HTTP {response.status_code}: {error_text[:500]}",
@@ -453,6 +466,9 @@ class LlamaCppProvider:
                                 )
 
                             health.record_success(content_size)
+                            get_backend_metrics(backend_obj.id).record_success(
+                                elapsed_ms=float(elapsed_ms), tokens=total_tokens
+                            )
 
                             if self.save_stats_callback:
                                 self.save_stats_callback()
@@ -502,19 +518,25 @@ class LlamaCppProvider:
                             total_tokens = usage.get("total_tokens", 0)
 
         except httpx.TimeoutException:
+            stream_timeout_ms = int((time.time() - start_time) * 1000)
             health.record_failure("timeout", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(stream_timeout_ms))
             yield StreamChunk(
                 done=True,
                 error=f"Timeout after {self.config.llamacpp_timeout_seconds}s.",
             )
         except httpx.ConnectError:
             health.record_failure("connection", content_size)
+            # Connection errors don't have meaningful latency - record as 0
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=0)
             yield StreamChunk(
                 done=True,
                 error=f"Cannot connect to {backend_obj.url}. Is the server running?",
             )
         except Exception as e:
+            stream_exc_ms = int((time.time() - start_time) * 1000)
             health.record_failure("exception", content_size)
+            get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(stream_exc_ms))
             yield StreamChunk(done=True, error=f"Streaming error: {e!s}")
 
     def _find_compatible_backend(self) -> BackendConfig | None:

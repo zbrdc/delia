@@ -86,6 +86,9 @@ STATS_FILE = CACHE_DIR / "usage_stats.json"
 ENHANCED_STATS_FILE = CACHE_DIR / "enhanced_stats.json"
 LIVE_LOGS_FILE = CACHE_DIR / "live_logs.json"
 CIRCUIT_BREAKER_FILE = CACHE_DIR / "circuit_breaker.json"
+BACKEND_METRICS_FILE = CACHE_DIR / "backend_metrics.json"
+AFFINITY_FILE = CACHE_DIR / "affinity.json"
+PREWARM_FILE = CACHE_DIR / "prewarm.json"
 USER_DB_FILE = USER_DATA_DIR / "users.db"
 
 

@@ -21,9 +21,12 @@ Values have been validated with Wolfram Alpha for mathematical accuracy.
 """
 
 import os
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from . import paths
 
@@ -253,6 +256,49 @@ config = Config()
 
 
 # ============================================================
+# PROVIDER COST ESTIMATES
+# Cost per 1K tokens (blended input/output average) for routing decisions
+# ============================================================
+
+PROVIDER_COSTS: dict[str, float] = {
+    # Local providers (free - just electricity)
+    "local": 0.0,
+    "ollama": 0.0,
+    "llamacpp": 0.0,
+    "vllm": 0.0,
+    # Google
+    "gemini": 0.0001,  # Flash is very cheap, Pro averages out
+    "gemini-flash": 0.0001,
+    "gemini-pro": 0.001,
+    # OpenAI
+    "openai": 0.005,  # Averaged across models
+    "gpt-4o-mini": 0.0003,
+    "gpt-4o": 0.005,
+    "gpt-4-turbo": 0.01,
+    # Anthropic
+    "anthropic": 0.008,  # Averaged across models
+    "claude-3-haiku": 0.0003,
+    "claude-3-sonnet": 0.003,
+    "claude-3-opus": 0.015,
+    "claude-3.5-sonnet": 0.003,
+    # OpenRouter (varies by model, using moderate default)
+    "openrouter": 0.001,
+}
+
+
+def get_provider_cost(provider: str) -> float:
+    """Get cost per 1K tokens for a provider.
+
+    Args:
+        provider: Provider name (e.g., 'ollama', 'gemini', 'openai')
+
+    Returns:
+        Cost per 1K tokens in USD. Returns 0.001 for unknown providers.
+    """
+    return PROVIDER_COSTS.get(provider.lower(), 0.001)
+
+
+# ============================================================
 # BACKEND HEALTH & CIRCUIT BREAKER
 # Tracks failures and implements adaptive routing
 # ============================================================
@@ -375,6 +421,173 @@ class BackendHealth:
         }
 
 
+# Maximum number of latency samples to keep (rolling window)
+_METRICS_WINDOW_SIZE: int = 100
+
+
+@dataclass
+class BackendMetrics:
+    """
+    Rolling performance metrics for a backend.
+
+    Tracks latency, success rate, and throughput for routing decisions.
+    Uses a rolling window for latency samples to avoid unbounded memory growth.
+
+    Thread Safety:
+        This class is NOT thread-safe. The caller (typically config module)
+        should ensure thread-safe access if needed.
+    """
+
+    backend_id: str
+
+    # Latency tracking (rolling window of milliseconds)
+    _latency_samples: deque[float] = field(
+        default_factory=lambda: deque(maxlen=_METRICS_WINDOW_SIZE)
+    )
+
+    # Request counts (all-time)
+    total_requests: int = 0
+    total_successes: int = 0
+    total_failures: int = 0
+
+    # Token tracking (all-time)
+    total_tokens: int = 0
+
+    # Timestamps
+    last_request_time: float = 0.0
+
+    def record_success(self, elapsed_ms: float, tokens: int = 0) -> None:
+        """
+        Record a successful request.
+
+        Args:
+            elapsed_ms: Request latency in milliseconds
+            tokens: Number of tokens processed (0 if unknown)
+        """
+        self._latency_samples.append(elapsed_ms)
+        self.total_requests += 1
+        self.total_successes += 1
+        self.total_tokens += tokens
+        self.last_request_time = time.time()
+
+    def record_failure(self, elapsed_ms: float = 0) -> None:
+        """
+        Record a failed request.
+
+        Args:
+            elapsed_ms: Request latency in milliseconds (0 if timed out)
+        """
+        if elapsed_ms > 0:
+            self._latency_samples.append(elapsed_ms)
+        self.total_requests += 1
+        self.total_failures += 1
+        self.last_request_time = time.time()
+
+    @property
+    def success_rate(self) -> float:
+        """
+        Success rate as a fraction (0.0 to 1.0).
+
+        Returns 1.0 if no requests have been made (optimistic default).
+        """
+        if self.total_requests == 0:
+            return 1.0
+        return self.total_successes / self.total_requests
+
+    @property
+    def latency_p50(self) -> float:
+        """
+        Median latency in milliseconds.
+
+        Returns 0.0 if no samples available.
+        """
+        if not self._latency_samples:
+            return 0.0
+        sorted_samples = sorted(self._latency_samples)
+        mid = len(sorted_samples) // 2
+        return sorted_samples[mid]
+
+    @property
+    def latency_p95(self) -> float:
+        """
+        95th percentile latency in milliseconds.
+
+        Returns 0.0 if no samples available.
+        """
+        if not self._latency_samples:
+            return 0.0
+        sorted_samples = sorted(self._latency_samples)
+        idx = int(len(sorted_samples) * 0.95)
+        # Clamp to valid range
+        idx = min(idx, len(sorted_samples) - 1)
+        return sorted_samples[idx]
+
+    @property
+    def tokens_per_second(self) -> float:
+        """
+        Average throughput in tokens per second.
+
+        Calculated from total tokens and average latency.
+        Returns 0.0 if no successful requests with tokens.
+        """
+        if self.total_successes == 0 or self.total_tokens == 0:
+            return 0.0
+        if not self._latency_samples:
+            return 0.0
+
+        avg_latency_ms = sum(self._latency_samples) / len(self._latency_samples)
+        if avg_latency_ms <= 0:
+            return 0.0
+
+        avg_tokens_per_request = self.total_tokens / self.total_successes
+        # Convert ms to seconds: tokens / (ms / 1000) = tokens * 1000 / ms
+        return avg_tokens_per_request * 1000 / avg_latency_ms
+
+    @property
+    def sample_count(self) -> int:
+        """Number of latency samples currently stored."""
+        return len(self._latency_samples)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize metrics for persistence."""
+        return {
+            "backend_id": self.backend_id,
+            "latency_samples": list(self._latency_samples),
+            "total_requests": self.total_requests,
+            "total_successes": self.total_successes,
+            "total_failures": self.total_failures,
+            "total_tokens": self.total_tokens,
+            "last_request_time": self.last_request_time,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "BackendMetrics":
+        """Deserialize metrics from persistence."""
+        metrics = cls(backend_id=data.get("backend_id", "unknown"))
+        metrics._latency_samples = deque(
+            data.get("latency_samples", []),
+            maxlen=_METRICS_WINDOW_SIZE,
+        )
+        metrics.total_requests = data.get("total_requests", 0)
+        metrics.total_successes = data.get("total_successes", 0)
+        metrics.total_failures = data.get("total_failures", 0)
+        metrics.total_tokens = data.get("total_tokens", 0)
+        metrics.last_request_time = data.get("last_request_time", 0.0)
+        return metrics
+
+    def get_status(self) -> dict[str, Any]:
+        """Get current metrics status as dict (for health endpoint)."""
+        return {
+            "backend_id": self.backend_id,
+            "success_rate": round(self.success_rate, 3),
+            "latency_p50_ms": round(self.latency_p50, 1),
+            "latency_p95_ms": round(self.latency_p95, 1),
+            "tokens_per_second": round(self.tokens_per_second, 1),
+            "total_requests": self.total_requests,
+            "sample_count": self.sample_count,
+        }
+
+
 # Global health trackers for each backend (dynamic)
 BACKEND_HEALTH: dict[str, BackendHealth] = {}
 
@@ -384,6 +597,395 @@ def get_backend_health(backend: str) -> BackendHealth:
     if backend not in BACKEND_HEALTH:
         BACKEND_HEALTH[backend] = BackendHealth(name=backend)
     return BACKEND_HEALTH[backend]
+
+
+# Global metrics trackers for each backend (dynamic)
+BACKEND_METRICS: dict[str, BackendMetrics] = {}
+
+
+def get_backend_metrics(backend_id: str) -> BackendMetrics:
+    """
+    Get or create metrics tracker for a backend.
+
+    Args:
+        backend_id: Unique identifier for the backend
+
+    Returns:
+        BackendMetrics instance for the backend
+    """
+    if backend_id not in BACKEND_METRICS:
+        BACKEND_METRICS[backend_id] = BackendMetrics(backend_id=backend_id)
+    return BACKEND_METRICS[backend_id]
+
+
+def load_backend_metrics() -> None:
+    """
+    Load backend metrics from disk.
+
+    Called at startup to restore metrics from previous session.
+    Silently handles missing or corrupt files.
+    """
+    import json
+    import structlog
+
+    log = structlog.get_logger()
+    metrics_file = paths.BACKEND_METRICS_FILE
+
+    if not metrics_file.exists():
+        return
+
+    try:
+        data = json.loads(metrics_file.read_text())
+        for backend_id, metrics_data in data.items():
+            BACKEND_METRICS[backend_id] = BackendMetrics.from_dict(metrics_data)
+        log.debug("backend_metrics_loaded", count=len(BACKEND_METRICS))
+    except json.JSONDecodeError as e:
+        log.warning("backend_metrics_load_failed", error=str(e), reason="invalid_json")
+    except Exception as e:
+        log.warning("backend_metrics_load_failed", error=str(e))
+
+
+def save_backend_metrics() -> None:
+    """
+    Save backend metrics to disk.
+
+    Uses atomic write (temp file + rename) to prevent corruption.
+    """
+    import json
+    import structlog
+
+    log = structlog.get_logger()
+    metrics_file = paths.BACKEND_METRICS_FILE
+
+    try:
+        paths.ensure_directories()
+        data = {
+            backend_id: metrics.to_dict()
+            for backend_id, metrics in BACKEND_METRICS.items()
+        }
+        temp_file = metrics_file.with_suffix(".tmp")
+        temp_file.write_text(json.dumps(data, indent=2))
+        temp_file.replace(metrics_file)  # Atomic on POSIX
+    except Exception as e:
+        log.warning("backend_metrics_save_failed", error=str(e))
+
+
+# ============================================================
+# TASK-BACKEND AFFINITY TRACKING
+# ============================================================
+
+
+@dataclass
+class AffinityTracker:
+    """
+    Track backend performance per task type using Exponential Moving Average.
+
+    Learns which backends perform better for specific task types (review, generate,
+    analyze, etc.) based on success/failure outcomes. Used by BackendScorer to
+    boost scores for backends with proven task-specific performance.
+
+    EMA Formula: new_score = old_score * (1 - alpha) + quality * alpha
+    Where quality is 1.0 for success, 0.0 for failure.
+    """
+
+    alpha: float = 0.1  # EMA decay factor (higher = faster adaptation)
+
+    # (backend_id, task_type) -> EMA score [0.0-1.0]
+    _scores: dict[tuple[str, str], float] = field(default_factory=dict)
+
+    def update(self, backend_id: str, task_type: str, success: bool) -> None:
+        """
+        Update affinity score with new observation.
+
+        Args:
+            backend_id: Backend identifier
+            task_type: Task type (review, generate, analyze, etc.)
+            success: Whether the request succeeded
+        """
+        key = (backend_id, task_type)
+        quality = 1.0 if success else 0.0
+        old = self._scores.get(key, 0.5)  # Start neutral
+        self._scores[key] = old * (1 - self.alpha) + quality * self.alpha
+
+    def get_affinity(self, backend_id: str, task_type: str) -> float:
+        """
+        Get affinity score for backend+task combo.
+
+        Returns:
+            Score from 0.0 to 1.0 (0.5 = neutral/unknown)
+        """
+        return self._scores.get((backend_id, task_type), 0.5)
+
+    def boost_score(
+        self, base_score: float, backend_id: str, task_type: str
+    ) -> float:
+        """
+        Adjust a backend score based on task affinity.
+
+        Args:
+            base_score: Original backend score
+            backend_id: Backend identifier
+            task_type: Task type
+
+        Returns:
+            Adjusted score (0.5 affinity = no change,
+            1.0 = +20% boost, 0.0 = -20% penalty)
+        """
+        affinity = self.get_affinity(backend_id, task_type)
+        # Linear modifier: 0.5 -> 1.0, 1.0 -> 1.2, 0.0 -> 0.8
+        modifier = 1.0 + (affinity - 0.5) * 0.4
+        return base_score * modifier
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for persistence."""
+        # Convert tuple keys to strings for JSON
+        return {
+            "alpha": self.alpha,
+            "scores": {f"{k[0]}:{k[1]}": v for k, v in self._scores.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AffinityTracker":
+        """Deserialize from persistence."""
+        tracker = cls(alpha=data.get("alpha", 0.1))
+        scores_data = data.get("scores", {})
+        for key_str, score in scores_data.items():
+            parts = key_str.split(":", 1)
+            if len(parts) == 2:
+                tracker._scores[(parts[0], parts[1])] = score
+        return tracker
+
+    def get_status(self) -> dict[str, Any]:
+        """Get current status for health endpoint."""
+        return {
+            "alpha": self.alpha,
+            "tracked_pairs": len(self._scores),
+            "scores": {f"{k[0]}:{k[1]}": round(v, 3) for k, v in self._scores.items()},
+        }
+
+
+# Global affinity tracker instance
+AFFINITY_TRACKER = AffinityTracker()
+
+
+def get_affinity_tracker() -> AffinityTracker:
+    """Get the global affinity tracker instance."""
+    return AFFINITY_TRACKER
+
+
+def load_affinity() -> None:
+    """
+    Load affinity data from disk.
+
+    Called at startup to restore learned affinities from previous session.
+    """
+    import json
+    import structlog
+
+    log = structlog.get_logger()
+    affinity_file = paths.AFFINITY_FILE
+
+    if not affinity_file.exists():
+        return
+
+    try:
+        data = json.loads(affinity_file.read_text())
+        global AFFINITY_TRACKER
+        AFFINITY_TRACKER = AffinityTracker.from_dict(data)
+        log.debug("affinity_loaded", tracked_pairs=len(AFFINITY_TRACKER._scores))
+    except json.JSONDecodeError as e:
+        log.warning("affinity_load_failed", error=str(e), reason="invalid_json")
+    except Exception as e:
+        log.warning("affinity_load_failed", error=str(e))
+
+
+def save_affinity() -> None:
+    """
+    Save affinity data to disk.
+
+    Uses atomic write (temp file + rename) to prevent corruption.
+    """
+    import json
+    import structlog
+
+    log = structlog.get_logger()
+    affinity_file = paths.AFFINITY_FILE
+
+    try:
+        paths.ensure_directories()
+        data = AFFINITY_TRACKER.to_dict()
+        temp_file = affinity_file.with_suffix(".tmp")
+        temp_file.write_text(json.dumps(data, indent=2))
+        temp_file.replace(affinity_file)  # Atomic on POSIX
+    except Exception as e:
+        log.warning("affinity_save_failed", error=str(e))
+
+
+# ============================================================
+# PRE-WARMING TRACKER
+# Predicts model needs based on hourly usage patterns
+# ============================================================
+
+
+@dataclass
+class PrewarmTracker:
+    """
+    Track hourly model tier usage patterns using Exponential Moving Average.
+
+    Learns which model tiers are used at different hours of the day to enable
+    predictive pre-warming. For each hour (0-23), tracks EMA scores per tier.
+
+    EMA Formula: new_score = old_score * (1 - alpha) + 1.0 * alpha
+    When a tier is used, its score for the current hour increases.
+    """
+
+    alpha: float = 0.15  # EMA decay factor (higher = faster adaptation)
+    threshold: float = 0.3  # Minimum score to recommend pre-warming
+
+    # (hour, tier) -> EMA score [0.0-1.0]
+    _scores: dict[tuple[int, str], float] = field(default_factory=dict)
+
+    def update(self, tier: str) -> None:
+        """
+        Update usage score for current hour and tier.
+
+        Args:
+            tier: Model tier that was used (quick, coder, moe, thinking)
+        """
+        from datetime import datetime
+
+        hour = datetime.now().hour
+        key = (hour, tier)
+        old = self._scores.get(key, 0.0)
+        self._scores[key] = old * (1 - self.alpha) + self.alpha
+
+    def get_predicted_tiers(self, hour: int | None = None) -> list[str]:
+        """
+        Get tiers likely to be needed at the given hour.
+
+        Args:
+            hour: Hour of day (0-23). If None, uses current hour.
+
+        Returns:
+            List of tier names with scores above threshold, sorted by score descending.
+        """
+        from datetime import datetime
+
+        if hour is None:
+            hour = datetime.now().hour
+
+        # Find all tiers for this hour with score above threshold
+        candidates = [
+            (tier, score)
+            for (h, tier), score in self._scores.items()
+            if h == hour and score >= self.threshold
+        ]
+        # Sort by score descending
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return [tier for tier, _ in candidates]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for persistence."""
+        return {
+            "alpha": self.alpha,
+            "threshold": self.threshold,
+            "scores": {f"{k[0]}:{k[1]}": v for k, v in self._scores.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PrewarmTracker":
+        """Deserialize from persistence."""
+        tracker = cls(
+            alpha=data.get("alpha", 0.15),
+            threshold=data.get("threshold", 0.3),
+        )
+        scores_data = data.get("scores", {})
+        for key_str, score in scores_data.items():
+            parts = key_str.split(":", 1)
+            if len(parts) == 2:
+                try:
+                    hour = int(parts[0])
+                    tier = parts[1]
+                    tracker._scores[(hour, tier)] = score
+                except ValueError:
+                    pass  # Skip malformed entries
+        return tracker
+
+    def get_status(self) -> dict[str, Any]:
+        """Get current status for health endpoint."""
+        from datetime import datetime
+
+        current_hour = datetime.now().hour
+        return {
+            "alpha": self.alpha,
+            "threshold": self.threshold,
+            "tracked_entries": len(self._scores),
+            "current_hour": current_hour,
+            "predicted_tiers": self.get_predicted_tiers(current_hour),
+            "top_scores": {
+                f"{h}:{t}": round(s, 3)
+                for (h, t), s in sorted(
+                    self._scores.items(), key=lambda x: x[1], reverse=True
+                )[:10]
+            },
+        }
+
+
+# Global prewarm tracker instance
+PREWARM_TRACKER = PrewarmTracker()
+
+
+def get_prewarm_tracker() -> PrewarmTracker:
+    """Get the global prewarm tracker instance."""
+    return PREWARM_TRACKER
+
+
+def load_prewarm() -> None:
+    """
+    Load prewarm data from disk.
+
+    Called at startup to restore learned patterns from previous session.
+    """
+    import json
+    import structlog
+
+    log = structlog.get_logger()
+    prewarm_file = paths.PREWARM_FILE
+
+    if not prewarm_file.exists():
+        return
+
+    try:
+        data = json.loads(prewarm_file.read_text())
+        global PREWARM_TRACKER
+        PREWARM_TRACKER = PrewarmTracker.from_dict(data)
+        log.debug("prewarm_loaded", tracked_entries=len(PREWARM_TRACKER._scores))
+    except json.JSONDecodeError as e:
+        log.warning("prewarm_load_failed", error=str(e), reason="invalid_json")
+    except Exception as e:
+        log.warning("prewarm_load_failed", error=str(e))
+
+
+def save_prewarm() -> None:
+    """
+    Save prewarm data to disk.
+
+    Uses atomic write (temp file + rename) to prevent corruption.
+    """
+    import json
+    import structlog
+
+    log = structlog.get_logger()
+    prewarm_file = paths.PREWARM_FILE
+
+    try:
+        paths.ensure_directories()
+        data = PREWARM_TRACKER.to_dict()
+        temp_file = prewarm_file.with_suffix(".tmp")
+        temp_file.write_text(json.dumps(data, indent=2))
+        temp_file.replace(prewarm_file)  # Atomic on POSIX
+    except Exception as e:
+        log.warning("prewarm_save_failed", error=str(e))
 
 
 # ============================================================

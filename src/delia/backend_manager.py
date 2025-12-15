@@ -328,6 +328,23 @@ class BackendManager:
                 "prefer_local": True,
                 "fallback_enabled": False,
                 "load_balance": False,
+                "scoring": {
+                    "latency": 0.35,
+                    "throughput": 0.15,
+                    "reliability": 0.35,
+                    "availability": 0.15,
+                    "cost": 0.0,
+                },
+                "hedging": {
+                    "enabled": False,
+                    "delay_ms": 50,
+                    "max_backends": 2,
+                },
+                "prewarm": {
+                    "enabled": False,
+                    "threshold": 0.3,
+                    "check_interval_minutes": 5,
+                },
             },
             "models": {},
             "auth": {
@@ -519,6 +536,19 @@ class BackendManager:
         enabled = [b for b in self.backends.values() if b.enabled]
         enabled.sort(key=lambda b: b.priority)
         return enabled
+
+    def get_scoring_weights(self) -> "ScoringWeights":
+        """Get scoring weights from routing config.
+
+        Returns ScoringWeights with values from settings.json,
+        falling back to defaults for missing keys.
+        """
+        from .routing import ScoringWeights
+
+        scoring_config = self.routing_config.get("scoring", {})
+        if scoring_config:
+            return ScoringWeights.from_dict(scoring_config)
+        return ScoringWeights()
 
     def get_backend(self, backend_id: str) -> BackendConfig | None:
         """Get a specific backend by ID."""
