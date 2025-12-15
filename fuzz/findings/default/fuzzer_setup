@@ -1,0 +1,8 @@
+# environment variables:
+AFL_CUSTOM_INFO_PROGRAM=python3
+AFL_CUSTOM_INFO_PROGRAM_ARGV=/home/dan/git/delia/fuzz/afl_harness.py --persistent
+AFL_CUSTOM_INFO_OUT=/home/dan/git/delia/fuzz/findings/default
+AFL_DUMB_FORKSRV=1
+AFL_SKIP_BIN_CHECK=1
+# command line:
+'afl-fuzz' '-i' '/home/dan/git/delia/fuzz/corpus' '-o' '/home/dan/git/delia/fuzz/findings' '--' 'python3' '/home/dan/git/delia/fuzz/afl_harness.py' '--persistent'

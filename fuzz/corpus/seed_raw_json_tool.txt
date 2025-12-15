@@ -1,0 +1,3 @@
+Let me use the read_file tool to check that:
+{"name": "read_file", "arguments": {"path": "/home/user/config.json"}}
+Done checking.
