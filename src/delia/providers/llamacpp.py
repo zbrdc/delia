@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,6 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """llama.cpp (OpenAI-compatible) LLM provider implementation.
 
 This module provides the LlamaCppProvider class that implements the LLMProvider protocol
@@ -39,7 +40,13 @@ from ..messages import (
     get_tier_message,
 )
 from ..tokens import count_tokens
-from .base import LLMResponse, StreamChunk, create_error_response, create_success_response
+from .base import (
+    LLMResponse,
+    ModelLoadResult,
+    StreamChunk,
+    create_error_response,
+    create_success_response,
+)
 from .models import LlamaCppError, LlamaCppResponse
 from .ollama import log_thinking_and_response
 
@@ -102,15 +109,17 @@ class LlamaCppProvider:
         """Call OpenAI-compatible API with Pydantic validation, retry, and circuit breaker."""
         start_time = time.time()
 
-        # Resolve backend
+        # Resolve backend (skip embeddings-only backends)
         if not backend_obj:
             for b in self.backend_manager.get_enabled_backends():
                 if b.provider in self.COMPATIBLE_PROVIDERS:
+                    if await self._is_embeddings_backend(b):
+                        continue
                     backend_obj = b
                     break
 
         if not backend_obj:
-            return create_error_response("No enabled OpenAI-compatible backend found")
+            return create_error_response("No enabled OpenAI-compatible backend found (or all are embeddings-only)")
 
         # Circuit breaker check
         health = get_backend_health(backend_obj.id)
@@ -205,7 +214,8 @@ class LlamaCppProvider:
                         return create_error_response("Backend returned no choices")
 
                     message = validated.choices[0].message
-                    response_text = message.content or ""
+                    # Use content, or fall back to reasoning_content (Qwen3 extended thinking)
+                    response_text = message.content or message.reasoning_content or ""
                     tool_calls = message.tool_calls
 
                     if validated.usage:
@@ -220,7 +230,9 @@ class LlamaCppProvider:
                     choices = data.get("choices", [])
                     if not choices:
                         return create_error_response("Backend returned no choices")
-                    response_text = choices[0].get("message", {}).get("content", "")
+                    msg = choices[0].get("message", {})
+                    # Use content, or fall back to reasoning_content (Qwen3 extended thinking)
+                    response_text = msg.get("content", "") or msg.get("reasoning_content", "")
                     usage = data.get("usage", {})
                     tokens = usage.get("completion_tokens", 0) + usage.get("prompt_tokens", 0)
                     if tokens == 0:
@@ -324,15 +336,17 @@ class LlamaCppProvider:
         """
         start_time = time.time()
 
-        # Resolve backend
+        # Resolve backend (skip embeddings-only backends)
         if not backend_obj:
             for b in self.backend_manager.get_enabled_backends():
                 if b.provider in self.COMPATIBLE_PROVIDERS:
+                    if await self._is_embeddings_backend(b):
+                        continue
                     backend_obj = b
                     break
 
         if not backend_obj:
-            yield StreamChunk(done=True, error="No enabled OpenAI-compatible backend found")
+            yield StreamChunk(done=True, error="No enabled OpenAI-compatible backend found (or all are embeddings-only)")
             return
 
         # Circuit breaker check
@@ -476,7 +490,8 @@ class LlamaCppProvider:
                         choices = data.get("choices", [])
                         if choices:
                             delta = choices[0].get("delta", {})
-                            text_chunk = delta.get("content", "")
+                            # Use content, or fall back to reasoning_content (Qwen3)
+                            text_chunk = delta.get("content", "") or delta.get("reasoning_content", "")
                             if text_chunk:
                                 full_response += text_chunk
                                 yield StreamChunk(text=text_chunk)
@@ -501,3 +516,245 @@ class LlamaCppProvider:
         except Exception as e:
             health.record_failure("exception", content_size)
             yield StreamChunk(done=True, error=f"Streaming error: {e!s}")
+
+    def _find_compatible_backend(self) -> BackendConfig | None:
+        """Find the first enabled OpenAI-compatible backend."""
+        for b in self.backend_manager.get_enabled_backends():
+            if b.provider in self.COMPATIBLE_PROVIDERS:
+                return b
+        return None
+
+    async def _is_embeddings_backend(self, backend: BackendConfig) -> bool:
+        """Check if a backend is running an embeddings-only model.
+
+        Detects embeddings models by checking if loaded model names contain
+        'embed' (e.g., nomic-embed-text, bge-embed, etc.).
+        """
+        try:
+            loaded = await self.list_loaded_models(backend)
+            for model_name in loaded:
+                if "embed" in model_name.lower():
+                    log.debug("skipping_embeddings_backend", backend=backend.id, model=model_name)
+                    return True
+        except Exception:
+            pass
+        return False
+
+    async def load_model(
+        self,
+        model: str,
+        backend_obj: BackendConfig | None = None,
+    ) -> ModelLoadResult:
+        """Load a model in llama.cpp router mode.
+
+        For llama.cpp in router mode (started without -m flag), uses
+        POST /models/load to load a specific model.
+        For single-model mode or non-llama.cpp backends, this is a no-op.
+        """
+        start_time = time.time()
+
+        if not backend_obj:
+            backend_obj = self._find_compatible_backend()
+        if not backend_obj:
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="load",
+                error="No enabled OpenAI-compatible backend found",
+            )
+
+        client = backend_obj.get_client()
+
+        try:
+            # Try llama.cpp router mode endpoint
+            payload = {"model": model}
+            response = await client.post("/models/load", json=payload, timeout=300.0)
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            if response.status_code == 200:
+                log.info(
+                    "model_preloaded",
+                    model=model,
+                    elapsed_ms=elapsed_ms,
+                    backend="llamacpp",
+                )
+                return ModelLoadResult(
+                    success=True,
+                    model=model,
+                    action="load",
+                    elapsed_ms=elapsed_ms,
+                    metadata={"backend": "llamacpp", "mode": "router"},
+                )
+            elif response.status_code == 404:
+                # Router mode not available - model loads on first use
+                # This is fine, return success as a no-op
+                return ModelLoadResult(
+                    success=True,
+                    model=model,
+                    action="load",
+                    elapsed_ms=elapsed_ms,
+                    metadata={"backend": "llamacpp", "note": "router_mode_unavailable"},
+                )
+            else:
+                return ModelLoadResult(
+                    success=False,
+                    model=model,
+                    action="load",
+                    error=f"HTTP {response.status_code}: {response.text[:200]}",
+                    elapsed_ms=elapsed_ms,
+                )
+        except httpx.TimeoutException:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="load",
+                error="Timeout loading model (waited 5 minutes)",
+                elapsed_ms=elapsed_ms,
+            )
+        except Exception as e:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            # Connection errors or 404s mean router mode isn't available
+            # Return success as the model will load on first request
+            if "404" in str(e) or "ConnectError" in type(e).__name__:
+                return ModelLoadResult(
+                    success=True,
+                    model=model,
+                    action="load",
+                    elapsed_ms=elapsed_ms,
+                    metadata={"backend": "llamacpp", "note": "router_mode_unavailable"},
+                )
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="load",
+                error=str(e),
+                elapsed_ms=elapsed_ms,
+            )
+
+    async def unload_model(
+        self,
+        model: str,
+        backend_obj: BackendConfig | None = None,
+    ) -> ModelLoadResult:
+        """Unload a model in llama.cpp router mode.
+
+        For llama.cpp in router mode, uses POST /models/unload.
+        For single-model mode or non-llama.cpp backends, this is a no-op.
+        """
+        start_time = time.time()
+
+        if not backend_obj:
+            backend_obj = self._find_compatible_backend()
+        if not backend_obj:
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="unload",
+                error="No enabled OpenAI-compatible backend found",
+            )
+
+        client = backend_obj.get_client()
+
+        try:
+            # Try llama.cpp router mode endpoint
+            payload = {"model": model}
+            response = await client.post("/models/unload", json=payload, timeout=30.0)
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            if response.status_code == 200:
+                log.info(
+                    "model_unloaded_llamacpp",
+                    model=model,
+                    elapsed_ms=elapsed_ms,
+                    backend="llamacpp",
+                )
+                return ModelLoadResult(
+                    success=True,
+                    model=model,
+                    action="unload",
+                    elapsed_ms=elapsed_ms,
+                    metadata={"backend": "llamacpp", "mode": "router"},
+                )
+            elif response.status_code == 404:
+                # Router mode not available - cannot unload programmatically
+                # Return success as we cannot do anything
+                return ModelLoadResult(
+                    success=True,
+                    model=model,
+                    action="unload",
+                    elapsed_ms=elapsed_ms,
+                    metadata={"backend": "llamacpp", "note": "router_mode_unavailable"},
+                )
+            else:
+                return ModelLoadResult(
+                    success=False,
+                    model=model,
+                    action="unload",
+                    error=f"HTTP {response.status_code}: {response.text[:200]}",
+                    elapsed_ms=elapsed_ms,
+                )
+        except Exception as e:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            # Connection errors or 404s mean router mode isn't available
+            if "404" in str(e) or "ConnectError" in type(e).__name__:
+                return ModelLoadResult(
+                    success=True,
+                    model=model,
+                    action="unload",
+                    elapsed_ms=elapsed_ms,
+                    metadata={"backend": "llamacpp", "note": "router_mode_unavailable"},
+                )
+            return ModelLoadResult(
+                success=False,
+                model=model,
+                action="unload",
+                error=str(e),
+                elapsed_ms=elapsed_ms,
+            )
+
+    async def list_loaded_models(
+        self,
+        backend_obj: BackendConfig | None = None,
+    ) -> list[str]:
+        """Get list of loaded models from llama.cpp or OpenAI-compatible backend.
+
+        For llama.cpp router mode, uses GET /models to find loaded models.
+        Falls back to /v1/models for standard OpenAI-compatible backends.
+        """
+        if not backend_obj:
+            backend_obj = self._find_compatible_backend()
+        if not backend_obj:
+            return []
+
+        client = backend_obj.get_client()
+
+        # Try llama.cpp router mode /models endpoint first
+        try:
+            response = await client.get("/models", timeout=10.0)
+            if response.status_code == 200:
+                data = response.json()
+                # Filter to only loaded models (router mode includes status)
+                loaded = []
+                for m in data.get("data", []):
+                    status = m.get("status", {})
+                    if isinstance(status, dict) and status.get("value") == "loaded":
+                        loaded.append(m.get("id", ""))
+                    elif not isinstance(status, dict):
+                        # Non-router mode - all returned models are available
+                        loaded.append(m.get("id", ""))
+                if loaded:
+                    return loaded
+        except Exception:
+            pass
+
+        # Fallback: try standard /v1/models endpoint
+        try:
+            response = await client.get(backend_obj.models_endpoint, timeout=10.0)
+            if response.status_code == 200:
+                data = response.json()
+                return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+        except Exception as e:
+            log.warning("list_loaded_models_failed", backend="llamacpp", error=str(e))
+
+        return []

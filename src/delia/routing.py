@@ -1,4 +1,4 @@
-# Copyright (C) 2023 the project owner
+# Copyright (C) 2024 Delia Contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,8 +12,10 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """Content detection and routing utilities for Delia."""
 
+import os
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +26,9 @@ if TYPE_CHECKING:
     from .config import Config
 
 log = structlog.get_logger()
+
+# Environment variable to enable semantic routing
+SEMANTIC_ROUTING_ENABLED = os.environ.get("DELIA_SEMANTIC_ROUTING", "true").lower() in ("true", "1", "yes")
 
 
 # Code indicators with weights for confidence scoring
@@ -194,21 +199,35 @@ def parse_model_override(model_hint: str | None, content: str) -> str | None:
 class ModelRouter:
     """Intelligent model and backend selection for Delia."""
 
-    def __init__(self, config: "Config", backend_manager: "BackendManager"):
+    def __init__(self, config: "Config", backend_manager: "BackendManager", use_semantic_routing: bool = True):
         """Initialize the model router with configuration and backend manager.
 
         Args:
             config: Configuration object with model tiers and task mappings
             backend_manager: Backend manager for retrieving active/enabled backends
+            use_semantic_routing: Whether to use embeddings-based semantic routing
         """
         self.config = config
         self.backend_manager = backend_manager
+        self.use_semantic_routing = use_semantic_routing and SEMANTIC_ROUTING_ENABLED
+        self._semantic_router = None
+
+    async def _get_semantic_router(self):
+        """Lazy-load the semantic router."""
+        if self._semantic_router is None and self.use_semantic_routing:
+            try:
+                from .embeddings import get_semantic_router
+                self._semantic_router = get_semantic_router()
+            except ImportError:
+                log.warning("semantic_routing_import_failed")
+                self.use_semantic_routing = False
+        return self._semantic_router
 
     async def select_model(
         self, task_type: str, content_size: int = 0, model_override: str | None = None, content: str = ""
     ) -> str:
         """
-        Select the best model for the task with intelligent code-aware routing.
+        Select the best model for the task with intelligent routing.
 
         Tiers (configured in settings.json):
         - quick: Fast general tasks, text analysis, summarize
@@ -218,10 +237,8 @@ class ModelRouter:
         Strategy:
         1. Honor explicit overrides
         2. MoE tasks (plan, critique) always use MoE model
-        3. Detect if content is CODE or TEXT:
-           - Large CODE → coder (specialized for programming)
-           - Large TEXT → moe (better reasoning for prose)
-        4. Code-focused tasks on code content → coder
+        3. **SEMANTIC ROUTING** (if enabled): Use embeddings to classify content
+        4. Fallback: Regex-based code detection for content classification
         5. Default to quick for everything else
         """
         # Get models from active backend
@@ -261,18 +278,45 @@ class ModelRouter:
             log.info("model_selected", source="moe_task", task=task_type, tier="moe")
             return model_moe
 
-        # Detect code content once (cache result for reuse below)
+        # Priority 3: Semantic routing (embeddings-based classification)
+        if content and self.use_semantic_routing:
+            semantic_router = await self._get_semantic_router()
+            if semantic_router:
+                try:
+                    tier, confidence, reasoning = await semantic_router.get_recommended_tier(content)
+                    if confidence > 0.5:  # Only use semantic routing if confident
+                        resolved = resolve_tier(tier)
+                        log.info(
+                            "model_selected",
+                            source="semantic",
+                            task=task_type,
+                            tier=tier,
+                            confidence=f"{confidence:.0%}",
+                            reasoning=reasoning,
+                            model=resolved,
+                        )
+                        return resolved
+                    else:
+                        log.debug(
+                            "semantic_routing_low_confidence",
+                            confidence=f"{confidence:.0%}",
+                            reasoning=reasoning,
+                        )
+                except Exception as e:
+                    log.warning("semantic_routing_failed", error=str(e))
+
+        # Priority 4 (fallback): Regex-based code detection
         code_detection = None
         if content and (content_size > self.config.large_content_threshold or task_type in self.config.coder_tasks):
             code_detection = detect_code_content(content)
 
-        # Priority 3: Large content - detect if code or text
+        # Large content handling
         if content_size > self.config.large_content_threshold and code_detection:
             is_code, confidence, reasoning = code_detection
             if is_code and confidence > 0.5:
                 log.info(
                     "model_selected",
-                    source="large_code",
+                    source="large_code_regex",
                     content_kb=content_size // 1000,
                     confidence=f"{confidence:.0%}",
                     tier="coder",
@@ -283,7 +327,7 @@ class ModelRouter:
                 # Large text content benefits from MoE's reasoning
                 log.info(
                     "model_selected",
-                    source="large_text",
+                    source="large_text_regex",
                     content_kb=content_size // 1000,
                     confidence=f"{1 - confidence:.0%}",
                     tier="moe",
@@ -291,15 +335,14 @@ class ModelRouter:
                 )
                 return model_moe
 
-        # Priority 4: Code-focused tasks - check if content is actually code (reuse cached detection)
+        # Code-focused tasks with regex detection
         if task_type in self.config.coder_tasks and code_detection:
             is_code, confidence, reasoning = code_detection
             if is_code or confidence > 0.3:
-                log.info("model_selected", source="coder_task_code", task=task_type, tier="coder", reasoning=reasoning)
+                log.info("model_selected", source="coder_task_regex", task=task_type, tier="coder", reasoning=reasoning)
                 return model_coder
             else:
-                # Task like "analyze" on text should use quick/moe, not coder
-                log.info("model_selected", source="coder_task_text", task=task_type, tier="quick", reasoning=reasoning)
+                log.info("model_selected", source="coder_task_text_regex", task=task_type, tier="quick", reasoning=reasoning)
                 # Fall through to default
 
         # Priority 5: Default to quick (fastest model)
@@ -337,3 +380,29 @@ class ModelRouter:
         # Default to active backend
         active_backend = self.backend_manager.get_active_backend()
         return (None, active_backend)
+
+
+# Module-level singleton for convenience
+_router: ModelRouter | None = None
+
+
+def get_router() -> ModelRouter:
+    """Get or create the global ModelRouter instance."""
+    global _router
+    if _router is None:
+        from .backend_manager import backend_manager
+        from .config import config
+        _router = ModelRouter(config, backend_manager)
+    return _router
+
+
+async def select_model(
+    task_type: str, content_size: int = 0, model_override: str | None = None, content: str = ""
+) -> str:
+    """Module-level select_model that uses the global router.
+    
+    This is the canonical model selection function - use this instead of
+    creating ModelRouter instances directly.
+    """
+    router = get_router()
+    return await router.select_model(task_type, content_size, model_override, content)

@@ -41,41 +41,55 @@ A Model Context Protocol (MCP) server that cultivates your local LLM garden. Pla
 
 ### Installation
 
+**Global Installation (Recommended for Users)**
+```bash
+# Install directly from source
+uv tool install git+https://github.com/zbrdc/delia.git
+
+# Or if you've cloned the repo
+cd delia
+uv tool install .
+```
+
+**Development Installation**
 ```bash
 # Clone the repository
 git clone https://github.com/zbrdc/delia.git
 cd delia
 
-# Install Delia and dependencies
+# Install Delia in editable mode
 uv sync
 uv pip install -e .
-
-# Pull at least one model (choose based on your VRAM)
-ollama pull qwen3:14b           # 8GB+ VRAM - general purpose
-ollama pull qwen2.5-coder:14b   # 8GB+ VRAM - code specialized
-ollama pull qwen3:30b-a3b       # 16GB+ VRAM - complex reasoning
-
-# Verify Ollama is running
-curl http://localhost:11434/api/tags
-
-# Run the setup wizard
-delia init
 ```
 
-The `uv pip install -e .` step installs the `delia` command to your PATH. This is required for MCP clients to spawn Delia.
+### Quick Start
 
-The setup wizard will:
-- Detect available backends (Ollama, llama.cpp, vLLM)
-- Auto-assign models to tiers based on capabilities
-- Optionally configure detected MCP clients (Claude Code, VS Code, etc.)
+1.  **Install & Setup**
+    ```bash
+    # install (see above)
+    uv tool install .
+    
+    # Run the setup wizard
+    delia init
+    ```
 
-See [Configuration](#configuration) to customize further.
+    The setup wizard will:
+    -   Detect available backends (Ollama, llama.cpp, vLLM)
+    -   Auto-assign models to tiers based on capabilities
+    -   Create a global configuration at `~/.delia/settings.json`
+    -   Configure detected MCP clients (Claude Code, VS Code, etc.)
+
+2.  **Pull Models (if using Ollama)**
+    ```bash
+    # Pull at least one model (choose based on your VRAM)
+    ollama pull qwen2.5:14b           # 12GB+ VRAM - general purpose
+    ollama pull qwen2.5-coder:14b     # 12GB+ VRAM - code specialized
+    ollama pull qwen2.5:32b           # 24GB+ VRAM - complex reasoning
+    ```
 
 ## Integration
 
-Delia works with AI coding assistants via MCP. The setup wizard (`delia init`) will automatically configure these clients and set up the proper uv-based MCP configuration, or you can manually configure them using the examples below.
-
-**Note:** The MCP configuration uses `uv` to reliably run Delia from your project directory, ensuring compatibility regardless of your Python installation setup.
+Delia works with AI coding assistants via MCP. The setup wizard (`delia init`) automatically configures these clients.
 
 ### VS Code / GitHub Copilot
 
@@ -84,20 +98,13 @@ Add to `~/.config/Code/User/mcp.json`:
 {
   "servers": {
     "delia": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/path/to/delia",
-        "run",
-        "delia",
-        "serve"
-      ],
+      "command": "delia",
+      "args": ["serve"],
       "type": "stdio"
     }
   }
 }
 ```
-Replace `/path/to/delia` with your actual Delia installation directory. Reload VS Code to activate.
 
 ### Claude Code
 
@@ -106,19 +113,20 @@ Create `~/.claude/mcp.json`:
 {
   "mcpServers": {
     "delia": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/path/to/delia",
-        "run",
-        "delia",
-        "serve"
-      ]
+      "command": "delia",
+      "args": ["serve"]
     }
   }
 }
 ```
-Replace `/path/to/delia` with your actual Delia installation directory. Then run `claude` and use `@delia` to delegate tasks.
+
+*Note: If you installed Delia in development mode (editable), use the following configuration instead:*
+```json
+{
+  "command": "uv",
+  "args": ["--directory", "/path/to/delia", "run", "delia", "serve"]
+}
+```
 
 ### Gemini CLI
 
@@ -147,19 +155,12 @@ Add to `~/.gemini/settings.json`:
 {
   "mcpServers": {
     "delia": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/path/to/delia",
-        "run",
-        "delia",
-        "serve"
-      ]
+      "command": "delia",
+      "args": ["serve"]
     }
   }
 }
 ```
-Replace `/path/to/delia` with your actual Delia installation directory.
 
 ### GitHub Copilot CLI
 
@@ -168,19 +169,12 @@ Create `~/.copilot-cli/mcp.json`:
 {
   "servers": {
     "delia": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/path/to/delia",
-        "run",
-        "delia",
-        "serve"
-      ]
+      "command": "delia",
+      "args": ["serve"]
     }
   }
 }
 ```
-Replace `/path/to/delia` with your actual Delia installation directory.
 
 ### Manual Configuration
 
@@ -204,17 +198,18 @@ delia install claude
 delia install
 ```
 
-All configurations use the `uv` approach to reliably execute Delia from its installation directory.
-
 ## Configuration
 
 ### Backend Configuration
 
-Delia stores configuration in `settings.json` (created on first run). Copy the example to customize:
+Delia stores configuration in `~/.delia/settings.json` by default. You can view or edit it using:
 
 ```bash
-cp settings.json.example settings.json
+delia config --show
+delia config --edit
 ```
+
+You can also create a local `settings.json` in your current directory to override global settings for a specific project.
 
 #### Configuration Fields
 
@@ -396,6 +391,23 @@ Typical response times on modern hardware (RTX 3090/4090):
 | Thinking | 30-90 seconds | Deep reasoning, research |
 
 Times vary based on prompt length, model size, and hardware.
+
+## Development & Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run specific test file
+uv run pytest tests/test_backend_manager.py -v
+
+# Run with coverage
+uv run pytest --cov=delia --cov-report=html
+```
+
+
 
 ## License
 

@@ -26,6 +26,8 @@ dependencies = [
     "structlog>=24.4.0",
     "aiofiles>=24.1.0",
     "humanize>=4.10.0",
+    # Semantic routing
+    "numpy>=1.26.0",
     # Authentication (FastAPI-Users)
     "fastapi-users[oauth,sqlalchemy]>=14.0.0",
     "aiosqlite>=0.20.0",
@@ -84,9 +86,7 @@ test = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-markers = [
-    "fuzz: property-based tests using Hypothesis",
-]
+markers = []
 
 [tool.mypy]
 python_version = "3.11"
