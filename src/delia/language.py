@@ -23,6 +23,7 @@ for different programming languages and task types.
 """
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pygments.lexers import get_lexer_for_filename
@@ -292,9 +293,36 @@ def detect_language(content: str, file_path: str = "", hint: str | None = None) 
 # ============================================================
 
 
+def get_current_time_context() -> str:
+    """
+    Generate a formatted current time string for LLM context.
+
+    Provides the current UTC time and local time with timezone info.
+    This helps LLMs give accurate time-aware responses for searches,
+    coding decisions, and questions about recent events.
+
+    The instruction tells the LLM to use this knowledge implicitly,
+    not to mention or announce it unless directly asked.
+
+    Returns:
+        Formatted time context string
+    """
+    utc_now = datetime.now(timezone.utc)
+    local_now = datetime.now().astimezone()
+
+    # Format: "Tuesday, December 16, 2025 at 14:30 UTC (15:30 CET)"
+    utc_str = utc_now.strftime("%A, %B %d, %Y at %H:%M UTC")
+    local_str = local_now.strftime("%H:%M %Z")
+
+    # Instruct to use implicitly - don't announce unless asked
+    return f"[System time: {utc_str} (local: {local_str}) - Use this knowledge implicitly. Do NOT mention the time unless directly asked.]"
+
+
 def get_system_prompt(language: str, task_type: str) -> str:
     """
     Get structured system prompt optimized for LLM-to-LLM communication.
+
+    Includes current system time for accurate time-aware responses.
 
     Args:
         language: Programming language/framework key
@@ -305,8 +333,12 @@ def get_system_prompt(language: str, task_type: str) -> str:
     """
     base: str = str(LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["python"])["system_prompt"])
 
+    # Get current time context for accurate time-aware responses
+    time_context = get_current_time_context()
+
     # Aggressive LLM-to-LLM optimization - eliminate all fluff
-    llm_prefix = """CRITICAL: Your output is consumed by another LLM (Claude/Copilot), NOT a human.
+    llm_prefix = f"""CRITICAL: Your output is consumed by another LLM (Claude/Copilot), NOT a human.
+{time_context}
 RULES:
 - NO preamble ("Sure", "I'd be happy to", "Let me", "Here's")
 - NO sign-offs ("Hope this helps", "Let me know", "Feel free to ask")

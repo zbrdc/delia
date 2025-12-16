@@ -42,6 +42,7 @@ env/
 
 # User-specific backend configuration
 settings.json
+.serena
 
 # Legacy data directories (before centralization)
 /.user_data/

@@ -36,11 +36,15 @@ class ToolDefinition:
         description: Human-readable description for LLM
         parameters: JSON Schema for parameters
         handler: Async function to execute the tool
+        permission_level: Required permission ("read", "write", "exec")
+        dangerous: If True, requires user confirmation before execution
     """
     name: str
     description: str
     parameters: dict[str, Any]
     handler: Callable[..., Awaitable[str]]
+    permission_level: str = "read"  # "read" | "write" | "exec"
+    dangerous: bool = False  # Requires confirmation prompt
 
     def to_openai_schema(self) -> dict[str, Any]:
         """Convert to OpenAI function calling format.

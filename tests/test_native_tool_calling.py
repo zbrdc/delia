@@ -406,7 +406,7 @@ class TestSystemPromptWithNative:
         assert "read_file" in text_prompt
 
     def test_system_prompt_only_base_when_native(self):
-        """Test that system prompt is minimal in native mode."""
+        """Test that system prompt is minimal in native mode (plus time context)."""
         from delia.tools.agent import build_system_prompt
 
         base = "Be concise."
@@ -414,6 +414,9 @@ class TestSystemPromptWithNative:
 
         native_prompt = build_system_prompt(base, registry, native_mode=True)
 
-        # Should be just the base prompt (or very close to it)
-        assert len(native_prompt) < len(base) + 100  # Allow for some whitespace
+        # Should be just the base prompt plus time context (no tool instructions)
+        # Time context adds ~150 chars, so allow for that
+        assert len(native_prompt) < len(base) + 200  # Allow for time context + whitespace
         assert "Be concise." in native_prompt
+        # Should NOT include text-based tool instructions
+        assert "<tool_call>" not in native_prompt

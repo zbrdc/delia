@@ -50,12 +50,19 @@ class AgentConfig:
         total_timeout: Total timeout for entire agent run
         parallel_tools: Whether to execute multiple tools in parallel
         native_tool_calling: If True, expect OpenAI-format tool calls
+        allow_write: If True, enable file write operations (--allow-write)
+        allow_exec: If True, enable shell command execution (--allow-exec)
+        require_confirmation: If True, prompt before dangerous operations (disabled by --yolo)
     """
     max_iterations: int = DEFAULT_MAX_ITERATIONS
     timeout_per_tool: float = DEFAULT_TIMEOUT_PER_TOOL
     total_timeout: float = DEFAULT_TOTAL_TIMEOUT
     parallel_tools: bool = True
     native_tool_calling: bool = False
+    # Permission flags (all disabled by default for security)
+    allow_write: bool = False
+    allow_exec: bool = False
+    require_confirmation: bool = True  # Set to False via --yolo
 
 
 @dataclass
@@ -90,6 +97,8 @@ LLMCallable = Callable[
 def build_system_prompt(base_system: str | None, registry: ToolRegistry, native_mode: bool) -> str:
     """Build system prompt with tool information.
 
+    Includes current system time for accurate time-aware responses.
+
     Args:
         base_system: Base system prompt from caller
         registry: Tool registry with available tools
@@ -98,7 +107,12 @@ def build_system_prompt(base_system: str | None, registry: ToolRegistry, native_
     Returns:
         Complete system prompt
     """
+    from ..language import get_current_time_context
+
     parts = []
+
+    # Always include time context for accurate time-aware responses
+    parts.append(get_current_time_context())
 
     if base_system:
         parts.append(base_system)

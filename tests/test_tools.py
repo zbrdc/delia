@@ -115,7 +115,8 @@ class TestToolRegistry:
         registry = get_default_tools()
         schemas = registry.get_openai_schemas()
 
-        assert len(schemas) == 4  # read_file, list_directory, search_code, web_fetch
+        # Default tools: read_file, list_directory, search_code, web_fetch, web_search, web_news
+        assert len(schemas) == 6
         assert all(s["type"] == "function" for s in schemas)
 
     def test_filter_registry(self):
@@ -757,7 +758,8 @@ class TestAgentLoop:
         # Verify tools were included in payload
         assert captured_payload is not None
         assert "tools" in captured_payload
-        assert len(captured_payload["tools"]) == 4  # read_file, list_directory, search_code, web_fetch
+        # Default tools: read_file, list_directory, search_code, web_fetch, web_search, web_news
+        assert len(captured_payload["tools"]) == 6
         assert all(t["type"] == "function" for t in captured_payload["tools"])
 
         # Verify expected tool names

@@ -285,6 +285,158 @@ async def search_code(
         return f"Error searching: {e}"
 
 
+# ============================================================
+# DANGEROUS TOOLS - Require explicit permission flags
+# ============================================================
+
+async def write_file(
+    path: str,
+    content: str,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Write content to a file.
+
+    Creates the file if it doesn't exist, overwrites if it does.
+    Requires --allow-write flag to be enabled.
+
+    Args:
+        path: Path to file (absolute or relative to workspace/cwd)
+        content: Content to write to the file
+        workspace: Optional workspace to confine file access
+
+    Returns:
+        Success message or error
+    """
+    # Validate path (with workspace if provided)
+    valid, error = validate_path(path, workspace)
+    if not valid:
+        return f"Error: {error}"
+
+    # Resolve path (relative to workspace if provided)
+    if workspace and not Path(path).is_absolute():
+        file_path = (workspace.root / path).resolve()
+    else:
+        file_path = Path(path).expanduser().resolve()
+
+    # Additional safety: never write to critical system paths
+    path_str = str(file_path).lower()
+    dangerous_patterns = [
+        "/etc/", "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/",
+        "/boot/", "/lib/", "/lib64/", "system32", "windows/system",
+    ]
+    for pattern in dangerous_patterns:
+        if pattern in path_str:
+            return f"Error: Cannot write to system directory: {path}"
+
+    try:
+        # Create parent directories if needed
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write content
+        file_path.write_text(content, encoding="utf-8")
+
+        size = file_path.stat().st_size
+        log.info("file_written", path=str(file_path), size=size)
+        return f"Successfully wrote {size:,} bytes to {path}"
+
+    except PermissionError:
+        return f"Error: Permission denied writing to {path}"
+    except Exception as e:
+        return f"Error writing file: {e}"
+
+
+async def shell_exec(
+    command: str,
+    cwd: str | None = None,
+    timeout: int = 60,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Execute a shell command.
+
+    Requires --allow-exec flag to be enabled.
+    Commands are run with shell=True for convenience.
+
+    Args:
+        command: Shell command to execute
+        cwd: Working directory (defaults to workspace root or cwd)
+        timeout: Command timeout in seconds (default: 60)
+        workspace: Optional workspace to confine command execution
+
+    Returns:
+        Command output (stdout + stderr) or error
+    """
+    # Validate cwd if provided
+    if cwd:
+        valid, error = validate_path(cwd, workspace)
+        if not valid:
+            return f"Error: {error}"
+
+    # Determine working directory
+    if cwd:
+        if workspace and not Path(cwd).is_absolute():
+            work_dir = str((workspace.root / cwd).resolve())
+        else:
+            work_dir = str(Path(cwd).expanduser().resolve())
+    elif workspace:
+        work_dir = str(workspace.root)
+    else:
+        work_dir = None  # Use current directory
+
+    # Block obviously dangerous commands
+    command_lower = command.lower().strip()
+    dangerous_prefixes = [
+        "rm -rf /", "rm -rf /*", "rm -rf ~",
+        "mkfs", "fdisk", "dd if=",
+        ":(){:|:&};:", "fork bomb",
+        "chmod -r 777 /", "chown -r",
+    ]
+    for pattern in dangerous_prefixes:
+        if pattern in command_lower:
+            return f"Error: Blocked dangerous command pattern: {pattern}"
+
+    log.info("shell_exec_starting", command=command[:100], cwd=work_dir)
+
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=work_dir,
+        )
+
+        output_parts = []
+        if result.stdout:
+            output_parts.append(f"STDOUT:\n{result.stdout}")
+        if result.stderr:
+            output_parts.append(f"STDERR:\n{result.stderr}")
+
+        output = "\n".join(output_parts) if output_parts else "(no output)"
+
+        # Limit output size
+        if len(output) > 50000:
+            output = output[:50000] + "\n\n... [Output truncated]"
+
+        header = f"# Command: {command}\n# Exit code: {result.returncode}\n\n"
+
+        log.info(
+            "shell_exec_completed",
+            command=command[:100],
+            exit_code=result.returncode,
+            output_len=len(output),
+        )
+
+        return header + output
+
+    except subprocess.TimeoutExpired:
+        return f"Error: Command timed out after {timeout}s"
+    except Exception as e:
+        return f"Error executing command: {e}"
+
+
 async def web_fetch(
     url: str,
     extract_text: bool = True,
@@ -337,16 +489,25 @@ async def web_fetch(
         return f"Error fetching URL: {e}"
 
 
-def get_default_tools(workspace: Workspace | None = None) -> ToolRegistry:
+def get_default_tools(
+    workspace: Workspace | None = None,
+    allow_write: bool = False,
+    allow_exec: bool = False,
+) -> ToolRegistry:
     """Get registry with default built-in tools.
 
     Args:
         workspace: Optional workspace to confine file operations.
                    If provided, read_file, list_directory, and search_code
                    will be confined to this workspace.
+        allow_write: If True, include write_file tool (requires --allow-write)
+        allow_exec: If True, include shell_exec tool (requires --allow-exec)
 
     Returns:
-        ToolRegistry with read_file, list_directory, search_code, web_fetch
+        ToolRegistry with tools based on permissions.
+        Default: read_file, list_directory, search_code, web_fetch, web_search, web_news
+        With --allow-write: + write_file
+        With --allow-exec: + shell_exec
     """
     registry = ToolRegistry()
 
@@ -516,5 +677,78 @@ def get_default_tools(workspace: Workspace | None = None) -> ToolRegistry:
         },
         handler=web_news,
     ))
+
+    # ============================================================
+    # DANGEROUS TOOLS - Only registered when explicitly enabled
+    # ============================================================
+
+    if allow_write:
+        # Create workspace-bound handler if workspace is provided
+        if workspace:
+            write_handler = partial(write_file, workspace=workspace)
+            write_path_desc = f"Path (relative to workspace: {workspace.root})"
+        else:
+            write_handler = write_file
+            write_path_desc = "Path to the file (absolute or relative to current directory)"
+
+        registry.register(ToolDefinition(
+            name="write_file",
+            description="Write content to a file. Creates the file if it doesn't exist, overwrites if it does. USE WITH CAUTION.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": write_path_desc
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                    }
+                },
+                "required": ["path", "content"]
+            },
+            handler=write_handler,
+            permission_level="write",
+            dangerous=True,
+        ))
+        log.info("dangerous_tool_registered", tool="write_file", workspace=str(workspace.root) if workspace else None)
+
+    if allow_exec:
+        # Create workspace-bound handler if workspace is provided
+        if workspace:
+            exec_handler = partial(shell_exec, workspace=workspace)
+            exec_cwd_desc = f"Working directory (default: workspace {workspace.root})"
+        else:
+            exec_handler = shell_exec
+            exec_cwd_desc = "Working directory (default: current directory)"
+
+        registry.register(ToolDefinition(
+            name="shell_exec",
+            description="Execute a shell command. USE WITH EXTREME CAUTION. Some dangerous commands are blocked.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute"
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": exec_cwd_desc
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Command timeout in seconds (default: 60)",
+                        "default": 60
+                    }
+                },
+                "required": ["command"]
+            },
+            handler=exec_handler,
+            permission_level="exec",
+            dangerous=True,
+        ))
+        log.info("dangerous_tool_registered", tool="shell_exec", workspace=str(workspace.root) if workspace else None)
 
     return registry

@@ -61,11 +61,26 @@ async def agent_run_stream(
     max_iterations: int = 10,
     tools: list[str] | None = None,
     backend_type: str | None = None,
+    allow_write: bool = False,
+    allow_exec: bool = False,
+    yolo: bool = False,
 ) -> AsyncGenerator[str, None]:
     """
     Run agent and yield SSE events.
 
+    Args:
+        task: Task description
+        model: Model override
+        workspace: Workspace directory to confine operations
+        max_iterations: Max tool call iterations
+        tools: Optional tool filter
+        backend_type: Backend type preference
+        allow_write: Enable file write tool (--allow-write)
+        allow_exec: Enable shell exec tool (--allow-exec)
+        yolo: Skip confirmation prompts (--yolo)
+
     Events:
+        - status: Routing/model selection status
         - thinking: Agent is processing
         - tool_call: Tool is being called
         - tool_result: Tool returned result
@@ -75,8 +90,11 @@ async def agent_run_stream(
     """
     start_time = time.time()
 
-    # Yield initial thinking event
-    yield await sse_event("thinking", {"status": "Selecting backend..."})
+    # Yield initial status event
+    yield await sse_event("status", {
+        "phase": "routing",
+        "message": "Selecting backend...",
+    })
 
     # Select backend
     try:
@@ -88,7 +106,12 @@ async def agent_run_stream(
         return
 
     backend_name = backend_obj.name if backend_obj else "unknown"
-    yield await sse_event("thinking", {"status": f"Using backend: {backend_name}"})
+    backend_id = backend_obj.id if backend_obj else "unknown"
+    yield await sse_event("status", {
+        "phase": "routing",
+        "message": f"Backend: {backend_name}",
+        "details": {"backend": backend_id}
+    })
 
     # Select model
     try:
@@ -102,13 +125,44 @@ async def agent_run_stream(
         yield await sse_event("error", {"message": f"Model selection failed: {e}"})
         return
 
-    yield await sse_event("thinking", {"status": f"Using model: {selected_model}"})
+    yield await sse_event("status", {
+        "phase": "model",
+        "message": f"Model: {selected_model}",
+        "details": {
+            "tier": "analyze",
+            "model": selected_model,
+            "backend": backend_id,
+            "task_type": "agent",
+        }
+    })
 
     # Set up workspace
     workspace_obj = Workspace(root=workspace) if workspace else None
 
-    # Set up tool registry
-    registry = get_default_tools(workspace=workspace_obj)
+    # Set up tool registry with permission flags
+    registry = get_default_tools(
+        workspace=workspace_obj,
+        allow_write=allow_write,
+        allow_exec=allow_exec,
+    )
+
+    # Log permission status
+    if allow_write or allow_exec:
+        log.info(
+            "agent_permissions_enabled",
+            allow_write=allow_write,
+            allow_exec=allow_exec,
+            yolo=yolo,
+        )
+        yield await sse_event("status", {
+            "phase": "model",
+            "message": f"Permissions: write={'yes' if allow_write else 'no'} exec={'yes' if allow_exec else 'no'}",
+            "details": {
+                "allow_write": allow_write,
+                "allow_exec": allow_exec,
+                "yolo": yolo,
+            }
+        })
 
     # Filter tools if specified
     if tools:
@@ -303,10 +357,48 @@ async def agent_run_stream(
 
         elapsed_ms = int((time.time() - start_time) * 1000)
 
+        # Validate response quality (same as chat/delegation tools)
+        quality_score = 0.0
+        if result.success and result.response:
+            from .quality import validate_response
+            quality_result = validate_response(result.response, "analyze")
+
+            # Emit quality status
+            yield await sse_event("status", {
+                "phase": "quality",
+                "message": f"Quality: {quality_result.overall:.0%}",
+                "details": {
+                    "quality_score": quality_result.overall,
+                    "tier": "analyze",
+                    "model": selected_model,
+                    "backend": backend_id,
+                }
+            })
+
+            quality_score = quality_result.overall
+
+            # Log quality for monitoring
+            log.info(
+                "agent_response_quality",
+                quality=quality_result.overall,
+                valid=quality_result.is_valid,
+                model=selected_model,
+                iterations=result.iterations,
+            )
+
+            # If quality is very low, log warning
+            if quality_result.overall < 0.3:
+                log.warning(
+                    "low_quality_agent_response",
+                    quality=quality_result.overall,
+                    reason=quality_result.reason,
+                    model=selected_model,
+                )
+
         # Yield final response
         yield await sse_event("response", {"content": result.response})
 
-        # Yield done event with summary
+        # Yield done event with summary (includes quality score)
         yield await sse_event("done", {
             "success": result.success,
             "iterations": result.iterations,
@@ -315,6 +407,7 @@ async def agent_run_stream(
             "model": selected_model,
             "backend": backend_name,
             "stopped_reason": result.stopped_reason,
+            "quality": quality_score,
         })
 
     except Exception as e:
@@ -348,6 +441,11 @@ async def agent_run_handler(request: Request) -> StreamingResponse:
     tools = body.get("tools")  # Optional list of tool names
     backend_type = body.get("backend_type")
 
+    # Permission flags (all disabled by default for security)
+    allow_write = body.get("allow_write", False)
+    allow_exec = body.get("allow_exec", False)
+    yolo = body.get("yolo", False)
+
     return StreamingResponse(
         agent_run_stream(
             task=task,
@@ -356,6 +454,9 @@ async def agent_run_handler(request: Request) -> StreamingResponse:
             max_iterations=max_iterations,
             tools=tools,
             backend_type=backend_type,
+            allow_write=allow_write,
+            allow_exec=allow_exec,
+            yolo=yolo,
         ),
         media_type="text/event-stream",
         headers={
@@ -380,6 +481,177 @@ async def health_handler(request: Request) -> JSONResponse:
     return JSONResponse({
         "status": "ok",
         "backends": backends,
+    })
+
+
+async def status_handler(request: Request) -> JSONResponse:
+    """Handle GET /api/status - Full system status with MDAP metrics.
+
+    Returns comprehensive status including:
+    - Backend health and scores
+    - Voting statistics (consensus rate, rejection reasons)
+    - Quality metrics per tier
+    - Routing configuration
+    - Usage statistics
+    """
+    from .routing import BackendScorer
+    from .config import get_backend_metrics, config
+    from .voting_stats import get_voting_stats_tracker
+
+    # Get health status from BackendManager
+    health_status = await backend_manager.get_health_status()
+
+    # Add performance scores to each backend
+    weights = backend_manager.get_scoring_weights()
+    scorer = BackendScorer(weights=weights)
+    backend_lookup = {b.id: b for b in backend_manager.backends.values()}
+
+    for backend_info in health_status["backends"]:
+        backend_obj = backend_lookup.get(backend_info["id"])
+        if backend_obj and backend_info.get("enabled"):
+            score = scorer.score(backend_obj)
+            backend_info["score"] = round(score, 3)
+
+            # Add metrics summary if available
+            metrics = get_backend_metrics(backend_info["id"])
+            if metrics.total_requests > 0:
+                backend_info["metrics"] = {
+                    "success_rate": round(metrics.success_rate * 100, 1),
+                    "latency_p50_ms": round(metrics.latency_p50, 1),
+                    "throughput_tps": round(metrics.tokens_per_second, 1),
+                    "total_requests": metrics.total_requests,
+                }
+
+    # Get voting stats
+    voting_tracker = get_voting_stats_tracker()
+    voting_stats = voting_tracker.get_stats()
+
+    # Get quality config
+    from .quality import get_quality_validator
+    validator = get_quality_validator()
+    quality_config = {
+        "min_response_length": validator.config.min_response_length,
+        "max_response_length_tokens": validator.config.max_response_length_tokens,
+        "ngram_uniqueness_threshold": validator.config.ngram_uniqueness_threshold,
+        "min_vocabulary_diversity": validator.config.min_vocabulary_diversity,
+    }
+
+    return JSONResponse({
+        "status": health_status["status"],
+        "active_backend": health_status.get("active_backend"),
+        "backends": health_status["backends"],
+        "routing": health_status.get("routing", {}),
+        "voting": voting_stats,
+        "quality_config": quality_config,
+    })
+
+
+async def models_handler(request: Request) -> JSONResponse:
+    """Handle GET /api/models - List available models per tier.
+
+    Returns models configured for each tier with quality metrics.
+    """
+    from .voting_stats import get_voting_stats_tracker
+
+    # Get tier stats for quality info
+    voting_tracker = get_voting_stats_tracker()
+    stats = voting_tracker.get_stats()
+    tier_stats = stats.get("tiers", {})
+
+    # Get models from active backend
+    active_backend = None
+    for backend in backend_manager.get_enabled_backends():
+        active_backend = backend
+        break
+
+    if not active_backend:
+        return JSONResponse({
+            "error": "No active backend",
+            "models": {},
+        }, status_code=503)
+
+    models = {}
+    for tier in ["quick", "coder", "moe", "thinking"]:
+        model_name = active_backend.models.get(tier)
+        tier_info = tier_stats.get(tier, {})
+
+        models[tier] = {
+            "model": model_name,
+            "backend": active_backend.id,
+            "quality_ema": tier_info.get("quality_ema", 0.5),
+            "avg_quality": tier_info.get("avg_quality", 0.0),
+            "calls": tier_info.get("calls", 0),
+            "rejection_rate": tier_info.get("rejection_rate", 0.0),
+            "consensus_rate": tier_info.get("consensus_rate", 0.0),
+        }
+
+    return JSONResponse({
+        "active_backend": active_backend.id,
+        "models": models,
+    })
+
+
+async def backends_handler(request: Request) -> JSONResponse:
+    """Handle GET /api/backends - List backends with scores and metrics.
+
+    Returns all backends with:
+    - Health status
+    - Performance scores (from BackendScorer)
+    - Live metrics (success rate, latency, throughput)
+    - Affinity scores
+    """
+    from .routing import BackendScorer
+    from .config import get_backend_metrics, get_affinity_tracker
+
+    weights = backend_manager.get_scoring_weights()
+    scorer = BackendScorer(weights=weights)
+    affinity_tracker = get_affinity_tracker()
+
+    backends = []
+    for backend in backend_manager.backends.values():
+        # Base info
+        info = {
+            "id": backend.id,
+            "name": backend.name,
+            "provider": backend.provider,
+            "type": backend.type,
+            "enabled": backend.enabled,
+            "url": backend.url,
+            "models": backend.models,
+        }
+
+        if backend.enabled:
+            # Add score
+            info["score"] = round(scorer.score(backend), 3)
+
+            # Add live metrics
+            metrics = get_backend_metrics(backend.id)
+            if metrics.total_requests > 0:
+                info["metrics"] = {
+                    "success_rate": round(metrics.success_rate * 100, 1),
+                    "latency_p50_ms": round(metrics.latency_p50, 1),
+                    "latency_p95_ms": round(metrics.latency_p95, 1),
+                    "throughput_tps": round(metrics.tokens_per_second, 1),
+                    "total_requests": metrics.total_requests,
+                }
+
+            # Add affinity scores per task type
+            affinities = {}
+            for task_type in ["quick", "coder", "moe", "thinking"]:
+                affinity = affinity_tracker.get_affinity(backend.id, task_type)
+                if affinity != 0.5:  # Only include non-default
+                    affinities[task_type] = round(affinity, 3)
+            if affinities:
+                info["affinities"] = affinities
+
+        backends.append(info)
+
+    # Sort by score (enabled first, then by score)
+    backends.sort(key=lambda b: (not b.get("enabled", False), -b.get("score", 0)))
+
+    return JSONResponse({
+        "backends": backends,
+        "scoring_weights": weights,
     })
 
 
@@ -556,10 +828,14 @@ async def chat_stream(
     combined_prompt = "\n\n".join(prompt_parts)
 
     # Add system prompt for chat context
-    # Import Delia's identity
+    # Import Delia's identity and time context
     from .prompt_templates import DELIA_IDENTITY_FULL
+    from .language import get_current_time_context
 
+    time_context = get_current_time_context()
     system_prompt = f"""{DELIA_IDENTITY_FULL}
+
+{time_context}
 
 Current Session:
 - You are running on model: {selected_model}
@@ -725,6 +1001,9 @@ routes = [
     Route("/api/agent/run", agent_run_handler, methods=["POST"]),
     Route("/api/chat", chat_handler, methods=["POST"]),
     Route("/api/health", health_handler, methods=["GET"]),
+    Route("/api/status", status_handler, methods=["GET"]),
+    Route("/api/models", models_handler, methods=["GET"]),
+    Route("/api/backends", backends_handler, methods=["GET"]),
     Route("/api/sessions", sessions_list_handler, methods=["GET"]),
     Route("/api/sessions/{session_id}", session_get_handler, methods=["GET"]),
     Route("/api/sessions/{session_id}", session_delete_handler, methods=["DELETE"]),

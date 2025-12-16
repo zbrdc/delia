@@ -17,16 +17,176 @@
 Web search tool using DuckDuckGo.
 
 Provides free, no-API-key web search capability for local LLMs.
+Includes quality validation to filter out garbage results.
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
+from dataclasses import dataclass
 from typing import Literal
 
 import structlog
 
 log = structlog.get_logger()
+
+
+# ============================================================
+# Search Result Quality Validation
+# ============================================================
+
+@dataclass
+class SearchResultQuality:
+    """Quality assessment for a single search result."""
+    is_valid: bool
+    score: float  # 0.0 - 1.0
+    issues: list[str]
+
+
+def validate_search_result(
+    title: str,
+    url: str,
+    body: str,
+    query: str,
+) -> SearchResultQuality:
+    """
+    Validate a single search result for quality.
+
+    Checks:
+    - Completeness: Has title, URL, and body
+    - Content quality: Body is meaningful (not spam/SEO garbage)
+    - Basic relevance: Some connection to query terms
+
+    Args:
+        title: Result title
+        url: Result URL
+        body: Result body/snippet
+        query: Original search query
+
+    Returns:
+        SearchResultQuality with validity, score, and issues
+    """
+    issues: list[str] = []
+    scores: list[float] = []
+
+    # 1. Completeness check
+    if not title or len(title.strip()) < 3:
+        issues.append("missing_title")
+        scores.append(0.0)
+    else:
+        scores.append(1.0)
+
+    if not url or not url.startswith(("http://", "https://")):
+        issues.append("invalid_url")
+        scores.append(0.0)
+    else:
+        scores.append(1.0)
+
+    if not body or len(body.strip()) < 10:
+        issues.append("missing_body")
+        scores.append(0.3)  # Partial penalty - some results legitimately have short snippets
+    else:
+        scores.append(1.0)
+
+    # 2. Content quality checks
+    if body:
+        body_lower = body.lower()
+
+        # Check for repetitive content (spam indicator)
+        words = body_lower.split()
+        if len(words) >= 5:
+            unique_ratio = len(set(words)) / len(words)
+            if unique_ratio < 0.3:
+                issues.append("repetitive_content")
+                scores.append(0.3)
+            else:
+                scores.append(min(1.0, unique_ratio * 1.5))
+
+        # Check for excessive special characters (SEO spam)
+        special_char_ratio = len(re.findall(r'[^\w\s]', body)) / max(len(body), 1)
+        if special_char_ratio > 0.3:
+            issues.append("excessive_special_chars")
+            scores.append(0.5)
+        else:
+            scores.append(1.0)
+
+        # Check for gibberish (high ratio of very short words)
+        if words:
+            short_word_ratio = sum(1 for w in words if len(w) <= 2) / len(words)
+            if short_word_ratio > 0.5:
+                issues.append("possible_gibberish")
+                scores.append(0.5)
+            else:
+                scores.append(1.0)
+
+    # 3. Basic relevance check
+    if query and body:
+        query_terms = set(query.lower().split())
+        body_lower = body.lower()
+        matches = sum(1 for term in query_terms if term in body_lower)
+        relevance = matches / max(len(query_terms), 1)
+        if relevance < 0.2:
+            issues.append("low_relevance")
+            scores.append(0.5)  # Partial penalty - relevance is heuristic
+        else:
+            scores.append(min(1.0, relevance + 0.5))
+
+    # Calculate overall score
+    overall = sum(scores) / len(scores) if scores else 0.0
+
+    # Result is valid if score >= 0.5 and no critical issues
+    critical_issues = {"missing_title", "invalid_url"}
+    has_critical = bool(critical_issues & set(issues))
+    is_valid = overall >= 0.5 and not has_critical
+
+    return SearchResultQuality(
+        is_valid=is_valid,
+        score=overall,
+        issues=issues,
+    )
+
+
+def filter_quality_results(
+    results: list[dict],
+    query: str,
+    min_score: float = 0.5,
+) -> tuple[list[dict], int]:
+    """
+    Filter search results by quality score.
+
+    Args:
+        results: Raw search results from DuckDuckGo
+        query: Original search query
+        min_score: Minimum quality score to keep (0.0 - 1.0)
+
+    Returns:
+        Tuple of (filtered_results, num_rejected)
+    """
+    filtered = []
+    rejected = 0
+
+    for r in results:
+        title = r.get("title", "")
+        url = r.get("href", "") or r.get("url", "")
+        body = r.get("body", "")
+
+        quality = validate_search_result(title, url, body, query)
+
+        if quality.is_valid and quality.score >= min_score:
+            # Add quality score to result for transparency
+            r["_quality_score"] = round(quality.score, 2)
+            filtered.append(r)
+        else:
+            rejected += 1
+            log.debug(
+                "search_result_rejected",
+                title=title[:50] if title else "none",
+                score=quality.score,
+                issues=quality.issues,
+            )
+
+    return filtered, rejected
 
 
 async def web_search(
@@ -71,18 +231,40 @@ async def web_search(
             log.info("web_search_no_results", query=query)
             return f"No results found for: {query}"
 
+        # Filter out garbage results
+        filtered_results, rejected_count = filter_quality_results(results, query)
+
+        if not filtered_results:
+            log.warning(
+                "web_search_all_filtered",
+                query=query,
+                total=len(results),
+                rejected=rejected_count,
+            )
+            return f"No quality results found for: {query} ({rejected_count} low-quality results filtered)"
+
         # Format results as markdown
         formatted = []
-        for i, r in enumerate(results, 1):
+        for i, r in enumerate(filtered_results, 1):
             title = r.get("title", "Untitled")
             url = r.get("href", "")
             body = r.get("body", "")
+            quality = r.get("_quality_score", 0)
 
             formatted.append(f"### {i}. {title}\n**URL:** {url}\n\n{body}")
 
         output = f"## Web Search Results for: {query}\n\n" + "\n\n---\n\n".join(formatted)
 
-        log.info("web_search_complete", query=query, num_results=len(results))
+        # Add quality summary if any were filtered
+        if rejected_count > 0:
+            output += f"\n\n*({rejected_count} low-quality results filtered)*"
+
+        log.info(
+            "web_search_complete",
+            query=query,
+            num_results=len(filtered_results),
+            rejected=rejected_count,
+        )
         return output
 
     except Exception as e:
@@ -133,10 +315,27 @@ async def web_news(
             log.info("web_news_no_results", query=query)
             return f"No news found for: {query}"
 
+        # Filter out garbage results (news uses 'url' not 'href')
+        # Normalize to use 'href' for filter function
+        for r in results:
+            if "url" in r and "href" not in r:
+                r["href"] = r["url"]
+
+        filtered_results, rejected_count = filter_quality_results(results, query)
+
+        if not filtered_results:
+            log.warning(
+                "web_news_all_filtered",
+                query=query,
+                total=len(results),
+                rejected=rejected_count,
+            )
+            return f"No quality news found for: {query} ({rejected_count} low-quality results filtered)"
+
         formatted = []
-        for i, r in enumerate(results, 1):
+        for i, r in enumerate(filtered_results, 1):
             title = r.get("title", "Untitled")
-            url = r.get("url", "")
+            url = r.get("url", "") or r.get("href", "")
             body = r.get("body", "")
             source = r.get("source", "")
             date = r.get("date", "")
@@ -151,7 +350,16 @@ async def web_news(
 
         output = f"## News Results for: {query}\n\n" + "\n\n---\n\n".join(formatted)
 
-        log.info("web_news_complete", query=query, num_results=len(results))
+        # Add quality summary if any were filtered
+        if rejected_count > 0:
+            output += f"\n\n*({rejected_count} low-quality results filtered)*"
+
+        log.info(
+            "web_news_complete",
+            query=query,
+            num_results=len(filtered_results),
+            rejected=rejected_count,
+        )
         return output
 
     except Exception as e:

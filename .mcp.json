@@ -17,6 +17,91 @@
         "shadcn@latest",
         "mcp"
       ]
+    },
+    "sequential-thinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "wolfram-alpha": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/home/dan/git/wolfram-mcp/index.js"
+      ],
+      "env": {
+        "WOLFRAM_LLM_APP_ID": "EWR7U42GGT"
+      }
+    },
+    "delia": {
+      "type": "stdio",
+      "command": "/home/dan/.local/bin/uv",
+      "args": [
+        "--directory",
+        "/home/dan/git/delia",
+        "run",
+        "delia",
+        "serve"
+      ],
+      "env": {}
+    },
+    "memory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "env": {}
+    },
+    "fetch": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch"
+      ],
+      "env": {}
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@context7/mcp-server"
+      ],
+      "env": {}
+    },
+    "vast-ai": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/home/dan/git/vastai-mcp",
+        "vast-mcp-server"
+      ],
+      "env": {
+        "VAST_API_KEY": "${VAST_API_KEY}",
+        "SSH_KEY_FILE": "~/.ssh/id_rsa",
+        "SSH_KEY_PUBLIC_FILE": "~/.ssh/id_rsa.pub"
+      }
+    },
+    "coderag": {
+      "type": "stdio",
+      "command": "/home/dan/git/CodeRAG/venv/bin/python",
+      "args": [
+        "-m",
+        "coderag.mcp_server"
+      ],
+      "env": {
+        "EMBEDDING_PROVIDER": "voyage",
+        "VOYAGE_API_KEY": "pa-lQN8exPt7AkZRm0D2RGUqIjX4ZfqLyzRCG_2oe6Cjv5",
+        "LLM_PROVIDER": "gemini",
+        "GEMINI_API_KEY": "AIzaSyCSukGo6wulFKfCG8ygp6a0BWNGA6ty1Bo"
+      }
     }
   }
 }
