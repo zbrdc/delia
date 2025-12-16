@@ -47,6 +47,26 @@ class ModelConfig:
         return self.max_input_kb * 1024
 
 
+@dataclass(frozen=True)
+class VotingConfig:
+    """
+    K-voting consensus configuration per MDAP paper.
+
+    Implements "first-to-ahead-by-k" voting for mathematical reliability.
+    With k=3 and p=0.99 base accuracy: P(correct) = 1/(1+((1-p)/p)^k) = 0.999999
+
+    Formula verified with Wolfram Alpha.
+    """
+
+    enabled: bool = True
+    default_k: int = 2  # First-to-ahead-by-2 (99.99% with p=0.99)
+    max_k: int = 5  # Maximum votes before giving up
+    auto_kmin: bool = True  # Auto-calculate k based on task complexity
+    max_response_length: int = 700  # Red-flag threshold (tokens), per MDAP paper
+    timeout_per_vote: float = 30.0  # Seconds per voting round
+    similarity_threshold: float = 0.85  # Semantic similarity for vote matching
+
+
 @dataclass
 class Config:
     """Main configuration for Delia."""
@@ -692,19 +712,42 @@ class AffinityTracker:
     # (backend_id, task_type) -> EMA score [0.0-1.0]
     _scores: dict[tuple[str, str], float] = field(default_factory=dict)
 
-    def update(self, backend_id: str, task_type: str, success: bool) -> None:
+    def update(
+        self,
+        backend_id: str,
+        task_type: str,
+        success: bool | None = None,
+        quality: float | None = None,
+    ) -> None:
         """
         Update affinity score with new observation.
+
+        Accepts either a boolean success flag OR a float quality score (0.0-1.0).
+        The quality score allows more nuanced learning from response quality
+        rather than just binary success/failure.
 
         Args:
             backend_id: Backend identifier
             task_type: Task type (review, generate, analyze, etc.)
-            success: Whether the request succeeded
+            success: Whether the request succeeded (legacy, maps to 1.0/0.0)
+            quality: Quality score from 0.0 to 1.0 (preferred)
+
+        Raises:
+            ValueError: If neither success nor quality is provided
         """
+        # Determine quality score from inputs
+        if quality is not None:
+            # Use explicit quality score, clamp to [0.0, 1.0]
+            q = max(0.0, min(1.0, quality))
+        elif success is not None:
+            # Legacy boolean: map to 1.0/0.0
+            q = 1.0 if success else 0.0
+        else:
+            raise ValueError("Either 'success' or 'quality' must be provided")
+
         key = (backend_id, task_type)
-        quality = 1.0 if success else 0.0
         old = self._scores.get(key, 0.5)  # Start neutral
-        self._scores[key] = old * (1 - self.alpha) + quality * self.alpha
+        self._scores[key] = old * (1 - self.alpha) + q * self.alpha
 
     def get_affinity(self, backend_id: str, task_type: str) -> float:
         """
@@ -714,6 +757,44 @@ class AffinityTracker:
             Score from 0.0 to 1.0 (0.5 = neutral/unknown)
         """
         return self._scores.get((backend_id, task_type), 0.5)
+
+    def update_with_outcome(
+        self,
+        backend_id: str,
+        task_type: str,
+        succeeded: bool,
+        efficiency: float = 1.0,
+    ) -> None:
+        """
+        Update affinity based on outcome + efficiency (ToolOrchestra-style).
+
+        Implements a three-reward system inspired by ToolOrchestra paper:
+        - Outcome reward: Binary success/failure (50% weight)
+        - Efficiency reward: Token/latency efficiency (30% weight)
+        - Preference: Historical preference score (20% weight)
+
+        Formula: combined = 0.5*outcome + 0.3*efficiency + 0.2*preference
+
+        Args:
+            backend_id: Backend identifier
+            task_type: Task type (review, generate, analyze, etc.)
+            succeeded: Whether the task completed successfully
+            efficiency: Token efficiency score 0.0-1.0 (1.0 = optimal)
+        """
+        # Outcome reward: 1.0 for success, 0.0 for failure
+        outcome_reward = 1.0 if succeeded else 0.0
+
+        # Efficiency reward: already 0.0-1.0
+        efficiency_reward = max(0.0, min(1.0, efficiency))
+
+        # Preference: use current affinity as proxy for learned preference
+        preference = self.get_affinity(backend_id, task_type)
+
+        # Combined score (ToolOrchestra weights)
+        combined = 0.5 * outcome_reward + 0.3 * efficiency_reward + 0.2 * preference
+
+        # EMA update with combined score
+        self.update(backend_id, task_type, quality=combined)
 
     def boost_score(
         self, base_score: float, backend_id: str, task_type: str

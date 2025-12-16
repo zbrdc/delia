@@ -46,6 +46,7 @@ from .validation import (
     validate_model_hint,
     validate_task,
 )
+from .quality import validate_response
 
 if TYPE_CHECKING:
     from .backend_manager import BackendConfig
@@ -305,13 +306,20 @@ async def execute_delegate_call(
         max_tokens=max_tokens,
     )
 
-    # Record task-backend affinity (success/failure)
+    # Record task-backend affinity with quality score
     success = result.get("success", False)
     if backend_obj is not None:
         backend_id = getattr(backend_obj, "id", None)
         if backend_id:
             tracker = get_affinity_tracker()
-            tracker.update(backend_id, task_type, success)
+            if success:
+                # Validate response quality for nuanced affinity learning
+                response_text = result.get("response", "")
+                quality_result = validate_response(response_text, task_type)
+                tracker.update(backend_id, task_type, quality=quality_result.overall)
+            else:
+                # API failure = quality 0.0
+                tracker.update(backend_id, task_type, quality=0.0)
 
     if not success:
         error_msg = result.get("error", "Unknown error")
@@ -437,9 +445,12 @@ async def execute_hedged_call(
                         response_text = strip_thinking_tags(response_text)
                         winner = (response_text, tokens, winning_backend)
 
-                        # Record affinity for winning backend only
+                        # Record affinity with quality score for winning backend
+                        quality_result = validate_response(response_text, task_type)
                         tracker = get_affinity_tracker()
-                        tracker.update(winning_backend.id, task_type, True)
+                        tracker.update(
+                            winning_backend.id, task_type, quality=quality_result.overall
+                        )
 
                         log.info(
                             "hedged_call_winner",
@@ -451,16 +462,16 @@ async def execute_hedged_call(
                     else:
                         error = result.get("error", "Unknown error")
                         errors.append(f"{backend.id}: {error}")
-                        # Record failure for this backend
+                        # Record failure for this backend (quality 0.0)
                         tracker = get_affinity_tracker()
-                        tracker.update(backend.id, task_type, False)
+                        tracker.update(backend.id, task_type, quality=0.0)
                 except asyncio.CancelledError:
                     # Task was cancelled by us, ignore
                     pass
                 except Exception as e:
                     errors.append(f"{backend.id}: {e!s}")
                     tracker = get_affinity_tracker()
-                    tracker.update(backend.id, task_type, False)
+                    tracker.update(backend.id, task_type, quality=0.0)
     finally:
         # Cancel any remaining pending tasks
         for task in pending:
@@ -475,6 +486,233 @@ async def execute_hedged_call(
     # All backends failed
     error_summary = "; ".join(errors) if errors else "All backends failed"
     raise Exception(f"Hedged call failed: {error_summary}")
+
+
+async def execute_voting_call(
+    ctx: DelegateContext,
+    backends: list["BackendConfig"],
+    selected_model: str,
+    content: str,
+    system: str,
+    task_type: str,
+    original_task: str,
+    detected_language: str,
+    voting_k: int = 2,
+    delay_ms: int = 50,
+    max_tokens: int | None = None,
+) -> tuple[str, int, "BackendConfig", dict[str, Any]]:
+    """Execute k-voting consensus call to multiple backends.
+
+    Implements the MDAP "first-to-ahead-by-k" voting mechanism for
+    mathematically-guaranteed reliability.
+
+    With k=3 and base accuracy p=0.99:
+        P(correct) = 1/(1+((1-p)/p)^k) = 0.999999
+
+    Formula verified with Wolfram Alpha.
+
+    Args:
+        ctx: Delegate context with runtime dependencies
+        backends: List of backends to try (sorted by preference)
+        selected_model: Model name to use
+        content: Prepared content/prompt
+        system: System prompt
+        task_type: Internal task type
+        original_task: Original user task name
+        detected_language: Detected programming language
+        voting_k: Number of matching votes needed (default 2)
+        delay_ms: Milliseconds between starting each backend request
+        max_tokens: Optional token limit
+
+    Returns:
+        Tuple of (response_text, tokens_used, winning_backend, voting_metadata)
+
+    Raises:
+        Exception: If consensus cannot be reached
+    """
+    from .voting import VotingConsensus, estimate_task_complexity
+    from .quality import get_quality_validator
+
+    if not backends:
+        raise ValueError("No backends provided for voting call")
+
+    # Single backend - fall back to regular execution
+    if len(backends) == 1:
+        response_text, tokens = await execute_delegate_call(
+            ctx=ctx,
+            selected_model=selected_model,
+            content=content,
+            system=system,
+            task_type=task_type,
+            original_task=original_task,
+            detected_language=detected_language,
+            target_backend=backends[0].id,
+            backend_obj=backends[0],
+            max_tokens=max_tokens,
+        )
+        return response_text, tokens, backends[0], {"votes": 1, "k": 1, "mode": "single"}
+
+    # Initialize voting consensus
+    quality_validator = get_quality_validator()
+    consensus = VotingConsensus(
+        k=voting_k,
+        quality_validator=quality_validator,
+        max_response_length=700,  # MDAP paper threshold
+    )
+
+    enable_thinking = task_type in config.thinking_tasks
+    content_preview = content[:200].replace("\n", " ").strip()
+
+    # Track backend responses for affinity
+    backend_responses: dict[str, tuple[str, int]] = {}
+
+    async def call_with_delay(
+        backend: "BackendConfig", delay: float
+    ) -> tuple[dict[str, Any], "BackendConfig"]:
+        """Execute a backend call after an optional delay."""
+        if delay > 0:
+            await asyncio.sleep(delay)
+        result = await ctx.call_llm(
+            selected_model,
+            content,
+            system,
+            enable_thinking,
+            task_type=task_type,
+            original_task=original_task,
+            language=detected_language,
+            content_preview=content_preview,
+            backend=backend.id,
+            backend_obj=backend,
+            max_tokens=max_tokens,
+        )
+        return result, backend
+
+    # Start tasks with staggered delays
+    delay_seconds = delay_ms / 1000.0
+    tasks = {
+        asyncio.create_task(
+            call_with_delay(backend, i * delay_seconds),
+            name=f"vote_{backend.id}",
+        ): backend
+        for i, backend in enumerate(backends)
+    }
+
+    pending = set(tasks.keys())
+    winner: tuple[str, int, "BackendConfig"] | None = None
+    errors: list[str] = []
+    voting_metadata: dict[str, Any] = {
+        "k": voting_k,
+        "votes_cast": 0,
+        "red_flagged": 0,
+        "unique_responses": 0,
+        "mode": "voting",
+    }
+
+    try:
+        while pending and winner is None:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for task in done:
+                backend = tasks[task]
+                try:
+                    result, responding_backend = task.result()
+                    if result.get("success", False):
+                        response_text = result.get("response", "")
+                        tokens = result.get("tokens", 0)
+                        response_text = strip_thinking_tags(response_text)
+
+                        # Store for affinity tracking
+                        backend_responses[responding_backend.id] = (response_text, tokens)
+
+                        # Add vote to consensus
+                        vote_result = consensus.add_vote(response_text)
+                        voting_metadata["votes_cast"] += 1
+
+                        if vote_result.red_flagged:
+                            voting_metadata["red_flagged"] += 1
+                            log.info(
+                                "voting_red_flag",
+                                backend=responding_backend.id,
+                                reason=vote_result.red_flag_reason,
+                            )
+                            # Record low quality for this backend
+                            tracker = get_affinity_tracker()
+                            tracker.update(responding_backend.id, task_type, quality=0.2)
+                            continue
+
+                        if vote_result.consensus_reached:
+                            winner = (
+                                vote_result.winning_response or response_text,
+                                tokens,
+                                responding_backend,
+                            )
+                            voting_metadata["winning_votes"] = vote_result.votes_for_winner
+
+                            # Record high quality for winning backend
+                            quality_result = validate_response(response_text, task_type)
+                            tracker = get_affinity_tracker()
+                            tracker.update_with_outcome(
+                                responding_backend.id,
+                                task_type,
+                                succeeded=True,
+                                efficiency=min(1.0, 500 / max(tokens, 1)),
+                            )
+
+                            log.info(
+                                "voting_consensus_reached",
+                                backend=responding_backend.id,
+                                k=voting_k,
+                                votes=vote_result.votes_for_winner,
+                                total_votes=vote_result.total_votes,
+                            )
+                            break
+                    else:
+                        error = result.get("error", "Unknown error")
+                        errors.append(f"{backend.id}: {error}")
+                        tracker = get_affinity_tracker()
+                        tracker.update(backend.id, task_type, quality=0.0)
+
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    errors.append(f"{backend.id}: {e!s}")
+                    tracker = get_affinity_tracker()
+                    tracker.update(backend.id, task_type, quality=0.0)
+
+    finally:
+        # Cancel remaining pending tasks
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    if winner:
+        return winner[0], winner[1], winner[2], voting_metadata
+
+    # No consensus - get best response
+    best_response, consensus_meta = consensus.get_best_response()
+    voting_metadata["unique_responses"] = consensus_meta.unique_responses
+
+    if best_response:
+        # Find which backend gave this response
+        for backend_id, (resp, tokens) in backend_responses.items():
+            if resp == best_response:
+                backend_obj = next(
+                    (b for b in backends if b.id == backend_id), backends[0]
+                )
+                log.warning(
+                    "voting_no_consensus_using_best",
+                    backend=backend_id,
+                    votes=consensus_meta.winning_votes,
+                    k=voting_k,
+                )
+                return best_response, tokens, backend_obj, voting_metadata
+
+    # All backends failed
+    error_summary = "; ".join(errors) if errors else "All backends failed"
+    raise Exception(f"Voting call failed: {error_summary}")
 
 
 def finalize_delegate_response(
