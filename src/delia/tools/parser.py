@@ -128,10 +128,20 @@ def _parse_native_format(response: dict[str, Any]) -> list[ParsedToolCall]:
             call_id = call.get("id", f"call_{uuid.uuid4().hex[:8]}")
             name = func.get("name", "")
 
+            # Validate name is a string (fuzzing found this bug)
+            if not isinstance(name, str):
+                log.warning("tool_call_invalid_name_type", name_type=type(name).__name__)
+                continue
+
             # Arguments may be string or dict
             args = func.get("arguments", {})
             if isinstance(args, str):
                 args = json.loads(args)
+
+            # Validate arguments is a dict
+            if not isinstance(args, dict):
+                log.warning("tool_call_invalid_arguments_type", args_type=type(args).__name__)
+                args = {}
 
             if name:
                 tool_calls.append(ParsedToolCall(
@@ -185,9 +195,19 @@ def _parse_tool_json(json_str: str) -> ParsedToolCall | None:
         name = data.get("name", "")
         arguments = data.get("arguments", {})
 
+        # Validate name is a string (fuzzing found this bug)
+        if not isinstance(name, str):
+            log.warning("tool_call_invalid_name_type", name_type=type(name).__name__)
+            return None
+
         # Handle case where arguments is a string
         if isinstance(arguments, str):
             arguments = json.loads(arguments)
+
+        # Validate arguments is a dict
+        if not isinstance(arguments, dict):
+            log.warning("tool_call_invalid_arguments_type", args_type=type(arguments).__name__)
+            arguments = {}
 
         if name:
             return ParsedToolCall(
@@ -224,8 +244,18 @@ def _parse_raw_json_tools(text: str) -> list[ParsedToolCall]:
             name = data.get("name", "")
             arguments = data.get("arguments", {})
 
+            # Validate name is a string (fuzzing found this bug)
+            if not isinstance(name, str):
+                log.warning("tool_call_invalid_name_type", name_type=type(name).__name__)
+                continue
+
             if isinstance(arguments, str):
                 arguments = json.loads(arguments)
+
+            # Validate arguments is a dict
+            if not isinstance(arguments, dict):
+                log.warning("tool_call_invalid_arguments_type", args_type=type(arguments).__name__)
+                arguments = {}
 
             if name:
                 tool_calls.append(ParsedToolCall(

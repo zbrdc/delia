@@ -70,7 +70,7 @@ async def test_concurrent_updates():
         for i in range(10):
             _update_stats_sync(
                 model_tier="quick",
-                task_type="general",
+                task_type="other",  # Use valid task type from task_stats
                 original_task="test",
                 tokens=100,
                 elapsed_ms=50,
@@ -87,7 +87,7 @@ async def test_concurrent_updates():
     # Verify all updates were recorded
     model_usage, task_stats, _, recent_calls = stats_service.get_snapshot()
     total_calls = model_usage["quick"]["calls"]
-    total_tasks = task_stats.get("general", 0)
+    total_tasks = task_stats.get("other", 0)  # Use valid task type
     recent_count = len(recent_calls)
 
     expected = 50  # 5 tasks × 10 updates each
@@ -138,7 +138,7 @@ async def test_concurrent_snapshots():
         for i in range(20):
             _update_stats_sync(
                 model_tier="moe",
-                task_type="analysis",
+                task_type="analyze",  # Use valid task type from task_stats
                 original_task="test",
                 tokens=100,
                 elapsed_ms=50,
@@ -165,7 +165,7 @@ async def test_concurrent_snapshots():
     for snap_idx, (usage_snap, task_snap, _, recent_snap) in enumerate(results):
         # In each snapshot, values should match
         calls = usage_snap["moe"]["calls"]
-        tasks = task_snap.get("analysis", 0)
+        tasks = task_snap.get("analyze", 0)  # Use valid task type
         recent = len(recent_snap)
 
         # These should be in sync
@@ -174,7 +174,7 @@ async def test_concurrent_snapshots():
 
     final_snap = stats_service.get_snapshot()
     final_calls = final_snap[0]["moe"]["calls"]
-    final_tasks = final_snap[1].get("analysis", 0)
+    final_tasks = final_snap[1].get("analyze", 0)  # Use valid task type
 
     print(f"✓ All snapshots internally consistent")
     print(f"  - Snapshots taken: {len(results)}")
@@ -192,7 +192,7 @@ async def test_save_during_updates():
         for i in range(30):
             _update_stats_sync(
                 model_tier="quick",
-                task_type="general",
+                task_type="review",  # Use valid task type from task_stats
                 original_task="test",
                 tokens=100,
                 elapsed_ms=50,
@@ -279,7 +279,7 @@ async def test_token_accumulation():
     async def update_with_tokens(tokens: int):
         _update_stats_sync(
             model_tier="moe",
-            task_type="analysis",
+            task_type="analyze",  # Use valid task type from task_stats
             original_task="test",
             tokens=tokens,
             elapsed_ms=50,

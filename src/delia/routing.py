@@ -689,7 +689,7 @@ class ModelRouter:
         # Code-focused tasks with regex detection
         if task_type in self.config.coder_tasks and code_detection:
             is_code, confidence, reasoning = code_detection
-            if is_code or confidence > 0.3:
+            if is_code:
                 log.info("model_selected", source="coder_task_regex", task=task_type, tier="coder", reasoning=reasoning)
                 return model_coder
             else:

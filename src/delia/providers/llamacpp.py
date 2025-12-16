@@ -562,6 +562,26 @@ class LlamaCppProvider:
             pass
         return False
 
+    async def _get_available_model_ids(self, backend_obj: BackendConfig) -> list[str]:
+        """Get all available model IDs from the backend.
+
+        Queries /v1/models to discover what models are configured/available.
+        This is used to provide helpful error messages when a requested
+        model doesn't exist.
+
+        Returns:
+            List of model IDs available in the backend, or empty list on error.
+        """
+        try:
+            client = backend_obj.get_client()
+            response = await client.get(backend_obj.models_endpoint, timeout=10.0)
+            if response.status_code == 200:
+                data = response.json()
+                return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+        except Exception as e:
+            log.debug("get_available_models_failed", error=str(e))
+        return []
+
     async def load_model(
         self,
         model: str,
@@ -572,6 +592,9 @@ class LlamaCppProvider:
         For llama.cpp in router mode (started without -m flag), uses
         POST /models/load to load a specific model.
         For single-model mode or non-llama.cpp backends, this is a no-op.
+
+        When model loading fails, queries available models and returns
+        a helpful error message showing what models ARE available.
         """
         start_time = time.time()
 
@@ -608,14 +631,70 @@ class LlamaCppProvider:
                     metadata={"backend": "llamacpp", "mode": "router"},
                 )
             elif response.status_code == 404:
-                # Router mode not available - model loads on first use
-                # This is fine, return success as a no-op
+                # 404 could mean:
+                # 1. Router mode endpoint doesn't exist (single-model mode)
+                # 2. Router mode exists but model ID not found
+                # Query /v1/models to distinguish these cases
+                available = await self._get_available_model_ids(backend_obj)
+                
+                if available:
+                    # Router mode is active - check if model exists
+                    if model in available:
+                        # Model exists but not loaded - try to proceed anyway
+                        log.info(
+                            "model_available_not_loaded",
+                            model=model,
+                            available=available,
+                        )
+                        return ModelLoadResult(
+                            success=True,
+                            model=model,
+                            action="load",
+                            elapsed_ms=elapsed_ms,
+                            metadata={"backend": "llamacpp", "note": "model_available"},
+                        )
+                    else:
+                        # Model doesn't exist in router - return helpful error
+                        log.warning(
+                            "model_not_found_in_router",
+                            requested=model,
+                            available=available,
+                        )
+                        return ModelLoadResult(
+                            success=False,
+                            model=model,
+                            action="load",
+                            error=f"Model '{model}' not found. Available models: {', '.join(available)}",
+                            elapsed_ms=elapsed_ms,
+                            metadata={"available_models": available},
+                        )
+                else:
+                    # Can't query models - assume single-model mode (no router)
+                    return ModelLoadResult(
+                        success=True,
+                        model=model,
+                        action="load",
+                        elapsed_ms=elapsed_ms,
+                        metadata={"backend": "llamacpp", "note": "router_mode_unavailable"},
+                    )
+            elif response.status_code == 400:
+                # 400 often means model not found in router mode
+                available = await self._get_available_model_ids(backend_obj)
+                if available and model not in available:
+                    return ModelLoadResult(
+                        success=False,
+                        model=model,
+                        action="load",
+                        error=f"Model '{model}' not found. Available models: {', '.join(available)}",
+                        elapsed_ms=elapsed_ms,
+                        metadata={"available_models": available},
+                    )
                 return ModelLoadResult(
-                    success=True,
+                    success=False,
                     model=model,
                     action="load",
+                    error=f"HTTP {response.status_code}: {response.text[:200]}",
                     elapsed_ms=elapsed_ms,
-                    metadata={"backend": "llamacpp", "note": "router_mode_unavailable"},
                 )
             else:
                 return ModelLoadResult(
@@ -636,15 +715,14 @@ class LlamaCppProvider:
             )
         except Exception as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
-            # Connection errors or 404s mean router mode isn't available
-            # Return success as the model will load on first request
-            if "404" in str(e) or "ConnectError" in type(e).__name__:
+            # Connection errors mean backend is unreachable
+            if "ConnectError" in type(e).__name__:
                 return ModelLoadResult(
-                    success=True,
+                    success=False,
                     model=model,
                     action="load",
+                    error=f"Cannot connect to backend: {e}",
                     elapsed_ms=elapsed_ms,
-                    metadata={"backend": "llamacpp", "note": "router_mode_unavailable"},
                 )
             return ModelLoadResult(
                 success=False,

@@ -60,6 +60,7 @@ htmlcov/
 .mypy_cache/
 .hypothesis/
 log
+fuzz/
 
 # OS files
 .DS_Store

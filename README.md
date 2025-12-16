@@ -3,40 +3,77 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![MCP](https://img.shields.io/badge/MCP-1.23.0-green)](https://modelcontextprotocol.io/)
+[![Tests](https://img.shields.io/badge/tests-746+-brightgreen)](tests/)
 
-**Delia** is an intelligent Model Context Protocol (MCP) server that orchestrates your local LLM infrastructure. It acts as a smart router and delegation layer, automatically selecting the best model tier ("Quick", "Coder", "MoE", or "Thinking") for a given task, balancing performance, quality, and resource usage.
+**Delia** is an enterprise-grade Model Context Protocol (MCP) server that orchestrates your local LLM infrastructure. It acts as an intelligent router and delegation layer, automatically selecting the best model tier ("Quick", "Coder", "MoE", or "Thinking") for a given task using semantic embeddings, latency-aware scoring, and learned task affinities.
 
-Delia turns a collection of local models (via Ollama, llama.cpp, vLLM) and optional cloud fallbacks (Gemini, OpenAI) into a cohesive, fault-tolerant AI system available to any MCP-compliant client (Claude Desktop, VS Code, Cursor, Windsurf, etc.).
+Delia transforms a collection of local models (via Ollama, llama.cpp, vLLM) and optional cloud fallbacks (Gemini, OpenAI) into a cohesive, fault-tolerant AI system available to any MCP-compliant client (Claude Desktop, VS Code, Cursor, Windsurf, etc.).
+
+**Project Stats:** ~17K LOC | 746+ tests | 3 providers | 4 model tiers
 
 ## Features
 
-- **🧠 Intelligent Routing**: Automatically routes tasks to the optimal model tier:
-    - **Quick**: Fast 7B-14B models for summaries and simple queries.
-    - **Coder**: Specialized 14B-30B models for code generation and review.
-    - **MoE** (Mixture of Experts): Large 30B+ models for complex planning and architectural critique.
-    - **Thinking**: Models with extended reasoning capabilities (e.g., DeepSeek-R1) for deep analysis.
-- **🔌 Multi-Backend Support**: Seamlessly integrates:
-    - **Ollama** (Recommended for ease of use)
-    - **llama.cpp / server** (For maximum performance)
-    - **vLLM** (For high-throughput production setups)
-    - **Google Gemini** (Optional cloud fallback)
-    - **OpenAI-compatible APIs** (Local or remote)
-- **🛠️ Powerful MCP Tools**:
-    - `delegate`: The core tool for routing tasks to the right model.
-    - `think`: Dedicated tool for deep, multi-step reasoning on complex problems.
-    - `batch`: Parallel execution of multiple tasks across available GPUs.
-    - `chain` & `workflow`: Execute sequential or DAG-based task pipelines.
-    - `agent`: Autonomous agent capable of multi-step tool use.
-- **🛡️ Resilience**:
-    - **Circuit Breaker**: Automatically disables failing backends to prevent cascading errors.
-    - **Queue System**: Manages concurrency to prevent OOM errors on local hardware.
-    - **Failover**: Automatically retries on alternative backends if primary fails.
-- **📊 Observability**:
-    - **Real-time Dashboard**: Next.js-based dashboard for monitoring requests, token usage, and backend health.
-    - **Usage Tracking**: Detailed stats on tokens, costs (saved vs. cloud), and model performance.
-- **🔐 Enterprise Ready**:
-    - **Authentication**: Optional JWT-based auth with per-user quotas.
-    - **Session Management**: Stateful conversations with `session_create/get/list`.
+### Intelligent Routing
+
+Delia uses a sophisticated multi-tier routing system:
+
+| Tier | Models | Use Cases |
+|------|--------|-----------|
+| **Quick** | 7B-14B | Summaries, simple queries, triage |
+| **Coder** | 14B-30B | Code generation, review, refactoring |
+| **MoE** | 30B+ | Complex planning, architecture, critique |
+| **Thinking** | Extended reasoning | Deep analysis (e.g., DeepSeek-R1) |
+
+**Advanced Routing Features:**
+- **Semantic Model Selection**: Uses embeddings (nomic-embed) for intelligent task→model matching
+- **Latency-Aware Scoring**: Tracks P50 latency, throughput, and success rates per backend
+- **Cost-Aware Routing**: Prefers local/free backends, with configurable cloud cost sensitivity
+- **Task-Backend Affinity**: Learns which backends excel at which task types via EMA
+- **Weighted Load Balancing**: Distributes load across backends based on performance scores
+- **Hedged Requests**: Staggered parallel execution for latency-critical requests
+- **Predictive Pre-warming**: Loads models before they're needed based on hourly usage patterns
+
+### Multi-Backend Support
+
+| Provider | Type | Notes |
+|----------|------|-------|
+| **Ollama** | Local | Recommended for ease of use |
+| **llama.cpp** | Local | Maximum performance |
+| **vLLM** | Local/Remote | High-throughput production |
+| **Gemini** | Cloud | Optional fallback |
+| **OpenAI-compatible** | Any | Works with any compatible API |
+
+### MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `delegate` | Route tasks to optimal model tier |
+| `think` | Deep multi-step reasoning with extended thinking |
+| `batch` | Parallel execution across GPUs |
+| `chain` | Sequential task pipelines with variable substitution |
+| `workflow` | DAG execution with conditional branching and retry |
+| `agent` | Autonomous agent with native tool calling |
+| `session_*` | Stateful multi-turn conversations |
+
+### Resilience & Reliability
+
+- **Circuit Breaker**: Disables failing backends with exponential backoff recovery
+- **Model Queue**: Prevents OOM by managing concurrent model loads
+- **Automatic Failover**: Retries on alternative backends when primary fails
+- **Health Monitoring**: Continuous backend health checks with TTL caching
+
+### Observability
+
+- **Real-time Dashboard**: Next.js UI for monitoring requests, tokens, and backend health
+- **Backend Metrics**: Success rate, latency P50, throughput (tok/s) per backend
+- **Routing Intelligence**: View affinity scores, prewarm predictions, hedging status
+- **Cost Tracking**: Estimated savings vs. cloud API costs
+
+### Enterprise Features
+
+- **JWT Authentication**: Optional auth with FastAPI-Users
+- **Per-User Quotas**: Track and limit usage by user
+- **Session Management**: Persistent conversation state
 
 ## Quick Start
 
@@ -148,69 +185,178 @@ Configuration is stored in `~/.delia/settings.json`.
   ],
   "routing": {
     "prefer_local": true,
-    "fallback_enabled": true
+    "fallback_enabled": true,
+    "scoring": {
+      "enabled": true,
+      "weights": {
+        "latency": 0.35,
+        "throughput": 0.15,
+        "reliability": 0.35,
+        "availability": 0.15,
+        "cost": 0.0
+      }
+    },
+    "hedging": {
+      "enabled": false,
+      "delay_ms": 50,
+      "max_backends": 2
+    },
+    "prewarm": {
+      "enabled": false,
+      "threshold": 0.3,
+      "check_interval_minutes": 5
+    },
+    "affinity_learning": {
+      "enabled": true,
+      "alpha": 0.1
+    }
   }
 }
 ```
 
 ### Model Tiers
 
--   **Quick**: General purpose, low latency. *Triggers: "summarize", "explain", simple queries.*
--   **Coder**: Code specialization. *Triggers: "write code", "refactor", "review", "test".*
--   **MoE**: Complex reasoning, large context. *Triggers: "plan", "critique", "architecture".*
--   **Thinking**: Extended chain-of-thought. *Triggers: "think", "reason", "analyze deeply".*
+| Tier | Triggers | Best For |
+|------|----------|----------|
+| **Quick** | "summarize", "explain", simple queries | Low latency responses |
+| **Coder** | "write code", "refactor", "review", "test" | Code-specialized tasks |
+| **MoE** | "plan", "critique", "architecture" | Complex reasoning |
+| **Thinking** | "think", "reason", "analyze deeply" | Extended chain-of-thought |
+
+### Routing Configuration
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `prefer_local` | `true` | Prefer local backends over cloud |
+| `fallback_enabled` | `true` | Allow fallback to other backends |
+| `scoring.enabled` | `true` | Use performance-based backend scoring |
+| `hedging.enabled` | `false` | Enable hedged (parallel) requests |
+| `prewarm.enabled` | `false` | Enable predictive model pre-warming |
+| `affinity_learning.enabled` | `true` | Learn task→backend affinities |
+
+## Architecture
+
+Delia's architecture has evolved through multiple phases to achieve enterprise-grade reliability:
+
+| Component | Sophistication | Implementation |
+|-----------|---------------|----------------|
+| Model Selection | Advanced | Semantic embeddings + regex + task-based |
+| Provider Abstraction | Advanced | Protocol-based with 3 providers |
+| Resilience | Advanced | Circuit breaker + exponential backoff |
+| Orchestration | Advanced | Chains, DAGs, conditional branching |
+| Backend Selection | Advanced | Latency/cost/affinity-aware scoring |
+| Load Distribution | Advanced | Weighted random with hedging support |
+
+### Key Components
+
+- **BackendScorer**: Scores backends using configurable weights (latency, throughput, reliability, cost)
+- **AffinityTracker**: EMA-based learning of task→backend performance
+- **PrewarmTracker**: Hourly usage pattern learning for predictive model loading
+- **ModelQueue**: Prevents OOM by serializing model loads
+- **CircuitBreaker**: Protects against cascading failures with auto-recovery
 
 ## Dashboard
 
-Delia includes a real-time Next.js dashboard for monitoring request activity, token usage, and system health.
+Delia includes a real-time Next.js dashboard for monitoring.
 
-**To start the dashboard:**
+**To start:**
 
-1.  Navigate to the dashboard directory:
-    ```bash
-    cd dashboard
-    ```
+```bash
+cd dashboard
+npm install
+npm run dev
+# Open http://localhost:3000
+```
 
-2.  Install dependencies:
-    ```bash
-    npm install
-    # or
-    yarn install
-    ```
+### Dashboard Features
 
-3.  Run the development server:
-    ```bash
-    npm run dev
-    ```
+| Section | Data Shown |
+|---------|------------|
+| **Usage Stats** | Calls/tokens per tier, cost savings |
+| **Backend Health** | Availability, response time, loaded models, circuit status |
+| **Performance Metrics** | Success rate, latency P50, throughput per backend |
+| **Routing Config** | Scoring weights, hedging toggle, prewarm toggle |
+| **Intelligence** | Affinity pairs learned, prewarm predictions |
+| **Recent Calls** | Task type, tokens, elapsed time |
 
-4.  Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-The dashboard connects to Delia's log files (typically in `~/.cache/delia/`) to display live activity.
+The dashboard reads from `~/.cache/delia/` (live logs, affinity.json, prewarm.json).
 
 ## Development
 
-To develop on Delia:
+### Setup
 
-1.  **Clone the repo:**
-    ```bash
-    git clone https://github.com/zbrdc/delia.git
-    cd delia
-    ```
+```bash
+git clone https://github.com/zbrdc/delia.git
+cd delia
+uv sync
+```
 
-2.  **Install dependencies:**
-    ```bash
-    uv sync
-    ```
+### Running
 
-3.  **Run in dev mode:**
-    ```bash
-    uv run delia serve
-    ```
+```bash
+# Development mode (STDIO)
+uv run delia serve
 
-4.  **Run tests:**
-    ```bash
-    uv run pytest
-    ```
+# HTTP/SSE mode
+uv run delia serve --transport sse --port 8200
+
+# Check configuration
+uv run delia doctor
+```
+
+### Testing
+
+```bash
+# Run all tests (recommended: use isolated data directory)
+DELIA_DATA_DIR=/tmp/delia-test-data uv run pytest
+
+# Run with coverage
+uv run pytest --cov=delia
+
+# Run a specific test file
+uv run pytest tests/test_backend_manager.py
+
+# Run async tests only
+uv run pytest -m asyncio
+```
+
+**Test Stats:** 746+ tests across 33 test files
+
+### Property-Based Testing (Hypothesis)
+
+```bash
+# Quick iteration
+HYPOTHESIS_PROFILE=quick uv run pytest
+
+# Extended fuzzing (overnight)
+HYPOTHESIS_PROFILE=overnight uv run pytest
+```
+
+| Profile | Examples | Use Case |
+|---------|----------|----------|
+| quick | 10 | Fast iteration |
+| default | 100 | Normal development |
+| ci | 500 | CI pipeline |
+| overnight | 2000 | Extended fuzzing |
+
+### Project Structure
+
+```
+src/delia/                    # ~17K LOC
+├── mcp_server.py             # Main entry, MCP tools
+├── cli.py                    # CLI commands (init, serve, doctor)
+├── backend_manager.py        # Backend config and health
+├── session_manager.py        # Session state for multi-turn
+├── delegation.py             # Core delegation logic
+├── config.py                 # Configuration, circuit breaker
+├── routing.py                # Model/backend routing
+├── llm.py                    # LLM call dispatcher
+├── providers/                # Ollama, llama.cpp, Gemini
+└── tools/                    # Agent tools (read_file, search_code, etc.)
+
+tests/                        # ~12K LOC, 33 test files
+dashboard/                    # Next.js monitoring UI
+```
 
 ## License
 
