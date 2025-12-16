@@ -156,6 +156,78 @@ def detect_code_content(content: str) -> tuple[bool, float, str]:
         return False, max(0, 0.3 - normalized / 3), f"Primarily text (score={normalized:.1f})"
 
 
+
+def detect_chat_task_type(message: str) -> tuple[str, float, str]:
+    """
+    Detect the appropriate task type for a chat message.
+
+    Returns:
+        (task_type, confidence, reasoning)
+        - task_type: "quick", "coder", or "moe"
+        - confidence: 0.0-1.0 score
+        - reasoning: Brief explanation
+    """
+    if not message or len(message.strip()) < 5:
+        return "quick", 0.5, "Very short message"
+
+    message_lower = message.lower()
+
+    # MoE indicators (complex reasoning tasks)
+    moe_patterns = [
+        (r"\b(plan|design|architect|strategy)\b", "planning task"),
+        (r"\b(compare|contrast|analyze pros|trade.?offs?)\b", "comparison/analysis"),
+        (r"\b(explain|why|how does|what is the reason)\b.*\b(work|happen|cause)\b", "deep explanation"),
+        (r"\b(critique|evaluate|assess|review)\b.*\b(approach|design|architecture)\b", "evaluation task"),
+        (r"\b(step.?by.?step|detailed|comprehensive|thorough)\b", "detailed analysis requested"),
+    ]
+
+    for pattern, reason in moe_patterns:
+        if re.search(pattern, message_lower):
+            return "moe", 0.7, f"Complex task: {reason}"
+
+    # Coder indicators (code-related tasks)
+    coder_patterns = [
+        (r"\b(code|coding|coder|function|class|method|script|program|programming)\b", "code keyword"),
+        (r"\b(write|create|implement|build|develop)\b.*\b(function|class|code|app)\b", "code generation"),
+        (r"\b(fix|debug|error|bug|issue)\b.*\b(code|function|script)\b", "debugging"),
+        (r"\b(refactor|optimize|improve)\b.*\b(code|function|performance)\b", "code improvement"),
+        (r"```|\bdef\s|\bclass\s|\bfunction\s|\bconst\s|\blet\s", "code syntax"),
+        (r"\b(python|javascript|typescript|java|rust|go|c\+\+|react|node)\b", "language mention"),
+        (r"\b(api|endpoint|database|sql|query|json|xml|http|rest|graphql)\b", "technical term"),
+        (r"\b(import|export|module|package|library|dependency|npm|pip)\b", "module keyword"),
+        (r"\b(coding model|coder model|code model)\b", "explicit model request"),
+    ]
+
+    for pattern, reason in coder_patterns:
+        if re.search(pattern, message_lower):
+            # Double-check with code content detection
+            is_code, code_conf, _ = detect_code_content(message)
+            if is_code or code_conf > 0.3:
+                return "coder", max(0.6, code_conf), f"Code-related: {reason}"
+            return "coder", 0.5, f"Code-related: {reason}"
+
+    # Check for actual code in the message
+    is_code, confidence, code_reason = detect_code_content(message)
+    if is_code and confidence > 0.5:
+        return "coder", confidence, f"Contains code: {code_reason}"
+
+    # Quick task indicators (simple questions, casual chat)
+    quick_patterns = [
+        (r"^(hi|hello|hey|thanks|thank you|ok|okay)\b", "greeting/acknowledgment"),
+        (r"\b(what is|who is|when|where|how many|how much)\b", "simple question"),
+        (r"\b(tell me|give me|show me)\b.*\b(about|example)\b", "information request"),
+        (r"\b(list|summarize|brief|short)\b", "summary request"),
+        (r"^.{0,50}\?$", "short question"),  # Short questions
+    ]
+
+    for pattern, reason in quick_patterns:
+        if re.search(pattern, message_lower):
+            return "quick", 0.7, f"Simple task: {reason}"
+
+    # Default to quick for general chat
+    return "quick", 0.5, "General chat message"
+
+
 def parse_model_override(model_hint: str | None, content: str) -> str | None:
     """Parse explicit model request from content or hint.
 

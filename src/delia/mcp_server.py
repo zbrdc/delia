@@ -2014,6 +2014,9 @@ async def agent(
 
         # TODO: When provider interface supports tools parameter, pass tools_schemas here
         # for native tool calling mode
+        # Create preview from the user's original prompt for logging
+        content_preview = combined_prompt[:200].replace("\n", " ").strip()
+
         result = await call_llm(
             model=selected_model,
             prompt=combined_prompt,
@@ -2021,6 +2024,7 @@ async def agent(
             task_type="agent",
             original_task="agent",
             language="unknown",
+            content_preview=content_preview,
             backend_obj=backend_obj,
         )
 
@@ -2133,6 +2137,11 @@ async def health() -> str:
     # Estimate cost savings (vs GPT-4)
     local_savings = (local_tokens / 1000) * config.gpt4_cost_per_1k_tokens
 
+    # Get voting stats
+    from .voting_stats import get_voting_stats_tracker
+    voting_tracker = get_voting_stats_tracker()
+    voting_stats = voting_tracker.get_stats()
+
     # Build response
     status = {
         "status": health_status["status"],
@@ -2156,6 +2165,7 @@ async def health() -> str:
             "total_tokens": humanize.intword(local_tokens),
             "estimated_savings": f"${local_savings:,.2f}",
         },
+        "voting": voting_stats,
     }
 
     return json.dumps(status, indent=2)

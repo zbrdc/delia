@@ -39,6 +39,7 @@ import structlog
 from ..types import Workspace
 from .executor import validate_path
 from .registry import ToolDefinition, ToolRegistry
+from .web_search import web_search, web_news
 
 log = structlog.get_logger()
 
@@ -466,6 +467,54 @@ def get_default_tools(workspace: Workspace | None = None) -> ToolRegistry:
             "required": ["url"]
         },
         handler=web_fetch,
+    ))
+
+    # Web search tools (DuckDuckGo - no API key needed)
+    registry.register(ToolDefinition(
+        name="web_search",
+        description="Search the web using DuckDuckGo. Use this to find current information, documentation, or answers.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results to return (1-10, default: 5)",
+                    "default": 5
+                }
+            },
+            "required": ["query"]
+        },
+        handler=web_search,
+    ))
+
+    registry.register(ToolDefinition(
+        name="web_news",
+        description="Search recent news articles using DuckDuckGo. Use this for current events and recent developments.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "News search query"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results (1-10, default: 5)",
+                    "default": 5
+                },
+                "timelimit": {
+                    "type": "string",
+                    "enum": ["d", "w", "m"],
+                    "description": "Time limit: d=day, w=week, m=month"
+                }
+            },
+            "required": ["query"]
+        },
+        handler=web_news,
     ))
 
     return registry

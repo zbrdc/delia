@@ -532,6 +532,7 @@ async def execute_voting_call(
     """
     from .voting import VotingConsensus, estimate_task_complexity
     from .quality import get_quality_validator
+    from .voting_stats import get_voting_stats_tracker
 
     if not backends:
         raise ValueError("No backends provided for voting call")
@@ -640,6 +641,14 @@ async def execute_voting_call(
                             # Record low quality for this backend
                             tracker = get_affinity_tracker()
                             tracker.update(responding_backend.id, task_type, quality=0.2)
+                            # Track rejection in voting stats
+                            voting_tracker = get_voting_stats_tracker()
+                            voting_tracker.record_rejection(
+                                reason=vote_result.red_flag_reason or "unknown",
+                                backend_id=responding_backend.id,
+                                tier=task_type,
+                                response_preview=response_text[:100],
+                            )
                             continue
 
                         if vote_result.consensus_reached:
@@ -667,6 +676,16 @@ async def execute_voting_call(
                                 votes=vote_result.votes_for_winner,
                                 total_votes=vote_result.total_votes,
                             )
+                            # Track consensus success in voting stats
+                            voting_tracker = get_voting_stats_tracker()
+                            voting_tracker.record_consensus(
+                                votes_cast=vote_result.total_votes,
+                                k=voting_k,
+                                tier=task_type,
+                                backend_id=responding_backend.id,
+                                success=True,
+                            )
+                            voting_tracker.record_quality(task_type, quality_result.overall)
                             break
                     else:
                         error = result.get("error", "Unknown error")
@@ -695,6 +714,16 @@ async def execute_voting_call(
     best_response, consensus_meta = consensus.get_best_response()
     voting_metadata["unique_responses"] = consensus_meta.unique_responses
 
+    # Track failed consensus in voting stats
+    voting_tracker = get_voting_stats_tracker()
+    voting_tracker.record_consensus(
+        votes_cast=voting_metadata["votes_cast"],
+        k=voting_k,
+        tier=task_type,
+        backend_id="none",
+        success=False,
+    )
+
     if best_response:
         # Find which backend gave this response
         for backend_id, (resp, tokens) in backend_responses.items():
@@ -708,6 +737,9 @@ async def execute_voting_call(
                     votes=consensus_meta.winning_votes,
                     k=voting_k,
                 )
+                # Track quality of fallback response
+                quality_result = validate_response(best_response, task_type)
+                voting_tracker.record_quality(task_type, quality_result.overall)
                 return best_response, tokens, backend_obj, voting_metadata
 
     # All backends failed

@@ -18,10 +18,11 @@
 import { NextResponse } from "next/server"
 import { readFile, writeFile, copyFile, access } from "fs/promises"
 import { join } from "path"
+import { getSettingsFile } from "@/lib/paths"
 
-// Path to settings.json (always in project root)
+// Path to settings.json (uses same resolution as CLI)
 const PROJECT_ROOT = join(process.cwd(), "..")
-const SETTINGS_FILE = join(PROJECT_ROOT, "settings.json")
+const SETTINGS_FILE = getSettingsFile()
 const SETTINGS_EXAMPLE = join(PROJECT_ROOT, "settings.json.example")
 
 interface BackendModels {

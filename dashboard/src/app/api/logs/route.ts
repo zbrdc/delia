@@ -18,11 +18,10 @@
 import { NextResponse } from "next/server"
 import { readFile } from "fs/promises"
 import { join } from "path"
-import { homedir } from "os"
+import { getCacheDir, getLogsFile } from "@/lib/paths"
 
-// Paths derived from DELIA_DATA_DIR env var (default: ~/.cache/delia)
-const DATA_DIR = process.env.DELIA_DATA_DIR || join(homedir(), ".cache", "delia")
-const CACHE_DIR = join(DATA_DIR, "cache")
+// Use same path resolution as CLI
+const CACHE_DIR = getCacheDir()
 
 interface LiveLog {
   ts: string

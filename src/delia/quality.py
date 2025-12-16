@@ -62,12 +62,27 @@ class QualityConfig:
     min_vocabulary_diversity: float = 0.15  # Unique words / total words
     max_single_char_ratio: float = 0.3  # Detect character spam
 
+    # Hallucination detection (false capability claims)
+    hallucination_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"\b(i cannot|i can't|i'm unable|i am unable)\b",
+            r"\b(i don't have access|i don't have the ability|i lack)\b",
+            r"\b(external (models?|services?|apis?))\b",
+            r"\b(cloud api|outside service|third.?party)\b",
+            r"\b(privacy concerns?|security (concerns?|risks?))\b",
+            r"\b(my limitations?|beyond my (capabilities?|scope))\b",
+            r"\b(i('m| am) not (able|designed|programmed) to)\b",
+            r"\b(unfortunately|regrettably).{0,30}(cannot|can't|unable)\b",
+        ]
+    )
+
     # Score weights for final calculation
     weights: dict[str, float] = field(
         default_factory=lambda: {
-            "repetition": 0.35,
-            "length": 0.25,
-            "coherence": 0.40,
+            "repetition": 0.30,
+            "length": 0.20,
+            "coherence": 0.30,
+            "hallucination": 0.20,
         }
     )
 
@@ -80,12 +95,18 @@ class QualityScore:
     repetition_score: float  # 1.0 = no repetition
     length_score: float  # 1.0 = appropriate length
     coherence_score: float  # 1.0 = coherent text
+    hallucination_score: float = 1.0  # 1.0 = no false capability claims
     issues: list[str] = field(default_factory=list)  # Human-readable issues
 
     @property
     def is_valid(self) -> bool:
         """Check if response passes quality threshold for k-voting."""
-        return self.overall >= 0.5 and "response_too_long" not in str(self.issues)
+        # Red-flag: too long or hallucinating capabilities
+        has_red_flag = any(
+            issue.startswith(("response_too_long", "hallucination"))
+            for issue in self.issues
+        )
+        return self.overall >= 0.5 and not has_red_flag
 
     @property
     def reason(self) -> str | None:
@@ -103,6 +124,7 @@ class QualityScore:
             "repetition": round(self.repetition_score, 3),
             "length": round(self.length_score, 3),
             "coherence": round(self.coherence_score, 3),
+            "hallucination": round(self.hallucination_score, 3),
             "issues": self.issues,
         }
 
@@ -148,6 +170,7 @@ class ResponseQualityValidator:
         repetition_score = self._check_repetition(response, issues)
         length_score = self._check_length(response, task_type, issues)
         coherence_score = self._check_coherence(response, issues)
+        hallucination_score = self._check_hallucination(response, issues)
 
         # Weighted combination
         weights = self.config.weights
@@ -155,6 +178,7 @@ class ResponseQualityValidator:
             weights["repetition"] * repetition_score
             + weights["length"] * length_score
             + weights["coherence"] * coherence_score
+            + weights.get("hallucination", 0.0) * hallucination_score
         )
 
         # Clamp to [0.0, 1.0]
@@ -165,6 +189,7 @@ class ResponseQualityValidator:
             repetition_score=repetition_score,
             length_score=length_score,
             coherence_score=coherence_score,
+            hallucination_score=hallucination_score,
             issues=issues,
         )
 
@@ -324,6 +349,37 @@ class ResponseQualityValidator:
             scores.append(1.0)
 
         return sum(scores) / len(scores) if scores else 1.0
+
+    def _check_hallucination(self, response: str, issues: list[str]) -> float:
+        """
+        Check for false capability claims (hallucinated limitations).
+
+        Detects when the model claims it cannot do things it actually can,
+        such as loading models, accessing features, or switching tiers.
+
+        Returns:
+            Score from 0.0 (severe hallucination) to 1.0 (no hallucination)
+        """
+        response_lower = response.lower()
+        matches_found = []
+
+        for pattern in self.config.hallucination_patterns:
+            matches = re.findall(pattern, response_lower, re.IGNORECASE)
+            if matches:
+                matches_found.extend(matches)
+
+        if matches_found:
+            # Count unique patterns matched
+            unique_matches = len(set(str(m) for m in matches_found))
+
+            # More matches = worse score
+            # 1 match = 0.6, 2 matches = 0.3, 3+ matches = 0.0
+            score = max(0.0, 1.0 - (unique_matches * 0.35))
+
+            issues.append(f"hallucination:false_limitations({unique_matches})")
+            return score
+
+        return 1.0
 
 
 # Module-level singleton

@@ -783,6 +783,28 @@ def serve(
 
 
 @app.command()
+def api(
+    port: int = typer.Option(8201, "--port", "-p", help="Port for API server"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host to bind"),
+) -> None:
+    """
+    Start the Delia HTTP API server for CLI frontend.
+
+    This server provides SSE streaming endpoints for the TypeScript CLI.
+
+    Endpoints:
+        POST /api/agent/run   - Run agent with SSE streaming
+        GET  /api/health      - Health check
+        GET  /api/sessions    - List sessions
+
+    Example:
+        delia api --port 8201
+    """
+    from .api import run_api
+    run_api(host=host, port=port)
+
+
+@app.command()
 def agent(
     task: str = typer.Argument(..., help="Task for the agent to complete"),
     model: str = typer.Option(None, "--model", "-m", help="Model tier (quick/coder/moe) or specific model"),

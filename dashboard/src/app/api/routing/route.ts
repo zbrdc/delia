@@ -10,15 +10,12 @@
 import { NextResponse } from "next/server"
 import { readFile, writeFile } from "fs/promises"
 import { join } from "path"
-import { homedir } from "os"
+import { getSettingsFile, getAffinityFile, getCacheDir } from "@/lib/paths"
 
-// Paths - settings.json in project root, data in ~/.cache/delia
-const PROJECT_ROOT = join(process.cwd(), "..")
-const SETTINGS_FILE = join(PROJECT_ROOT, "settings.json")
-const DATA_DIR = process.env.DELIA_DATA_DIR || join(homedir(), ".cache", "delia")
-const CACHE_DIR = join(DATA_DIR, "cache")
-const AFFINITY_FILE = join(CACHE_DIR, "affinity.json")
-const PREWARM_FILE = join(CACHE_DIR, "prewarm.json")
+// Use same path resolution as CLI
+const SETTINGS_FILE = getSettingsFile()
+const AFFINITY_FILE = getAffinityFile()
+const PREWARM_FILE = join(getCacheDir(), "prewarm.json")
 
 interface AffinityData {
   alpha: number

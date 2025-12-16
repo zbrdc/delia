@@ -58,6 +58,86 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
+# Track models that have been auto-pulled this session to avoid repeated attempts
+_auto_pulled_models: set[str] = set()
+
+
+async def auto_pull_model(model: str, base_url: str) -> bool:
+    """Auto-pull a model from Ollama if not available.
+
+    Args:
+        model: Model name to pull
+        base_url: Ollama API base URL
+
+    Returns:
+        True if model was successfully pulled, False otherwise
+    """
+    if model in _auto_pulled_models:
+        log.debug("model_already_pulled_this_session", model=model)
+        return False
+
+    log.info(
+        "auto_pull_starting",
+        model=model,
+        log_type="PULL",
+        status_msg=f"Auto-pulling model {model}... This may take a while.",
+    )
+
+    try:
+        async with httpx.AsyncClient(base_url=base_url, timeout=600.0) as client:
+            # Use Ollama's pull endpoint with streaming to track progress
+            async with client.stream(
+                "POST",
+                "/api/pull",
+                json={"name": model, "stream": True},
+            ) as response:
+                if response.status_code != 200:
+                    log.error("auto_pull_failed", model=model, status=response.status_code)
+                    return False
+
+                last_status = ""
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        status = data.get("status", "")
+                        if status != last_status:
+                            # Log progress updates
+                            if "pulling" in status.lower():
+                                completed = data.get("completed", 0)
+                                total = data.get("total", 0)
+                                if total > 0:
+                                    pct = (completed / total) * 100
+                                    log.info(
+                                        "auto_pull_progress",
+                                        model=model,
+                                        status=status,
+                                        progress=f"{pct:.1f}%",
+                                        log_type="PULL",
+                                    )
+                            elif status:
+                                log.info("auto_pull_status", model=model, status=status, log_type="PULL")
+                            last_status = status
+                    except json.JSONDecodeError:
+                        continue
+
+        _auto_pulled_models.add(model)
+        log.info(
+            "auto_pull_complete",
+            model=model,
+            log_type="PULL",
+            status_msg=f"Model {model} is now available.",
+        )
+        return True
+
+    except httpx.TimeoutException:
+        log.error("auto_pull_timeout", model=model)
+        return False
+    except Exception as e:
+        log.error("auto_pull_error", model=model, error=str(e))
+        return False
+
 
 def extract_thinking_content(response_text: str) -> str | None:
     """Extract thinking content from LLM response.
@@ -346,8 +426,80 @@ class OllamaProvider:
             # HTTP error handling
             error_elapsed_ms = int((time.time() - start_time) * 1000)
             error_msg = f"Ollama HTTP {response.status_code}"
+
             if response.status_code == 404:
-                error_msg += f": Model '{model}' not found. Run: ollama pull {model}"
+                # Model not found - try to auto-pull it
+                if model not in _auto_pulled_models:
+                    log.info("model_not_found_attempting_pull", model=model)
+                    pull_success = await auto_pull_model(model, backend_obj.url)
+                    if pull_success:
+                        # Retry the request after successful pull
+                        log.info("retrying_after_auto_pull", model=model)
+                        response = await _make_request()
+                        if response.status_code == 200:
+                            # Re-process successful response (same logic as above)
+                            try:
+                                data = response.json()
+                            except json.JSONDecodeError:
+                                return create_error_response("Ollama returned non-JSON response")
+
+                            tool_calls = None
+                            if use_chat_endpoint:
+                                message = data.get("message", {})
+                                response_text = message.get("content", "")
+                                tool_calls = message.get("tool_calls")
+                                tokens = data.get("eval_count", 0)
+                                if tokens == 0:
+                                    tokens = data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
+                            else:
+                                try:
+                                    validated = OllamaResponse.model_validate(data)
+                                    tokens = validated.eval_count
+                                    response_text = validated.response
+                                except ValidationError as e:
+                                    log.warning("ollama_validation_failed", error=str(e))
+                                    tokens = data.get("eval_count", 0)
+                                    response_text = data.get("response", "")
+
+                            retry_elapsed_ms = int((time.time() - start_time) * 1000)
+
+                            if self.stats_callback:
+                                self.stats_callback(
+                                    model_tier, task_type, original_task, tokens,
+                                    retry_elapsed_ms, content_preview, enable_thinking, "ollama",
+                                )
+
+                            log_thinking_and_response(response_text, model_tier, tokens)
+                            health.record_success(content_size)
+                            get_backend_metrics(backend_obj.id).record_success(
+                                elapsed_ms=float(retry_elapsed_ms), tokens=tokens
+                            )
+
+                            if self.save_stats_callback:
+                                self.save_stats_callback()
+
+                            metadata = {"backend": "ollama", "model": model, "tier": model_tier, "auto_pulled": True}
+                            if tool_calls:
+                                metadata["tool_calls"] = tool_calls
+
+                            return create_success_response(
+                                response_text=response_text,
+                                tokens=tokens,
+                                elapsed_ms=retry_elapsed_ms,
+                                metadata=metadata,
+                            )
+                        # If retry also failed, return error with retry status
+                        retry_error_msg = f"Ollama HTTP {response.status_code} (after auto-pull)"
+                        if response.status_code == 500:
+                            retry_error_msg += ": Internal server error. Check Ollama logs."
+                        else:
+                            retry_error_text = response.text[:200] if len(response.text) > 200 else response.text
+                            retry_error_msg += f": {retry_error_text}"
+                        health.record_failure("http_error", content_size)
+                        get_backend_metrics(backend_obj.id).record_failure(elapsed_ms=float(error_elapsed_ms))
+                        return create_error_response(retry_error_msg)
+
+                error_msg += f": Model '{model}' not found. Auto-pull failed or already attempted."
             elif response.status_code == 500:
                 error_msg += ": Internal server error. Check Ollama logs."
             elif response.status_code == 503:

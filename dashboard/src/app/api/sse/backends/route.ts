@@ -17,10 +17,10 @@
 
 import { readFile } from "fs/promises"
 import { watch } from "fs"
-import { join } from "path"
+import { getSettingsFile } from "@/lib/paths"
 
-const PROJECT_ROOT = join(process.cwd(), "..")
-const SETTINGS_FILE = join(PROJECT_ROOT, "settings.json")
+// Use same path resolution as CLI
+const SETTINGS_FILE = getSettingsFile()
 
 interface BackendConfig {
   id: string

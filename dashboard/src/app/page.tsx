@@ -768,7 +768,7 @@ export default function Dashboard() {
                       </span>
                     </div>
 
-                    
+
                     <div className="flex items-center gap-2 ml-auto">
                       <span className="text-xs font-medium text-muted-foreground">avg</span>
                       <span className="text-sm font-semibold" style={{ color: '#689B8A' }}>
@@ -780,6 +780,31 @@ export default function Dashboard() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Loaded Models Display */}
+                  {(() => {
+                    const activeBackend = backendsResponse?.backends?.find(b => b.id === backendsResponse?.activeBackend)
+                    const loadedModels = activeBackend?.health?.loaded_models || []
+                    if (loadedModels.length === 0) return null
+                    return (
+                      <div className="flex items-center gap-2 pt-2 mt-2 border-t border-border/50">
+                        <span className="text-xs font-medium text-muted-foreground">Loaded:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {loadedModels.slice(0, 4).map((model, idx) => (
+                            <Badge key={idx} variant="outline" className="text-xs px-1.5 py-0 font-mono" style={{ borderColor: '#689B8A', color: '#689B8A' }}>
+                              {model}
+                            </Badge>
+                          ))}
+                          {loadedModels.length > 4 && (
+                            <span className="text-xs text-muted-foreground">+{loadedModels.length - 4} more</span>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground ml-auto">
+                          via {activeBackend?.name || activeBackend?.provider}
+                        </span>
+                      </div>
+                    )
+                  })()}
                 </CardContent>
               </Card>
 

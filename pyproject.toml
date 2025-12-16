@@ -16,7 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "mcp>=1.23.0",  # CVE-2025-66416 fix
+    "mcp>=1.23.0", # CVE-2025-66416 fix
     "httpx>=0.28.1",
     "pydantic>=2.12.5",
     "fastmcp>=2.13.3",
@@ -38,6 +38,7 @@ dependencies = [
     "limits>=3.13.0",
     # CLI
     "typer>=0.15.0",
+    "duckduckgo-search>=8.1.1",
 ]
 
 [build-system]
