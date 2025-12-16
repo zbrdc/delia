@@ -725,6 +725,7 @@ def finalize_delegate_response(
     target_backend: Any,
     tier: str,
     include_metadata: bool = True,
+    voting_metadata: dict[str, Any] | None = None,
 ) -> str:
     """Add metadata footer and update tracking.
 
@@ -738,6 +739,7 @@ def finalize_delegate_response(
         target_backend: Backend that was used
         tier: Model tier that was used
         include_metadata: If False, return response without footer (saves ~30 tokens)
+        voting_metadata: Optional voting consensus info (k, votes, red-flagged)
 
     Returns:
         Final response string, optionally with metadata footer
@@ -754,11 +756,24 @@ def finalize_delegate_response(
     # Extract backend name (handle both string and BackendConfig)
     backend_name = target_backend.name if hasattr(target_backend, "name") else str(target_backend)
 
-    # Add concise metadata footer
+    # Build metadata footer
+    base_meta = f"Model: {selected_model} | Tokens: {tokens} | Time: {elapsed_ms}ms | Backend: {backend_name}"
+
+    # Add voting info if k-voting was used
+    if voting_metadata and voting_metadata.get("mode") == "voting":
+        k = voting_metadata.get("k", 2)
+        votes = voting_metadata.get("votes_cast", 0)
+        red_flagged = voting_metadata.get("red_flagged", 0)
+        # Show voting mode with MDAP guarantee indicator
+        voting_info = f" | Voting: k={k}, votes={votes}"
+        if red_flagged > 0:
+            voting_info += f", flagged={red_flagged}"
+        base_meta += voting_info
+
     return f"""{response_text}
 
 ---
-_Model: {selected_model} | Tokens: {tokens} | Time: {elapsed_ms}ms | Backend: {backend_name}_"""
+_{base_meta}_"""
 
 
 async def delegate_impl(
@@ -859,21 +874,101 @@ async def delegate_impl(
         ctx, task_type, prepared_content, model, backend, backend_obj
     )
 
-    # Check if hedging should be used
-    # Only use hedging when:
-    # 1. Hedging is enabled in routing config
-    # 2. No specific backend was explicitly requested
+    # Check execution mode: voting > hedging > single
+    # Voting provides MDAP mathematical guarantees via k-voting consensus
+    # Hedging provides faster response via first-success racing
+    # Only used when no specific backend was explicitly requested
+    voting_config = backend_manager.routing_config.get("voting", {})
     hedging_config = backend_manager.routing_config.get("hedging", {})
+
+    no_explicit_backend = backend is None and backend_obj is None
+
+    use_voting = voting_config.get("enabled", False) and no_explicit_backend
     use_hedging = (
         hedging_config.get("enabled", False)
-        and backend is None
-        and backend_obj is None
+        and no_explicit_backend
+        and not use_voting  # Voting takes priority
     )
 
-    # Execute the LLM call (with or without hedging)
+    # Track voting metadata for response
+    voting_metadata: dict[str, Any] | None = None
+
+    # Execute the LLM call
     try:
-        if use_hedging:
-            # Get multiple backends for hedged execution
+        if use_voting:
+            # MDAP k-voting consensus execution
+            # Provides mathematical reliability: P(correct|k=3) = 0.999999
+            enabled_backends = backend_manager.get_enabled_backends()
+            weights = backend_manager.get_scoring_weights()
+            scorer = BackendScorer(weights=weights)
+
+            vote_max = voting_config.get("max_backends", 3)
+            vote_delay = voting_config.get("delay_ms", 50)
+
+            # Calculate k: auto-adjust based on task complexity or use fixed value
+            if voting_config.get("auto_kmin", True):
+                from .voting import estimate_task_complexity, VotingConsensus
+
+                estimated_steps = estimate_task_complexity(prepared_content)
+                vote_k = VotingConsensus.calculate_kmin(
+                    total_steps=estimated_steps,
+                    target_accuracy=0.9999,
+                )
+                log.debug(
+                    "auto_kmin_calculated",
+                    estimated_steps=estimated_steps,
+                    vote_k=vote_k,
+                )
+            else:
+                vote_k = voting_config.get("k", 2)
+
+            # Get top N backends by score for voting
+            vote_backends = scorer.select_top_n(
+                enabled_backends,
+                n=vote_max,
+                task_type=task_type,
+            )
+
+            if len(vote_backends) > 1:
+                log.info(
+                    "using_voting_execution",
+                    backends=[b.id for b in vote_backends],
+                    k=vote_k,
+                    mode="mdap_consensus",
+                )
+                response_text, tokens, winning_backend, voting_metadata = (
+                    await execute_voting_call(
+                        ctx,
+                        vote_backends,
+                        selected_model,
+                        prepared_content,
+                        system,
+                        task_type,
+                        task,
+                        detected_language,
+                        voting_k=vote_k,
+                        delay_ms=vote_delay,
+                        max_tokens=max_tokens,
+                    )
+                )
+                target_backend = winning_backend.id
+            else:
+                # Only one backend, fall back to normal execution
+                response_text, tokens = await execute_delegate_call(
+                    ctx,
+                    selected_model,
+                    prepared_content,
+                    system,
+                    task_type,
+                    task,
+                    detected_language,
+                    target_backend,
+                    backend_obj,
+                    max_tokens=max_tokens,
+                )
+
+        elif use_hedging:
+            # First-success racing (faster but no consensus)
             enabled_backends = backend_manager.get_enabled_backends()
             weights = backend_manager.get_scoring_weights()
             scorer = BackendScorer(weights=weights)
@@ -881,7 +976,6 @@ async def delegate_impl(
             hedge_max = hedging_config.get("max_backends", 2)
             hedge_delay = hedging_config.get("delay_ms", 50)
 
-            # Get top N backends by score
             hedge_backends = scorer.select_top_n(
                 enabled_backends,
                 n=hedge_max,
@@ -906,10 +1000,8 @@ async def delegate_impl(
                     delay_ms=hedge_delay,
                     max_tokens=max_tokens,
                 )
-                # Update target_backend with winner for metadata
                 target_backend = winning_backend.id
             else:
-                # Only one backend available, use normal execution
                 response_text, tokens = await execute_delegate_call(
                     ctx,
                     selected_model,
@@ -923,6 +1015,7 @@ async def delegate_impl(
                     max_tokens=max_tokens,
                 )
         else:
+            # Single backend execution
             response_text, tokens = await execute_delegate_call(
                 ctx,
                 selected_model,
@@ -967,6 +1060,7 @@ async def delegate_impl(
         target_backend,
         tier,
         include_metadata=include_metadata,
+        voting_metadata=voting_metadata,
     )
 
 

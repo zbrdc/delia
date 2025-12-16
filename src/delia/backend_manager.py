@@ -340,10 +340,25 @@ class BackendManager:
                     "delay_ms": 50,
                     "max_backends": 2,
                 },
+                "voting": {
+                    "enabled": False,  # MDAP k-voting consensus
+                    "k": 2,  # First-to-ahead-by-k (k=2 → P=0.9999, k=3 → P=0.999999)
+                    "auto_kmin": True,  # Auto-calculate k based on task complexity
+                    "max_backends": 3,  # Max backends to vote across
+                    "max_response_length": 700,  # Red-flag threshold (tokens)
+                    "similarity_threshold": 0.85,  # Semantic similarity for vote matching
+                },
                 "prewarm": {
                     "enabled": False,
                     "threshold": 0.3,
                     "check_interval_minutes": 5,
+                },
+                "quality": {
+                    "enabled": True,
+                    "repetition_ngram_size": 5,
+                    "repetition_threshold": 3,
+                    "min_response_length": 10,
+                    "min_vocabulary_diversity": 0.15,
                 },
             },
             "models": {},
