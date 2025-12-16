@@ -234,19 +234,6 @@ Configuration is stored in `~/.delia/settings.json`.
 | `prewarm.enabled` | `false` | Enable predictive model pre-warming |
 | `affinity_learning.enabled` | `true` | Learn task→backend affinities |
 
-## Architecture
-
-Delia's architecture has evolved through multiple phases to achieve enterprise-grade reliability:
-
-| Component | Sophistication | Implementation |
-|-----------|---------------|----------------|
-| Model Selection | Advanced | Semantic embeddings + regex + task-based |
-| Provider Abstraction | Advanced | Protocol-based with 3 providers |
-| Resilience | Advanced | Circuit breaker + exponential backoff |
-| Orchestration | Advanced | Chains, DAGs, conditional branching |
-| Backend Selection | Advanced | Latency/cost/affinity-aware scoring |
-| Load Distribution | Advanced | Weighted random with hedging support |
-
 ### Key Components
 
 - **BackendScorer**: Scores backends using configurable weights (latency, throughput, reliability, cost)
@@ -280,64 +267,6 @@ npm run dev
 | **Recent Calls** | Task type, tokens, elapsed time |
 
 The dashboard reads from `~/.cache/delia/` (live logs, affinity.json, prewarm.json).
-
-## Development
-
-### Setup
-
-```bash
-git clone https://github.com/zbrdc/delia.git
-cd delia
-uv sync
-```
-
-### Running
-
-```bash
-# Development mode (STDIO)
-uv run delia serve
-
-# HTTP/SSE mode
-uv run delia serve --transport sse --port 8200
-
-# Check configuration
-uv run delia doctor
-```
-
-### Testing
-
-```bash
-# Run all tests (recommended: use isolated data directory)
-DELIA_DATA_DIR=/tmp/delia-test-data uv run pytest
-
-# Run with coverage
-uv run pytest --cov=delia
-
-# Run a specific test file
-uv run pytest tests/test_backend_manager.py
-
-# Run async tests only
-uv run pytest -m asyncio
-```
-
-**Test Stats:** 746+ tests across 33 test files
-
-### Property-Based Testing (Hypothesis)
-
-```bash
-# Quick iteration
-HYPOTHESIS_PROFILE=quick uv run pytest
-
-# Extended fuzzing (overnight)
-HYPOTHESIS_PROFILE=overnight uv run pytest
-```
-
-| Profile | Examples | Use Case |
-|---------|----------|----------|
-| quick | 10 | Fast iteration |
-| default | 100 | Normal development |
-| ci | 500 | CI pipeline |
-| overnight | 2000 | Extended fuzzing |
 
 ### Project Structure
 
