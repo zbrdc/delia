@@ -86,12 +86,19 @@ class TestPathsModule:
         assert paths.CIRCUIT_BREAKER_FILE == paths.CACHE_DIR / "circuit_breaker.json"
         assert paths.USER_DB_FILE == paths.USER_DATA_DIR / "users.db"
 
-    def test_settings_file_in_project_root(self):
-        """SETTINGS_FILE should be in PROJECT_ROOT, not DATA_DIR."""
+    def test_settings_file_location_priority(self):
+        """SETTINGS_FILE should follow priority: env var, CWD, ~/.delia, PROJECT_ROOT."""
         from delia import paths
 
-        assert paths.SETTINGS_FILE == paths.PROJECT_ROOT / "settings.json"
-        assert paths.SETTINGS_FILE.parent == paths.PROJECT_ROOT
+        # SETTINGS_FILE should not be in DATA_DIR (cache dir)
+        assert paths.SETTINGS_FILE.parent != paths.DATA_DIR
+        # It should be in one of the expected locations
+        valid_parents = [
+            Path.home() / ".delia",
+            paths.PROJECT_ROOT,
+            Path.cwd(),
+        ]
+        assert any(paths.SETTINGS_FILE.parent == p for p in valid_parents)
 
 
 class TestCustomDataDir:

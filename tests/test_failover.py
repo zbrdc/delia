@@ -416,14 +416,12 @@ class TestDelegateFailover:
         from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
-        result = await mcp_server.delegate.fn(
-            task="quick",
-            content="Test question"
-        )
-
-        assert result is not None
-        # Should indicate no backend or error
-        assert len(result) > 0
+        # Should raise RuntimeError telling user to configure via settings.json
+        with pytest.raises(RuntimeError, match="No backend configured"):
+            await mcp_server.delegate.fn(
+                task="quick",
+                content="Test question"
+            )
 
 
 class TestBackendTypeRouting:

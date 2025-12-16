@@ -151,15 +151,15 @@ class TestInvalidInputHandling:
 
     @pytest.mark.asyncio
     async def test_think_empty_problem(self):
-        """think() should handle empty problem."""
+        """think() should handle empty problem - raises error when no backend."""
         from delia import mcp_server
 
-        result = await mcp_server.think.fn(
-            problem="",
-            depth="quick"
-        )
-
-        assert result is not None
+        # When no backend is configured, should raise RuntimeError
+        with pytest.raises(RuntimeError, match="No backend configured"):
+            await mcp_server.think.fn(
+                problem="",
+                depth="quick"
+            )
 
     @pytest.mark.asyncio
     async def test_switch_model_empty_name(self):
@@ -401,7 +401,7 @@ class TestGracefulDegradation:
 
     @pytest.mark.asyncio
     async def test_all_backends_unavailable(self):
-        """System should handle all backends being unavailable."""
+        """System should raise RuntimeError when no backends configured."""
         from delia import paths
         paths.ensure_directories()
 
@@ -416,15 +416,12 @@ class TestGracefulDegradation:
         from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
-        # Should return error message, not crash
-        result = await mcp_server.delegate.fn(
-            task="quick",
-            content="Test"
-        )
-
-        assert result is not None
-        # Should indicate no backend available
-        assert "backend" in result.lower() or "error" in result.lower() or "unavailable" in result.lower() or len(result) > 0
+        # Should raise RuntimeError telling user to configure via settings.json
+        with pytest.raises(RuntimeError, match="No backend configured"):
+            await mcp_server.delegate.fn(
+                task="quick",
+                content="Test"
+            )
 
     @pytest.mark.asyncio
     async def test_health_with_no_backends(self):

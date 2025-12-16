@@ -36,7 +36,7 @@ class ModelConfig:
     """Model tier configuration."""
 
     name: str
-    ollama_model: str
+    default_model: str  # Default model name (provider-agnostic)
     vram_gb: float
     context_tokens: int
     num_ctx: int  # Request context size (conservative for quality)
@@ -53,10 +53,9 @@ class Config:
 
     # ============================================================
     # BACKEND SELECTION (Legacy - used only as fallback)
-    # Options: "ollama", "llamacpp"
-    # Default is "ollama" (recommended), can be overridden via DELIA_BACKEND
+    # Auto-detected from settings.json, can be overridden via DELIA_BACKEND
     # ============================================================
-    backend: str = field(default_factory=lambda: os.getenv("DELIA_BACKEND", "ollama"))
+    backend: str = field(default_factory=lambda: os.getenv("DELIA_BACKEND", ""))
 
     # ============================================================
     # OLLAMA CONNECTION
@@ -89,7 +88,7 @@ class Config:
     model_quick: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="quick",
-            ollama_model="qwen3:14b",
+            default_model="qwen3:14b",
             vram_gb=9.0,
             context_tokens=40_000,
             num_ctx=8192,  # 8192 * 4 / 1024 = 32KB request context
@@ -100,7 +99,7 @@ class Config:
     model_coder: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="coder",
-            ollama_model="qwen2.5-coder:14b",
+            default_model="qwen2.5-coder:14b",
             vram_gb=9.0,
             context_tokens=128_000,
             num_ctx=16384,  # 16384 * 4 / 1024 = 64KB request context
@@ -111,7 +110,7 @@ class Config:
     model_moe: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="moe",
-            ollama_model="qwen3:30b-a3b",
+            default_model="qwen3:30b-a3b",
             vram_gb=17.0,
             context_tokens=128_000,
             num_ctx=16384,
@@ -123,7 +122,7 @@ class Config:
     model_thinking: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="thinking",
-            ollama_model=os.getenv("THINKING_MODEL", "olmo3:7b-think"),  # or "qwen3-coder:30b" for deeper reasoning
+            default_model=os.getenv("THINKING_MODEL", "olmo3:7b-think"),  # or "qwen3-coder:30b" for deeper reasoning
             vram_gb=9.0,  # Adjust based on your chosen model
             context_tokens=128_000,
             num_ctx=16384,
@@ -231,16 +230,16 @@ class Config:
             return "llamacpp"
         return None
 
-    def get_preferred_backend_for_type(self, backend_type: str) -> str:
+    def get_preferred_backend_for_type(self, backend_type: str) -> str | None:
         """Get the preferred backend name for a given type ('local' or 'remote').
 
-        Returns the configured backend or falls back to default.
+        Returns the configured backend or None if not configured.
         """
         if backend_type == "local":
-            return self.get_local_backend() or "ollama"
+            return self.get_local_backend()
         elif backend_type == "remote":
-            return self.get_remote_backend() or "llamacpp"
-        return "ollama"
+            return self.get_remote_backend()
+        return None
 
     def is_backend_local(self, backend: str) -> bool:
         """Check if a backend is configured as local."""

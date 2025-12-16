@@ -592,19 +592,16 @@ class ModelRouter:
         4. Fallback: Regex-based code detection for content classification
         5. Default to quick for everything else
         """
-        # Get models from active backend
+        # Get models from active backend (settings.json is the single source of truth)
         backend = self.backend_manager.get_active_backend()
-        if backend:
-            model_quick = backend.models.get("quick", self.config.model_quick.ollama_model)
-            model_coder = backend.models.get("coder", self.config.model_coder.ollama_model)
-            model_moe = backend.models.get("moe", self.config.model_moe.ollama_model)
-            model_thinking = backend.models.get("thinking", self.config.model_thinking.ollama_model)
-        else:
-            # Fallback to config defaults
-            model_quick = self.config.model_quick.ollama_model
-            model_coder = self.config.model_coder.ollama_model
-            model_moe = self.config.model_moe.ollama_model
-            model_thinking = self.config.model_thinking.ollama_model
+        if not backend:
+            log.error("no_backend_configured", hint="Run 'delia serve' to auto-detect backends")
+            raise RuntimeError("No backend configured. Check ~/.cache/delia/settings.json or run 'delia serve' to auto-detect.")
+
+        model_quick = backend.models.get("quick", "current")
+        model_coder = backend.models.get("coder", "current")
+        model_moe = backend.models.get("moe", "current")
+        model_thinking = backend.models.get("thinking", "current")
 
         # Helper to resolve tier name to model name
         def resolve_tier(tier_name):

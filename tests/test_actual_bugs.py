@@ -283,18 +283,15 @@ class TestAsyncBugs:
 
     @pytest.mark.asyncio
     async def test_select_model_no_backend(self):
-        """BUG: select_model may crash when no backend available."""
-        from delia.mcp_server import select_model
+        """select_model should raise RuntimeError when no backend configured."""
+        from delia.routing import get_router
 
-        with patch("delia.mcp_server.backend_manager") as mock_manager:
-            mock_manager.get_active_backend.return_value = None
-
-            try:
-                model = await select_model("quick")
-                # Should return default, not crash
-                assert model is not None
-            except AttributeError as e:
-                pytest.fail(f"BUG FOUND: select_model crashes with no backend: {e}")
+        router = get_router()
+        # Mock the backend_manager on the router instance
+        with patch.object(router.backend_manager, "get_active_backend", return_value=None):
+            # Should raise RuntimeError with helpful message, not AttributeError
+            with pytest.raises(RuntimeError, match="No backend configured"):
+                await router.select_model("quick")
 
     @pytest.mark.asyncio
     async def test_health_no_backends(self):
