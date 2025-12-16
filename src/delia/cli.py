@@ -783,6 +783,55 @@ def serve(
 
 
 @app.command()
+def agent(
+    task: str = typer.Argument(..., help="Task for the agent to complete"),
+    model: str = typer.Option(None, "--model", "-m", help="Model tier (quick/coder/moe) or specific model"),
+    workspace: str = typer.Option(None, "--workspace", "-w", help="Confine file operations to directory"),
+    max_iterations: int = typer.Option(10, "--max-iterations", help="Maximum tool call iterations"),
+    tools: str = typer.Option(None, "--tools", help="Comma-separated tools to enable (default: all)"),
+    backend: str = typer.Option(None, "--backend", "-b", help="Force backend type (local/remote)"),
+    voting: bool = typer.Option(False, "--voting", help="Enable k-voting for reliability"),
+    voting_k: int = typer.Option(None, "--voting-k", help="Override k value for voting"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
+) -> None:
+    """
+    Run an autonomous agent to complete a task.
+
+    The agent can read files, search code, list directories, and fetch web content
+    to accomplish the given task. It runs a loop of: think -> use tools -> respond.
+
+    Examples:
+        delia agent "What files are in the src directory?"
+        delia agent "Find all TODO comments in the codebase"
+        delia agent "Summarize the main.py file" --workspace ./myproject
+        delia agent "Analyze the error handling patterns" --model moe --voting
+    """
+    from .agent_cli import AgentCLIConfig, run_agent_sync
+
+    # Parse tools
+    tools_list = None
+    if tools:
+        tools_list = [t.strip() for t in tools.split(",") if t.strip()]
+
+    config = AgentCLIConfig(
+        model=model,
+        workspace=workspace,
+        max_iterations=max_iterations,
+        tools=tools_list,
+        backend_type=backend,
+        verbose=verbose,
+        voting_enabled=voting,
+        voting_k=voting_k,
+    )
+
+    result = run_agent_sync(task, config)
+
+    # Exit with error code if agent failed
+    if not result.success:
+        raise typer.Exit(1)
+
+
+@app.command()
 def config(
     show: bool = typer.Option(False, "--show", "-s", help="Show current configuration"),
     edit: bool = typer.Option(False, "--edit", "-e", help="Open configuration in editor"),
