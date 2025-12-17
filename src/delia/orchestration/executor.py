@@ -5,19 +5,21 @@
 Orchestration Executor - The Heart of Delia's NLP Orchestration.
 
 This module executes orchestration based on detected intent.
-The model never sees tools - Delia handles orchestration AROUND it.
 
 Key execution modes:
-- NONE: Simple single model call
+- NONE: Single model call (with optional tool access)
 - VOTING: K-voting with same model for reliability
 - COMPARISON: Multi-model comparison
 - DEEP_THINKING: Extended reasoning with thinking model
+- AGENTIC: Full agent loop with tools (read_file, shell_exec, etc.)
 
 The executor manages:
 - Model selection based on task type
 - System prompt generation based on role
 - K-voting consensus when needed
 - Multi-model comparison when requested
+- Agent loop with tools when task requires file/shell access
+- Sub-task delegation for complex workflows
 - Quality validation and melon rewards
 """
 
@@ -93,7 +95,11 @@ class OrchestrationExecutor:
         
         # Route to appropriate handler based on mode
         try:
-            if intent.orchestration_mode == OrchestrationMode.VOTING:
+            if intent.orchestration_mode == OrchestrationMode.AGENTIC:
+                result = await self._execute_agentic(
+                    intent, message, session_id, backend_type, model_override
+                )
+            elif intent.orchestration_mode == OrchestrationMode.VOTING:
                 result = await self._execute_voting(
                     intent, message, backend_type, model_override
                 )
@@ -255,6 +261,194 @@ class OrchestrationExecutor:
             mode=OrchestrationMode.NONE,
             quality_score=quality_result.overall,
         )
+    
+    async def _execute_agentic(
+        self,
+        intent: DetectedIntent,
+        message: str,
+        session_id: str | None,
+        backend_type: str | None,
+        model_override: str | None,
+    ) -> OrchestrationResult:
+        """
+        Execute with full agent loop and tools.
+        
+        Gives the model access to:
+        - read_file, list_directory, search_code
+        - write_file, delete_file
+        - shell_exec
+        - delegate_subtask (spawn sub-agents)
+        """
+        from ..tools.agent import AgentConfig, run_agent_loop
+        from ..tools.builtins import get_default_tools
+        from ..backend_manager import backend_manager
+        from ..llm import call_llm
+        from ..routing import select_model
+        from ..mcp_server import _select_optimal_backend_v2
+        from ..quality import validate_response
+        from ..types import Workspace
+        
+        # Select backend
+        _, backend_obj = await _select_optimal_backend_v2(
+            message, None, intent.task_type, backend_type
+        )
+        
+        if not backend_obj:
+            return OrchestrationResult(
+                response="Error: No backend available",
+                success=False,
+                error="no_backend",
+            )
+        
+        # Select model
+        selected_model = model_override or await select_model(
+            task_type=intent.task_type,
+            content_size=len(message),
+            content=message,
+        )
+        
+        # Generate system prompt with tool context
+        system_prompt = self.prompt_generator.generate(
+            intent,
+            user_message=message,
+            model_name=selected_model,
+            backend_name=backend_obj.name,
+        )
+        
+        # Get tools registry - enable all tools
+        registry = get_default_tools(
+            workspace=None,  # No confinement - full access
+            allow_write=True,
+            allow_exec=True,
+        )
+        
+        # Add delegate_subtask tool for spawning sub-agents
+        from ..tools.registry import ToolDefinition
+        
+        async def delegate_subtask(
+            task: str,
+            content: str,
+            model_tier: str = "coder",
+        ) -> str:
+            """Spawn a sub-agent to handle a specific task."""
+            from ..mcp_server import delegate as mcp_delegate
+            result = await mcp_delegate(
+                task=task,
+                content=content,
+                model=model_tier,
+            )
+            return result
+        
+        registry.register(ToolDefinition(
+            name="delegate_subtask",
+            description="Spawn a sub-agent to handle a specific task. Use for complex multi-part work.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "enum": ["quick", "summarize", "generate", "review", "analyze", "plan", "critique"],
+                        "description": "Task type for the sub-agent"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content/prompt for the sub-agent"
+                    },
+                    "model_tier": {
+                        "type": "string",
+                        "enum": ["quick", "coder", "moe", "thinking"],
+                        "description": "Model tier for the sub-agent (default: coder)"
+                    }
+                },
+                "required": ["task", "content"]
+            },
+            handler=delegate_subtask,
+        ))
+        
+        # Create LLM call function for agent loop
+        async def agent_llm_call(
+            prompt: str,
+            system: str | None = None,
+            tools: list | None = None,
+            tool_choice: str | None = None,
+        ) -> dict:
+            return await call_llm(
+                model=selected_model,
+                prompt=prompt,
+                system=system or system_prompt,
+                task_type=intent.task_type,
+                original_task=intent.task_type,
+                language="unknown",
+                content_preview=prompt[:100],
+                backend_obj=backend_obj,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
+        
+        # Configure agent
+        agent_config = AgentConfig(
+            max_iterations=10,
+            timeout_per_tool=60,
+            total_timeout=300,
+            parallel_tools=False,
+            native_tool_calling=True,
+            allow_write=True,
+            allow_exec=True,
+            require_confirmation=False,  # No confirmation in programmatic mode
+        )
+        
+        log.info(
+            "agentic_execution_started",
+            model=selected_model,
+            task_type=intent.task_type,
+            tools=registry.list_tools(),
+        )
+        
+        # Run agent loop
+        try:
+            agent_result = await run_agent_loop(
+                call_llm=agent_llm_call,
+                prompt=message,
+                system_prompt=system_prompt,
+                registry=registry,
+                model=selected_model,
+                config=agent_config,
+            )
+            
+            response = agent_result.final_response or agent_result.error or "No response"
+            
+            # Validate quality
+            quality_result = validate_response(response, intent.task_type)
+            
+            log.info(
+                "agentic_execution_complete",
+                model=selected_model,
+                iterations=agent_result.iterations,
+                tool_calls=len(agent_result.tool_calls),
+                success=agent_result.success,
+            )
+            
+            return OrchestrationResult(
+                response=response,
+                success=agent_result.success,
+                model_used=selected_model,
+                mode=OrchestrationMode.AGENTIC,
+                quality_score=quality_result.overall,
+                debug_info={
+                    "iterations": agent_result.iterations,
+                    "tool_calls": [tc.name for tc in agent_result.tool_calls],
+                },
+            )
+            
+        except Exception as e:
+            log.error("agentic_execution_error", error=str(e))
+            return OrchestrationResult(
+                response=f"Agent execution failed: {e}",
+                success=False,
+                error=str(e),
+                model_used=selected_model,
+                mode=OrchestrationMode.AGENTIC,
+            )
     
     async def _execute_voting(
         self,

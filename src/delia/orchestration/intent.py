@@ -130,6 +130,70 @@ class IntentDetector:
         ),
     ]
     
+    # Agentic signals → Agent mode with tools
+    AGENTIC_PATTERNS = [
+        IntentPattern(
+            re.compile(r"\b(read|open|show|cat|view)\s+(the\s+)?(file|contents?|code)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.4,
+            reasoning="file read requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(list|ls|show)\s+(the\s+)?(files?|directory|directories|folder)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.4,
+            reasoning="directory listing requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(run|execute|exec)\s+(this\s+)?(command|script|shell)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.45,
+            reasoning="shell execution requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(search|find|grep|look\s+for)\s+.*(in\s+)?(the\s+)?(code|files?|codebase|project|src|directory)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.4,
+            reasoning="code search requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(search|find|grep)\s+(for\s+)?\w+", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.35,
+            reasoning="search operation",
+        ),
+        IntentPattern(
+            re.compile(r"\b(write|create|save|update|modify|edit)\s+.*(to\s+)?\w+\.(py|js|ts|rs|go|sh|yaml|json|toml|txt|md)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.45,
+            reasoning="file write requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(write|create|save)\s+(a\s+)?(file|code|test|script)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.4,
+            reasoning="file creation requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(install|npm|pip|yarn|apt|brew|cargo)\s+\w+", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.45,
+            reasoning="package installation requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(git|docker|kubectl|make|cmake|./)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.35,
+            reasoning="CLI tool usage detected",
+        ),
+        IntentPattern(
+            re.compile(r"[`'\"][\w\-./]+\.(py|js|ts|rs|go|sh|yaml|json|toml)[`'\"]", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.3,
+            reasoning="specific file referenced",
+        ),
+    ]
+    
     # Code-related signals → Coder task type
     CODE_PATTERNS = [
         IntentPattern(
@@ -218,7 +282,9 @@ class IntentDetector:
     def __init__(self) -> None:
         """Initialize the intent detector with all patterns."""
         # Combine all patterns in priority order
+        # AGENTIC first - file/shell ops take precedence
         self.all_patterns = (
+            self.AGENTIC_PATTERNS +
             self.VERIFICATION_PATTERNS +
             self.COMPARISON_PATTERNS +
             self.DEEP_THINKING_PATTERNS +

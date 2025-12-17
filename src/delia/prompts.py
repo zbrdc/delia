@@ -166,6 +166,7 @@ class OrchestrationMode(str, Enum):
     COMPARISON = "comparison"
     DEEP_THINKING = "deep_thinking"
     BATCH = "batch"
+    AGENTIC = "agentic"  # Full agent loop with tools
 
 
 ORCHESTRATION_CONTEXT: dict[OrchestrationMode, str] = {
@@ -180,6 +181,17 @@ Give your honest, independent analysis. Don't hedge.""",
     OrchestrationMode.DEEP_THINKING: """
 Note: This requires careful, thorough analysis.
 Take your time. Consider multiple angles. Show your reasoning.""",
+
+    OrchestrationMode.AGENTIC: """
+You have access to tools for interacting with the system:
+- read_file: Read file contents
+- list_directory: List directory contents
+- search_code: Search for patterns in code
+- write_file: Write content to files
+- shell_exec: Execute shell commands
+- delegate_subtask: Spawn a sub-agent for complex tasks
+
+Use tools when needed to accomplish the task. Be systematic.""",
 
     OrchestrationMode.NONE: "",
     OrchestrationMode.BATCH: "",
