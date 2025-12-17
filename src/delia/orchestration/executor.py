@@ -415,7 +415,7 @@ class OrchestrationExecutor:
                 config=agent_config,
             )
             
-            response = agent_result.final_response or agent_result.error or "No response"
+            response = agent_result.response or "No response"
             
             # Validate quality
             quality_result = validate_response(response, intent.task_type)
