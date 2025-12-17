@@ -193,7 +193,8 @@ class IntentDetector:
             reasoning="package installation requested",
         ),
         IntentPattern(
-            re.compile(r"\b(git|docker|kubectl|make|cmake|./)\b", re.I),
+            # Note: "make" requires specific context to avoid matching "make sure"
+            re.compile(r"\b(git\s+\w+|docker\s+\w+|kubectl\s+\w+|make\s+(all|clean|build|install|test)|cmake\s|./\w+)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
             confidence_boost=0.35,
             reasoning="CLI tool usage detected",
@@ -332,14 +333,33 @@ class IntentDetector:
             self.EXPLAIN_PATTERNS
         )
     
+    # =========================================================================
+    # TIERED INTENT DETECTION
+    # =========================================================================
+    #
+    # Layer 1: Fast regex patterns (~0ms) - handles explicit triggers
+    # Layer 2: Semantic embeddings (~50-100ms) - handles paraphrasing
+    # Layer 3: LLM classification (~500ms) - handles complex/ambiguous cases
+    #
+    # =========================================================================
+    
+    # Confidence threshold for Layer 1 (regex) to be considered sufficient
+    REGEX_CONFIDENCE_THRESHOLD = 0.7
+    
+    # Confidence threshold for Layer 2 (semantic) to be considered sufficient
+    SEMANTIC_CONFIDENCE_THRESHOLD = 0.6
+    
     def detect(self, message: str) -> DetectedIntent:
         """
-        Detect intent from a user message.
+        Detect intent using tiered NLP approach (sync version).
         
-        This is the core NLP routing logic. It determines:
-        1. Task type (which model tier to use)
-        2. Orchestration mode (how Delia should orchestrate)
-        3. Model role (what system prompt to use)
+        This is the main entry point for intent detection.
+        Uses Layer 1 (regex) and Layer 2 (semantic). For Layer 3 (LLM),
+        use detect_async().
+        
+        Tiered approach:
+        1. Fast regex patterns first (0ms)
+        2. Semantic matching if regex uncertain (50-100ms)
         
         Args:
             message: The user's message
@@ -355,6 +375,74 @@ class IntentDetector:
                 reasoning="very short message",
             )
         
+        # Layer 1: Fast regex patterns
+        intent = self._detect_regex(message)
+        
+        if intent.confidence >= self.REGEX_CONFIDENCE_THRESHOLD:
+            log.debug(
+                "intent_layer1_sufficient",
+                confidence=intent.confidence,
+                reasoning=intent.reasoning,
+            )
+            return intent
+        
+        # Layer 2: Semantic matching (if regex uncertain)
+        semantic_intent = self._detect_semantic(message)
+        
+        if semantic_intent and semantic_intent.confidence >= self.SEMANTIC_CONFIDENCE_THRESHOLD:
+            # Merge semantic results with regex results
+            intent = self._merge_intents(intent, semantic_intent)
+            log.debug(
+                "intent_layer2_used",
+                confidence=intent.confidence,
+                reasoning=intent.reasoning,
+            )
+        
+        return intent
+    
+    async def detect_async(self, message: str) -> DetectedIntent:
+        """
+        Detect intent using all three tiers (async version).
+        
+        Includes Layer 3 (LLM classification) for complex cases.
+        
+        Args:
+            message: The user's message
+            
+        Returns:
+            DetectedIntent with all routing information
+        """
+        # Try sync detection first (Layers 1 & 2)
+        intent = self.detect(message)
+        
+        if intent.confidence >= self.SEMANTIC_CONFIDENCE_THRESHOLD:
+            return intent
+        
+        # Layer 3: LLM classification for complex/ambiguous cases
+        try:
+            from .llm_classifier import get_llm_classifier
+            
+            llm_intent = await get_llm_classifier().classify(message)
+            
+            if llm_intent and llm_intent.confidence >= 0.6:
+                # Merge LLM results
+                intent = self._merge_intents(intent, llm_intent)
+                log.debug(
+                    "intent_layer3_used",
+                    confidence=intent.confidence,
+                    reasoning=intent.reasoning,
+                )
+        except Exception as e:
+            log.warning("intent_layer3_error", error=str(e))
+        
+        return intent
+    
+    def _detect_regex(self, message: str) -> DetectedIntent:
+        """
+        Layer 1: Fast regex pattern matching.
+        
+        This is the original detection logic, now as an internal method.
+        """
         # Start with defaults
         intent = DetectedIntent(
             task_type="quick",
@@ -413,6 +501,7 @@ class IntentDetector:
         
         log.info(
             "intent_detected",
+            layer="regex",
             task_type=intent.task_type,
             orchestration=intent.orchestration_mode.value,
             role=intent.model_role.value,
@@ -422,6 +511,55 @@ class IntentDetector:
         )
         
         return intent
+    
+    def _detect_semantic(self, message: str) -> DetectedIntent | None:
+        """
+        Layer 2: Semantic matching using sentence-transformers.
+        
+        Returns None if no confident match found.
+        """
+        try:
+            from .semantic import get_semantic_matcher
+            
+            matcher = get_semantic_matcher()
+            return matcher.detect_intent(message)
+            
+        except Exception as e:
+            log.warning("intent_semantic_error", error=str(e))
+            return None
+    
+    def _merge_intents(
+        self,
+        base: DetectedIntent,
+        overlay: DetectedIntent,
+    ) -> DetectedIntent:
+        """
+        Merge two intents, preferring higher-confidence values.
+        
+        Uses base as starting point, overlays values from overlay
+        if they're more confident or fill gaps.
+        """
+        # Use overlay values if more confident or base has defaults
+        result = DetectedIntent(
+            task_type=overlay.task_type if overlay.confidence > base.confidence else base.task_type,
+            orchestration_mode=(
+                overlay.orchestration_mode 
+                if overlay.orchestration_mode != OrchestrationMode.NONE 
+                else base.orchestration_mode
+            ),
+            model_role=(
+                overlay.model_role 
+                if overlay.model_role != ModelRole.ASSISTANT 
+                else base.model_role
+            ),
+            confidence=max(base.confidence, overlay.confidence),
+            reasoning=f"{base.reasoning}; {overlay.reasoning}".strip("; "),
+            k_votes=base.k_votes or overlay.k_votes,
+            contains_code=base.contains_code or overlay.contains_code,
+            trigger_keywords=list(set(base.trigger_keywords + overlay.trigger_keywords)),
+        )
+        
+        return result
     
     def _calculate_k(self, message: str, intent: DetectedIntent) -> int:
         """

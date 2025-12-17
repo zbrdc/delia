@@ -26,8 +26,9 @@ dependencies = [
     "structlog>=24.4.0",
     "aiofiles>=24.1.0",
     "humanize>=4.10.0",
-    # Semantic routing
+    # Semantic routing & NLP
     "numpy>=1.26.0",
+    "sentence-transformers>=3.0.0",  # Semantic intent detection
     # Authentication (FastAPI-Users)
     "fastapi-users[oauth,sqlalchemy]>=14.0.0",
     "aiosqlite>=0.20.0",
@@ -121,6 +122,7 @@ module = [
     "pygments.*",
     "jose.*",
     "httpx_oauth.*",
+    "sentence_transformers.*",
 ]
 ignore_missing_imports = true
 

@@ -67,6 +67,23 @@ from .executor import (
     execute_orchestration,
 )
 
+from .semantic import (
+    SemanticIntentMatcher,
+    get_semantic_matcher,
+    semantic_detect,
+)
+
+from .llm_classifier import (
+    LLMIntentClassifier,
+    get_llm_classifier,
+    llm_classify,
+)
+
+from .exemplars import (
+    IntentExemplar,
+    get_all_exemplars,
+)
+
 
 __all__ = [
     # Result types
@@ -76,10 +93,24 @@ __all__ = [
     "OrchestrationResult",
     "StreamEvent",
     
-    # Intent detection
+    # Intent detection (tiered)
     "IntentDetector",
     "get_intent_detector",
     "detect_intent",
+    
+    # Semantic matching (Layer 2)
+    "SemanticIntentMatcher",
+    "get_semantic_matcher",
+    "semantic_detect",
+    
+    # LLM classification (Layer 3)
+    "LLMIntentClassifier",
+    "get_llm_classifier",
+    "llm_classify",
+    
+    # Exemplars
+    "IntentExemplar",
+    "get_all_exemplars",
     
     # Prompt generation
     "SystemPromptGenerator",
