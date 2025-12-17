@@ -391,7 +391,7 @@ class OrchestrationExecutor:
                     break
             
             # Get tool schemas from registry for native tool calling
-            tools = registry.to_openai_tools() if agent_config.native_tool_calling else None
+            tools = registry.get_openai_schemas() if agent_config.native_tool_calling else None
             
             return await call_llm(
                 model=selected_model,
