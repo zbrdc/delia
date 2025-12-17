@@ -83,27 +83,41 @@ Delia uses a sophisticated multi-tier routing system:
 
 - **Python 3.11+**
 - **[uv](https://docs.astral.sh/uv/)** (Recommended package manager)
-- A running local LLM backend (e.g., [Ollama](https://ollama.ai/))
+- A running LLM backend (e.g., [Ollama](https://ollama.ai/))
 
 ### Installation
 
-1.  **Clone and Install:**
-    ```bash
-    git clone https://github.com/zbrdc/delia.git
-    cd delia
-    uv tool install .
-    ```
+```bash
+git clone https://github.com/zbrdc/delia.git
+cd delia
+uv tool install .
+```
 
-2.  **Initialize & Configure:**
-    Run the setup wizard to detect your local models and configure MCP clients.
-    ```bash
-    delia init
-    ```
-    This command will:
-    - Detect running backends (Ollama, etc.).
-    - Auto-assign models to tiers (Quick, Coder, MoE).
-    - Generate a `~/.delia/settings.json` configuration.
-    - Offer to auto-configure detected clients (Claude, VS Code, etc.).
+### Setup
+
+```bash
+# Initialize (detects backends, configures models)
+delia init
+
+# Verify setup
+delia doctor
+```
+
+### Start Chatting
+
+```bash
+# Interactive chat with intelligent orchestration
+delia chat
+```
+
+That's it. Delia auto-detects your models and routes tasks intelligently.
+
+### What `delia init` Does
+
+- Detects running backends (Ollama, llama.cpp, etc.)
+- Auto-assigns models to tiers (Quick, Coder, MoE, Thinking)
+- Generates `~/.delia/settings.json` configuration
+- Offers to auto-configure MCP clients (Claude, VS Code, Cursor)
 
 ### Using with MCP Clients
 
@@ -168,22 +182,54 @@ delia agent "Analyze error handling patterns" \
 
 ### Interactive Chat
 
-Delia includes a TypeScript CLI for rich terminal interaction:
+Delia includes an interactive chat mode with intelligent orchestration:
 
 ```bash
-# Start interactive chat session
-cd packages/cli
-npm install
-npm run build
-node dist/index.js chat
+# Start interactive chat (default: NLP orchestration)
+delia chat
 
 # Chat options
-node dist/index.js chat --model coder    # Use coder tier
-node dist/index.js chat --session abc123 # Resume session
-node dist/index.js chat --api-url http://localhost:8201
+delia chat --model coder       # Force coder tier
+delia chat --session abc123    # Resume session
+delia chat --simple            # Basic mode (no orchestration)
 ```
 
-The chat CLI connects to the Delia API server (`delia api`) for SSE streaming.
+**Chat Modes:**
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| **NLP Orchestration** | (default) | Delia detects intent and orchestrates automatically |
+| **Simple** | `--simple` | Basic single-model chat, no orchestration |
+
+**NLP Orchestration Features:**
+- Automatic intent detection (voting, comparison, deep thinking)
+- Role-specific prompts (code reviewer, architect, explainer, etc.)
+- K-voting for verification requests ("make sure", "verify", "double-check")
+- Multi-model comparison ("compare approaches", "what do different models think")
+- Quality tracking with melon rewards for model performance
+
+**In-Chat Commands:**
+- `/help` - Show available commands
+- `/clear` - Clear chat history
+- `/new` - Start new session
+- `/simple` - Toggle simple mode
+- `/models` - List available models
+- `/health` - Check backend status
+
+**Example Session:**
+```
+You: Review this code for security issues
+Delia: [CODE_REVIEWER role] Analyzing for vulnerabilities...
+
+You: Make sure that analysis is correct
+Delia: [K-VOTING] Running 3 samples for consensus...
+       Consensus reached with 99.97% confidence.
+
+You: Compare what different models think about the fix
+Delia: [COMPARISON] Querying multiple models...
+```
+
+The chat connects to the Delia API server (auto-started on port 34591).
 
 ## Usage
 
@@ -422,10 +468,16 @@ The dashboard reads from `~/.cache/delia/` (live logs, affinity.json, prewarm.js
 ## Project Structure
 
 ```
-src/delia/                    # ~17K LOC
+src/delia/                    # Core Python package
 ├── mcp_server.py             # Main entry, MCP tools
-├── cli.py                    # CLI commands (init, serve, doctor, agent)
-├── api.py                    # HTTP API for CLI frontend
+├── cli.py                    # CLI commands (init, serve, doctor, agent, chat)
+├── api.py                    # HTTP API for chat frontend
+├── prompts.py                # Unified prompt system (single source of truth)
+├── orchestration/            # NLP-based orchestration
+│   ├── intent.py             # Intent detection (voting, comparison triggers)
+│   ├── executor.py           # Orchestration execution
+│   └── prompts.py            # Role-specific prompt generation
+├── melons.py                 # Model performance rewards
 ├── backend_manager.py        # Backend config and health
 ├── session_manager.py        # Session state for multi-turn
 ├── delegation.py             # Core delegation logic
@@ -444,7 +496,7 @@ packages/cli/                 # TypeScript CLI frontend
 │   │   └── chat.tsx          # Interactive chat
 │   └── components/           # React Ink UI components
 
-tests/                        # ~12K LOC, 33+ test files
+tests/                        # Test suite
 dashboard/                    # Next.js monitoring UI
 ```
 
