@@ -1,1 +1,0 @@
-<tool_call>{"name": "read_file", "arguments": {"path": "/tmp/test.txt"}}</tool_call>
