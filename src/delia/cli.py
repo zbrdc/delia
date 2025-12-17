@@ -1052,6 +1052,62 @@ def config(
 
 
 @app.command()
+def setup() -> None:
+    """
+    Install delia globally to ~/.local/bin for easy access.
+
+    This creates a wrapper script so you can run 'delia' from any terminal
+    without manually activating a virtual environment.
+
+    Example:
+        delia setup
+        # Now run 'delia chat' from anywhere
+    """
+    install_dir = Path.home() / ".local" / "bin"
+    wrapper_path = install_dir / "delia"
+    delia_root = get_delia_root()
+    venv_path = delia_root / ".venv"
+
+    # Check if venv exists
+    if not venv_path.exists():
+        print_error(f"Virtual environment not found at {venv_path}")
+        print_info("Create it with: python -m venv .venv && source .venv/bin/activate && pip install -e .")
+        raise typer.Exit(1)
+
+    # Create install directory
+    install_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create wrapper script
+    wrapper_content = f"""#!/bin/bash
+# Delia CLI wrapper - auto-activates virtual environment
+source "{venv_path}/bin/activate"
+exec delia "$@"
+"""
+
+    try:
+        with open(wrapper_path, "w") as f:
+            f.write(wrapper_content)
+        wrapper_path.chmod(0o755)
+        print_success(f"Installed to {wrapper_path}")
+    except Exception as e:
+        print_error(f"Failed to create wrapper: {e}")
+        raise typer.Exit(1) from None
+
+    # Check if ~/.local/bin is in PATH
+    path_dirs = os.environ.get("PATH", "").split(":")
+    local_bin = str(install_dir)
+    if local_bin not in path_dirs and str(Path.home() / ".local/bin") not in path_dirs:
+        print_warning("~/.local/bin is not in your PATH")
+        print_info("Add to your shell config (~/.bashrc or ~/.zshrc):")
+        print_info('  export PATH="$HOME/.local/bin:$PATH"')
+        print()
+
+    print()
+    print_info("Restart your terminal or run: hash -r")
+    print_info("Then use: delia chat")
+
+
+@app.command()
 def uninstall(
     client: str = typer.Argument(None, help="Client to uninstall from (or 'all' for all clients)"),
     full: bool = typer.Option(False, "--full", "-f", help="Also uninstall the delia package"),
