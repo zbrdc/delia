@@ -1052,6 +1052,67 @@ def config(
 
 
 @app.command()
+def melons(
+    task: str = typer.Option(None, "--task", "-t", help="Filter by task type (quick/coder/moe)"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+) -> None:
+    """
+    Display the melon leaderboard for Delia's model garden.
+
+    Models earn melons for helpful responses:
+    - 🍈 Regular melons for good work
+    - 🏆 Golden melons (100 melons each) for top performers
+
+    Golden melons influence routing - trusted models get more requests.
+
+    Examples:
+        delia melons              # Show full leaderboard
+        delia melons --task coder # Show only coder task rankings
+        delia melons --json       # Output as JSON
+    """
+    from .melons import get_melon_tracker
+
+    tracker = get_melon_tracker()
+    
+    if json_output:
+        leaderboard = tracker.get_leaderboard(task_type=task)
+        data = {
+            "leaderboard": [
+                {
+                    "model": s.model_id,
+                    "task": s.task_type,
+                    "melons": s.melons,
+                    "golden_melons": s.golden_melons,
+                    "total_value": s.total_melon_value,
+                    "success_rate": round(s.success_rate, 3),
+                    "total_responses": s.total_responses,
+                }
+                for s in leaderboard
+            ]
+        }
+        print(json.dumps(data, indent=2))
+        return
+
+    # Pretty output
+    leaderboard_text = tracker.get_leaderboard_text()
+    
+    if not leaderboard_text or "=" * 40 in leaderboard_text and len(leaderboard_text.split("\n")) < 5:
+        print()
+        print("🍈 DELIA'S MELON GARDEN")
+        print("=" * 40)
+        print()
+        print("  No melons yet! The garden is empty.")
+        print()
+        print("  Models earn melons by being helpful.")
+        print("  Use 'delia chat' to start growing the garden.")
+        print()
+        return
+
+    print()
+    print(leaderboard_text)
+
+
+@app.command()
 def setup() -> None:
     """
     Install delia globally to ~/.local/bin for easy access.

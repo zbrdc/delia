@@ -206,6 +206,31 @@ class IntentDetector:
         ),
     ]
     
+    # Melon/status queries → Direct response
+    STATUS_PATTERNS = [
+        IntentPattern(
+            re.compile(r"\b(show|display|what|get|view)\s+(the\s+)?(melon|melons|leaderboard|rankings?|scores?)\b", re.I),
+            orchestration_mode=OrchestrationMode.NONE,
+            task_type="status",
+            confidence_boost=0.5,
+            reasoning="melon leaderboard requested",
+        ),
+        IntentPattern(
+            re.compile(r"\bmelon\s+(leaderboard|rankings?|scores?|status|garden)\b", re.I),
+            orchestration_mode=OrchestrationMode.NONE,
+            task_type="status",
+            confidence_boost=0.5,
+            reasoning="melon status requested",
+        ),
+        IntentPattern(
+            re.compile(r"\bhow.*(models?|backends?).*(doing|performing|ranked)\b", re.I),
+            orchestration_mode=OrchestrationMode.NONE,
+            task_type="status",
+            confidence_boost=0.3,
+            reasoning="model performance requested",
+        ),
+    ]
+    
     # Code-related signals → Coder task type
     CODE_PATTERNS = [
         IntentPattern(
@@ -295,8 +320,10 @@ class IntentDetector:
         """Initialize the intent detector with all patterns."""
         # Combine all patterns in priority order
         # AGENTIC first - file/shell ops take precedence
+        # STATUS early - melon/leaderboard queries should be fast
         self.all_patterns = (
             self.AGENTIC_PATTERNS +
+            self.STATUS_PATTERNS +
             self.VERIFICATION_PATTERNS +
             self.COMPARISON_PATTERNS +
             self.DEEP_THINKING_PATTERNS +

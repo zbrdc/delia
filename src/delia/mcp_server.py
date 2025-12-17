@@ -2483,6 +2483,62 @@ async def models() -> str:
 
 
 @mcp.tool()
+async def melons(task_type: str | None = None) -> str:
+    """
+    Display the melon leaderboard for Delia's model garden.
+
+    Models earn melons for helpful responses:
+    - Regular melons for good work
+    - Golden melons (100 melons) for top performers
+
+    Golden melons influence routing - trusted models get more requests.
+
+    Args:
+        task_type: Filter by task type (quick/coder/moe) or None for all
+
+    Returns:
+        Formatted leaderboard showing model rankings
+    """
+    from .melons import get_melon_tracker
+
+    tracker = get_melon_tracker()
+    
+    leaderboard = tracker.get_leaderboard(task_type=task_type)
+    
+    if not leaderboard:
+        return """🍈 DELIA'S MELON GARDEN
+
+No melons yet! The garden is empty.
+
+Models earn melons by being helpful.
+Start chatting to grow the garden."""
+
+    lines = ["🍈 DELIA MELON LEADERBOARD", "=" * 40, ""]
+    
+    # Group by task type
+    by_task: dict[str, list] = {}
+    for stats in leaderboard:
+        by_task.setdefault(stats.task_type, []).append(stats)
+    
+    for task, stats_list in sorted(by_task.items()):
+        lines.append(f"  {task.upper()} TASKS")
+        lines.append("  " + "-" * 20)
+        
+        medals = ["🥇", "🥈", "🥉"]
+        for i, stats in enumerate(stats_list[:5]):
+            medal = medals[i] if i < 3 else "  "
+            golden = "🏆" * stats.golden_melons if stats.golden_melons else ""
+            rate = f"({stats.success_rate:.0%})" if stats.total_responses > 0 else ""
+            lines.append(
+                f"  {medal} {stats.model_id:<25} 🍈 {stats.melons:<3} {golden} {rate}"
+            )
+        
+        lines.append("")
+    
+    return "\n".join(lines)
+
+
+@mcp.tool()
 async def switch_backend(backend_id: str) -> str:
     """
     Switch the active LLM backend.

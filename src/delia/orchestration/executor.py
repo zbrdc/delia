@@ -93,6 +93,10 @@ class OrchestrationExecutor:
             confidence=intent.confidence,
         )
         
+        # Handle status queries directly (melons, health, etc.)
+        if intent.task_type == "status":
+            return await self._execute_status_query(intent, message)
+        
         # Route to appropriate handler based on mode
         try:
             if intent.orchestration_mode == OrchestrationMode.AGENTIC:
@@ -186,6 +190,68 @@ class OrchestrationExecutor:
             event_type="done",
             message="Orchestration complete",
             details={"elapsed_ms": elapsed_ms}
+        )
+    
+    async def _execute_status_query(
+        self,
+        intent: DetectedIntent,
+        message: str,
+    ) -> OrchestrationResult:
+        """Handle status queries like melon leaderboard directly (no LLM needed)."""
+        from ..melons import get_melon_tracker
+        
+        message_lower = message.lower()
+        
+        # Melon leaderboard
+        if "melon" in message_lower or "leaderboard" in message_lower or "ranking" in message_lower:
+            tracker = get_melon_tracker()
+            leaderboard = tracker.get_leaderboard()
+            
+            if not leaderboard:
+                response = """🍈 **DELIA'S MELON GARDEN**
+
+No melons yet! The garden is empty.
+
+Models earn melons by being helpful:
+- Regular melons for good responses
+- 🏆 Golden melons (100 melons) for top performers
+
+Golden melons influence routing - trusted models get more requests.
+
+Start chatting to grow the garden!"""
+            else:
+                lines = ["🍈 **DELIA MELON LEADERBOARD**", ""]
+                
+                # Group by task type
+                by_task: dict[str, list] = {}
+                for stats in leaderboard:
+                    by_task.setdefault(stats.task_type, []).append(stats)
+                
+                for task, stats_list in sorted(by_task.items()):
+                    lines.append(f"**{task.upper()} TASKS**")
+                    
+                    medals = ["🥇", "🥈", "🥉"]
+                    for i, stats in enumerate(stats_list[:5]):
+                        medal = medals[i] if i < 3 else "  "
+                        golden = " 🏆" * stats.golden_melons if stats.golden_melons else ""
+                        rate = f" ({stats.success_rate:.0%})" if stats.total_responses > 0 else ""
+                        lines.append(f"{medal} `{stats.model_id}` - 🍈 {stats.melons}{golden}{rate}")
+                    
+                    lines.append("")
+                
+                response = "\n".join(lines)
+            
+            return OrchestrationResult(
+                response=response,
+                success=True,
+                model_used="system",
+                backend_used="delia",
+                orchestration_mode="status",
+            )
+        
+        # Unknown status query - fall through to simple
+        return await self._execute_simple(
+            intent, message, None, None
         )
     
     async def _execute_simple(
@@ -368,27 +434,22 @@ class OrchestrationExecutor:
             handler=delegate_subtask,
         ))
         
-        # Check if model supports native tool calling
-        # These models have native tool support - others fall back to text-based
         model_supports_tools = any(x in selected_model.lower() for x in [
             'qwen', 'gpt', 'claude', 'gemini', 'mistral', 'llama3', 'deepseek',
             'devstral', 'nemotron',  # Agentic-focused models
         ])
         
-        # Configure agent first (needed by llm_call closure)
         agent_config = AgentConfig(
             max_iterations=10,
             timeout_per_tool=60,
             total_timeout=300,
             parallel_tools=False,
-            native_tool_calling=model_supports_tools,  # Text-based fallback if not supported
+            native_tool_calling=model_supports_tools, 
             allow_write=True,
             allow_exec=True,
-            require_confirmation=False,  # No confirmation in programmatic mode
+            require_confirmation=False, 
         )
-        
-        # Create LLM call function for agent loop
-        # Signature must be: (messages: list[dict], system: str | None) -> str | dict
+
         async def agent_llm_call(
             messages: list[dict],
             system: str | None = None,
