@@ -211,7 +211,7 @@ class MelonTracker:
         import math
         total_boost = math.sqrt(stats.total_melon_value) * 0.035
         
-        return min(0.5, total_boost)  # Cap at 50%  # Cap at 50%
+        return min(0.5, total_boost)  # Cap at 50%
     
     def get_leaderboard(self, task_type: str | None = None) -> list[MelonStats]:
         """

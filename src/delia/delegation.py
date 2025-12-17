@@ -317,6 +317,14 @@ async def execute_delegate_call(
                 response_text = result.get("response", "")
                 quality_result = validate_response(response_text, task_type)
                 tracker.update(backend_id, task_type, quality=quality_result.overall)
+                
+                # Award melons based on quality! 🍈
+                from .melons import award_melons_for_quality
+                award_melons_for_quality(
+                    model_id=selected_model,
+                    task_type=task_type,
+                    quality_score=quality_result.overall,
+                )
             else:
                 # API failure = quality 0.0
                 tracker.update(backend_id, task_type, quality=0.0)
@@ -450,6 +458,14 @@ async def execute_hedged_call(
                         tracker = get_affinity_tracker()
                         tracker.update(
                             winning_backend.id, task_type, quality=quality_result.overall
+                        )
+                        
+                        # Award melons for the winning response! 🍈
+                        from .melons import award_melons_for_quality
+                        award_melons_for_quality(
+                            model_id=selected_model,
+                            task_type=task_type,
+                            quality_score=quality_result.overall,
                         )
 
                         log.info(
@@ -668,6 +684,14 @@ async def execute_voting_call(
                                 succeeded=True,
                                 efficiency=min(1.0, 500 / max(tokens, 1)),
                             )
+                            
+                            # Award melons for consensus winner! 🍈
+                            from .melons import award_melons_for_quality
+                            award_melons_for_quality(
+                                model_id=selected_model,
+                                task_type=task_type,
+                                quality_score=quality_result.overall,
+                            )
 
                             log.info(
                                 "voting_consensus_reached",
@@ -740,6 +764,14 @@ async def execute_voting_call(
                 # Track quality of fallback response
                 quality_result = validate_response(best_response, task_type)
                 voting_tracker.record_quality(task_type, quality_result.overall)
+                
+                # Award melons for fallback response 🍈
+                from .melons import award_melons_for_quality
+                award_melons_for_quality(
+                    model_id=selected_model,
+                    task_type=task_type,
+                    quality_score=quality_result.overall,
+                )
                 return best_response, tokens, backend_obj, voting_metadata
 
     # All backends failed
