@@ -87,8 +87,17 @@ def parse_tool_calls(
         >>> parse_tool_calls('<tool_call>{"name": "read_file", ...}</tool_call>')
     """
     if native_mode:
-        return _parse_native_format(response)
+        calls = _parse_native_format(response)
+        # Fall back to text parsing if no native calls found but response has text
+        if not calls and isinstance(response, dict):
+            response_text = response.get("response", "")
+            if response_text and isinstance(response_text, str):
+                calls = _parse_text_format(response_text)
+        return calls
     else:
+        # For text mode, check both string response and dict's response field
+        if isinstance(response, dict):
+            response = response.get("response", "")
         return _parse_text_format(response if isinstance(response, str) else "")
 
 
@@ -111,10 +120,13 @@ def _parse_native_format(response: dict[str, Any]) -> list[ParsedToolCall]:
     """
     tool_calls = []
 
-    # Handle both direct tool_calls and nested in message
+    # Handle both direct tool_calls and nested in message or metadata
     raw_calls = response.get("tool_calls", [])
     if not raw_calls and "message" in response:
         raw_calls = response["message"].get("tool_calls", [])
+    if not raw_calls and "metadata" in response:
+        # Delia LLMResponse format: metadata.tool_calls
+        raw_calls = response["metadata"].get("tool_calls", [])
     if not raw_calls and "choices" in response:
         # OpenAI format: choices[0].message.tool_calls
         choices = response.get("choices", [])
@@ -291,12 +303,23 @@ def has_tool_calls(response: str | dict[str, Any]) -> bool:
             return True
         if response.get("message", {}).get("tool_calls"):
             return True
+        # Check metadata (Delia LLM response format)
+        if response.get("metadata", {}).get("tool_calls"):
+            return True
         choices = response.get("choices", [])
         if choices and choices[0].get("message", {}).get("tool_calls"):
             return True
         # Check finish_reason
         if choices and choices[0].get("finish_reason") == "tool_calls":
             return True
+        # Check response text field for text-based tool calls
+        response_text = response.get("response", "")
+        if response_text and isinstance(response_text, str):
+            if "<tool_call>" in response_text:
+                return True
+            if '"name"' in response_text and '"arguments"' in response_text:
+                if RAW_JSON_TOOL_PATTERN.search(response_text):
+                    return True
 
     if isinstance(response, str):
         # Check XML-wrapped format first (fast string check)

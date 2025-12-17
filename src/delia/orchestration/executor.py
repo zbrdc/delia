@@ -300,12 +300,15 @@ class OrchestrationExecutor:
                 error="no_backend",
             )
         
-        # Select model
+        # Select model - agentic tasks need tool-capable models
+        # Override to coder tier if no explicit model given
         selected_model = model_override or await select_model(
-            task_type=intent.task_type,
+            task_type="review",  # Force coder tier for tool support
             content_size=len(message),
             content=message,
         )
+        
+        log.info("agentic_model_selected", model=selected_model)
         
         # Generate system prompt with tool context
         system_prompt = self.prompt_generator.generate(
@@ -366,9 +369,10 @@ class OrchestrationExecutor:
         ))
         
         # Check if model supports native tool calling
-        # Most smaller models (7B) don't support it, use text-based fallback
+        # These models have native tool support - others fall back to text-based
         model_supports_tools = any(x in selected_model.lower() for x in [
-            'qwen', 'gpt', 'claude', 'gemini', 'mistral', 'llama3', 'deepseek'
+            'qwen', 'gpt', 'claude', 'gemini', 'mistral', 'llama3', 'deepseek',
+            'devstral', 'nemotron',  # Agentic-focused models
         ])
         
         # Configure agent first (needed by llm_call closure)
@@ -389,25 +393,26 @@ class OrchestrationExecutor:
             messages: list[dict],
             system: str | None = None,
         ) -> dict:
-            # Extract the last user message as prompt
+            # Only pass tools for native mode - text mode uses system prompt
+            tools = registry.get_openai_schemas() if agent_config.native_tool_calling else None
+            
+            # Extract prompt for logging (last user message)
             prompt = ""
             for msg in reversed(messages):
                 if msg.get("role") == "user":
                     prompt = msg.get("content", "")
                     break
             
-            # Only pass tools for native mode - text mode uses system prompt
-            tools = registry.get_openai_schemas() if agent_config.native_tool_calling else None
-            
             log.debug(
                 "agent_llm_call",
                 native_tools=agent_config.native_tool_calling,
                 tool_count=len(tools) if tools else 0,
+                message_count=len(messages),
             )
             
             return await call_llm(
                 model=selected_model,
-                prompt=prompt,
+                prompt=prompt,  # Fallback for non-chat providers
                 system=system or system_prompt,
                 task_type=intent.task_type,
                 original_task=intent.task_type,
@@ -415,6 +420,7 @@ class OrchestrationExecutor:
                 content_preview=prompt[:100],
                 backend_obj=backend_obj,
                 tools=tools,
+                messages=messages,  # Pass full conversation history
             )
         
         log.info(

@@ -238,9 +238,12 @@ async def run_agent_loop(
 
         # Extract text content
         if isinstance(response, dict):
-            # OpenAI format - extract message content
             content = ""
-            if "message" in response:
+            # Delia LLMResponse format - response field
+            if "response" in response:
+                content = response.get("response", "") or ""
+            # OpenAI format - message.content
+            elif "message" in response:
                 content = response["message"].get("content", "") or ""
             elif "choices" in response:
                 choices = response.get("choices", [])

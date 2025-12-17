@@ -140,6 +140,7 @@ async def call_llm(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | None = None,
     temperature: float | None = None,
+    messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Unified LLM call dispatcher that routes to the appropriate backend.
@@ -238,6 +239,7 @@ async def call_llm(
             tools=tools,
             tool_choice=tool_choice,
             temperature=temperature,
+            messages=messages,
         )
         result = response.to_dict()
 

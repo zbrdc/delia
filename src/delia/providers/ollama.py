@@ -229,6 +229,7 @@ class OllamaProvider:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         temperature: float | None = None,
+        messages: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         """Call Ollama API with Pydantic validation, retry logic, and circuit breaker.
 
@@ -301,14 +302,21 @@ class OllamaProvider:
 
         if use_chat_endpoint:
             # Use chat endpoint for tool calling support
-            messages: list[dict[str, str]] = []
-            if system:
-                messages.append({"role": "system", "content": system})
-            messages.append({"role": "user", "content": prompt})
+            # Use provided messages if available, otherwise build from system+prompt
+            if messages:
+                chat_messages = messages.copy()
+                # Ensure system prompt is included if provided
+                if system and not any(m.get("role") == "system" for m in chat_messages):
+                    chat_messages.insert(0, {"role": "system", "content": system})
+            else:
+                chat_messages: list[dict[str, str]] = []
+                if system:
+                    chat_messages.append({"role": "system", "content": system})
+                chat_messages.append({"role": "user", "content": prompt})
 
             payload: dict[str, Any] = {
                 "model": model,
-                "messages": messages,
+                "messages": chat_messages,
                 "stream": False,
                 "options": options,
                 "tools": tools,
