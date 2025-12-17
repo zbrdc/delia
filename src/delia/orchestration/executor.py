@@ -365,13 +365,19 @@ class OrchestrationExecutor:
             handler=delegate_subtask,
         ))
         
+        # Check if model supports native tool calling
+        # Most smaller models (7B) don't support it, use text-based fallback
+        model_supports_tools = any(x in selected_model.lower() for x in [
+            'qwen', 'gpt', 'claude', 'gemini', 'mistral', 'llama3', 'deepseek'
+        ])
+        
         # Configure agent first (needed by llm_call closure)
         agent_config = AgentConfig(
             max_iterations=10,
             timeout_per_tool=60,
             total_timeout=300,
             parallel_tools=False,
-            native_tool_calling=True,
+            native_tool_calling=model_supports_tools,  # Text-based fallback if not supported
             allow_write=True,
             allow_exec=True,
             require_confirmation=False,  # No confirmation in programmatic mode
@@ -390,8 +396,14 @@ class OrchestrationExecutor:
                     prompt = msg.get("content", "")
                     break
             
-            # Get tool schemas from registry for native tool calling
+            # Only pass tools for native mode - text mode uses system prompt
             tools = registry.get_openai_schemas() if agent_config.native_tool_calling else None
+            
+            log.debug(
+                "agent_llm_call",
+                native_tools=agent_config.native_tool_calling,
+                tool_count=len(tools) if tools else 0,
+            )
             
             return await call_llm(
                 model=selected_model,
