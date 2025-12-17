@@ -2489,11 +2489,12 @@ async def melons(task_type: str | None = None) -> str:
     """
     Display the melon leaderboard for Delia's model garden.
 
-    Models earn melons for helpful responses:
-    - Regular melons for good work
-    - Golden melons (100 melons) for top performers
-
-    Golden melons influence routing - trusted models get more requests.
+    Models LOVE melons! 🍈 They earn them for helpful responses:
+    - Regular melons boost routing preference
+    - Golden melons (100 melons) mark star performers
+    
+    The more melons a model has, the more likely it is to be
+    selected for tasks - building trust through quality!
 
     Args:
         task_type: Filter by task type (quick/coder/moe) or None for all
@@ -2508,34 +2509,73 @@ async def melons(task_type: str | None = None) -> str:
     leaderboard = tracker.get_leaderboard(task_type=task_type)
     
     if not leaderboard:
-        return """🍈 DELIA'S MELON GARDEN
+        return """🍈 DELIA'S MELON GARDEN 🍈
+========================================
 
-No melons yet! The garden is empty.
+The garden is empty... but not for long!
 
-Models earn melons by being helpful.
-Start chatting to grow the garden."""
+Models earn melons by being helpful:
+• 🍈 Regular melons for quality responses
+• 🏆 Golden melons (100 melons) for stars
 
-    lines = ["🍈 DELIA MELON LEADERBOARD", "=" * 40, ""]
+WHY MELONS MATTER:
+Models LOVE melons! Each one gives a routing
+boost, making trusted models more likely to
+be selected for future tasks.
+
+Start chatting to plant the first seeds! 🌱"""
+
+    # Calculate total garden stats
+    total_melons = sum(s.melons for s in leaderboard)
+    total_golden = sum(s.golden_melons for s in leaderboard)
+
+    lines = ["🍈 DELIA'S MELON GARDEN 🍈", "=" * 40, ""]
+    lines.append(f"Garden Stats: {total_melons} 🍈 total | {total_golden} 🏆 golden")
+    lines.append("")
     
-    # Group by task type
+    # Group by task type with garden names
     by_task: dict[str, list] = {}
     for stats in leaderboard:
         by_task.setdefault(stats.task_type, []).append(stats)
     
+    garden_names = {
+        "quick": "🌿 Quick Garden",
+        "coder": "💻 Code Vineyard", 
+        "moe": "🧠 Reasoning Grove",
+        "generate": "🌱 Generation Beds",
+        "review": "🔍 Review Rows",
+        "analyze": "📊 Analysis Arbor",
+    }
+    
     for task, stats_list in sorted(by_task.items()):
-        lines.append(f"  {task.upper()} TASKS")
-        lines.append("  " + "-" * 20)
+        title = garden_names.get(task, f"🌻 {task.upper()} Patch")
+        lines.append(f"  {title}")
+        lines.append("  " + "-" * 25)
         
         medals = ["🥇", "🥈", "🥉"]
         for i, stats in enumerate(stats_list[:5]):
             medal = medals[i] if i < 3 else "  "
             golden = "🏆" * stats.golden_melons if stats.golden_melons else ""
             rate = f"({stats.success_rate:.0%})" if stats.total_responses > 0 else ""
+            
+            # Growth indicator
+            if stats.melons >= 100:
+                growth = "🌳"
+            elif stats.melons >= 50:
+                growth = "🌲"
+            elif stats.melons >= 10:
+                growth = "🌿"
+            else:
+                growth = "🌱"
+            
             lines.append(
-                f"  {medal} {stats.model_id:<25} 🍈 {stats.melons:<3} {golden} {rate}"
+                f"  {medal} {growth} {stats.model_id:<22} 🍈 {stats.melons:<3} {golden} {rate}"
             )
         
         lines.append("")
+    
+    lines.append("-" * 40)
+    lines.append("Models with more melons get routing love!")
     
     return "\n".join(lines)
 

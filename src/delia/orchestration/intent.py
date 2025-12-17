@@ -275,17 +275,17 @@ class IntentDetector:
     # Melon/status queries → Direct response
     STATUS_PATTERNS = [
         IntentPattern(
-            re.compile(r"\b(show|display|what|get|view)\s+(the\s+)?(melon|melons|leaderboard|rankings?|scores?)\b", re.I),
+            re.compile(r"\b(show|display|what|get|view|have)\b.*(melon|melons|leaderboard|rankings?|scores?|stats)\b", re.I),
             orchestration_mode=OrchestrationMode.NONE,
             task_type="status",
             confidence_boost=0.5,
             reasoning="melon leaderboard requested",
         ),
         IntentPattern(
-            re.compile(r"\bmelon\s+(leaderboard|rankings?|scores?|status|garden)\b", re.I),
+            re.compile(r"\b(leaderboard|rankings?|melons?)\s*(stats|status|scores?)?\b", re.I),
             orchestration_mode=OrchestrationMode.NONE,
             task_type="status",
-            confidence_boost=0.5,
+            confidence_boost=0.4,
             reasoning="melon status requested",
         ),
         IntentPattern(

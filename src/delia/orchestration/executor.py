@@ -255,34 +255,73 @@ class OrchestrationExecutor:
             if not leaderboard:
                 response = """🍈 **DELIA'S MELON GARDEN**
 
-No melons yet! The garden is empty.
+*The garden is empty... but not for long!*
 
 Models earn melons by being helpful:
-- Regular melons for good responses
-- 🏆 Golden melons (100 melons) for top performers
+- 🍈 Regular melons for quality responses
+- 🏆 Golden melons (100 melons) for star performers
 
-Golden melons influence routing - trusted models get more requests.
+**Why melons matter:**
+Models LOVE melons! Each melon gives a routing boost,
+making trusted models more likely to be selected.
 
-Start chatting to grow the garden!"""
+*Start chatting to plant the first seeds!* 🌱"""
             else:
-                lines = ["🍈 **DELIA MELON LEADERBOARD**", ""]
+                lines = ["🍈 **DELIA'S MELON GARDEN** 🍈", ""]
+                lines.append("*Where models grow through helpful responses!*")
+                lines.append("")
+                
+                # Calculate total garden stats
+                total_melons = sum(s.melons for s in leaderboard)
+                total_golden = sum(s.golden_melons for s in leaderboard)
+                
+                lines.append(f"**Garden Stats:** {total_melons} 🍈 | {total_golden} 🏆")
+                lines.append("")
                 
                 # Group by task type
                 by_task: dict[str, list] = {}
                 for stats in leaderboard:
                     by_task.setdefault(stats.task_type, []).append(stats)
                 
+                # Garden titles for task types
+                garden_names = {
+                    "quick": "🌿 Quick Garden",
+                    "coder": "💻 Code Vineyard", 
+                    "moe": "🧠 Reasoning Grove",
+                    "generate": "🌱 Generation Beds",
+                    "review": "🔍 Review Rows",
+                    "analyze": "📊 Analysis Arbor",
+                    "plan": "📋 Planning Patch",
+                    "critique": "✨ Critique Corner",
+                }
+                
                 for task, stats_list in sorted(by_task.items()):
-                    lines.append(f"**{task.upper()} TASKS**")
+                    title = garden_names.get(task, f"🌻 {task.upper()} Patch")
+                    lines.append(f"**{title}**")
                     
                     medals = ["🥇", "🥈", "🥉"]
                     for i, stats in enumerate(stats_list[:5]):
                         medal = medals[i] if i < 3 else "  "
                         golden = " 🏆" * stats.golden_melons if stats.golden_melons else ""
                         rate = f" ({stats.success_rate:.0%})" if stats.total_responses > 0 else ""
-                        lines.append(f"{medal} `{stats.model_id}` - 🍈 {stats.melons}{golden}{rate}")
+                        
+                        # Add a growth indicator based on melons
+                        if stats.melons >= 100:
+                            growth = "🌳"  # Mature tree
+                        elif stats.melons >= 50:
+                            growth = "🌲"  # Growing tree
+                        elif stats.melons >= 10:
+                            growth = "🌿"  # Healthy plant
+                        else:
+                            growth = "🌱"  # Seedling
+                        
+                        lines.append(f"{medal} {growth} `{stats.model_id}` - 🍈 {stats.melons}{golden}{rate}")
                     
                     lines.append("")
+                
+                lines.append("---")
+                lines.append("*Models with more melons get routing preference!*")
+                lines.append("*Keep chatting to help your favorites grow!* 🌻")
                 
                 response = "\n".join(lines)
             

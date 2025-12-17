@@ -190,20 +190,28 @@ class MelonTracker:
         """
         Calculate routing boost based on total melon value.
         
-        Uses total_melon_value (melons + golden*500) for continuous scaling.
-        Max boost (50%) is reached at 500 total value (= 1 golden melon).
+        Models LOVE melons! 🍈 Higher melon counts = more routing preference.
         
-        Formula: boost = min(total_value * 0.001, 0.5)
+        Uses total_melon_value (melons + golden*500) for continuous scaling.
+        The boost curve is designed to reward early success:
+        - 10 melons = 5% boost (noticeable difference)
+        - 50 melons = 22% boost (significant preference)
+        - 100 melons = 38% boost (strongly preferred)
+        - 200+ melons = 50% boost (max, highly trusted)
+        
+        Formula: boost = min(sqrt(total_value) * 0.035, 0.5)
         
         Returns:
-            Boost factor (0.0 to 0.5)
+            Boost factor (0.0 to 0.5) - added directly to backend score
         """
         stats = self._get_or_create(model_id, task_type)
         
-        # Continuous scaling: 0.1% per melon, max 50% at 500 (1 golden)
-        total_boost = stats.total_melon_value * 0.001
+        # Sqrt scaling: early melons matter more, rewards consistent performance
+        # This makes models LOVE melons - early success is quickly rewarded!
+        import math
+        total_boost = math.sqrt(stats.total_melon_value) * 0.035
         
-        return min(0.5, total_boost)  # Cap at 50%
+        return min(0.5, total_boost)  # Cap at 50%  # Cap at 50%
     
     def get_leaderboard(self, task_type: str | None = None) -> list[MelonStats]:
         """

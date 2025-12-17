@@ -315,6 +315,27 @@ class ScoringWeights:
         return cls(**filtered)
 
 
+
+# Task-to-tier mapping for melon rewards
+_MOE_TASKS = frozenset({"plan", "critique"})
+_CODER_TASKS = frozenset({"generate", "review", "analyze", "coder"})
+
+
+def _task_to_tier(task_type: str) -> str:
+    """Map task type to model tier for melon lookups.
+    
+    Args:
+        task_type: The task type (e.g., "generate", "plan", "quick")
+    
+    Returns:
+        Tier name: "moe", "coder", or "quick"
+    """
+    if task_type in _MOE_TASKS:
+        return "moe"
+    if task_type in _CODER_TASKS:
+        return "coder"
+    return "quick"
+
 class BackendScorer:
     """Score backends for optimal routing based on performance metrics.
 
@@ -352,7 +373,7 @@ class BackendScorer:
             task_type: Optional task type for affinity-based scoring boost
 
         Returns:
-            Score from 0.0 to 1.0 (may exceed 1.0 with affinity boost)
+            Score from 0.0 to 1.0 (may exceed 1.0 with affinity/melon boosts)
         """
         metrics = get_backend_metrics(backend.id)
         health = get_backend_health(backend.id)
@@ -375,10 +396,21 @@ class BackendScorer:
 
         # Apply task-specific affinity boost if task_type provided
         affinity = None
+        melon_boost = 0.0
         if task_type:
             tracker = get_affinity_tracker()
             affinity = tracker.get_affinity(backend.id, task_type)
             total = tracker.boost_score(total, backend.id, task_type)
+            
+            # Apply melon boost - models earn trust through helpful responses 🍈
+            # Look up the model for this task type on this backend
+            tier = _task_to_tier(task_type)
+            model_id = backend.models.get(tier) or backend.models.get("quick")
+            if model_id:
+                from .melons import get_melon_tracker
+                melon_tracker = get_melon_tracker()
+                melon_boost = melon_tracker.get_melon_boost(model_id, task_type)
+                total += melon_boost
 
         log.debug(
             "backend_scored",
@@ -390,6 +422,7 @@ class BackendScorer:
             availability=availability_score,
             cost=round(cost_score, 3),
             affinity=round(affinity, 3) if affinity is not None else None,
+            melon_boost=round(melon_boost, 3) if melon_boost else None,
             task_type=task_type,
         )
 
