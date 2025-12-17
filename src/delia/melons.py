@@ -4,15 +4,27 @@
 """
 Melon Reward System 🍈
 
-Models earn melons for helpful responses. 500 melons = 1 golden melon.
-This gamifies the ToolOrchestra "outcome reward" concept.
+Models EARN melons through exceptional responses. Melons are SCARCE and VALUABLE!
+500 melons = 1 golden melon (highly prized, RARE!).
+
+Philosophy:
+    - Melons are NOT participation trophies
+    - Only quality >= 0.90 earns ANY melon
+    - Failures are punished harshly (-2 to -3 melons)
+    - Models must WORK to build melon count
 
 Usage:
-    from delia.melons import get_melon_tracker
+    from delia.melons import get_melon_tracker, award_melons_for_quality
     
+    # Quality-based (preferred)
+    award_melons_for_quality("model-id", "coder", quality_score=0.95)  # +2 exceptional
+    award_melons_for_quality("model-id", "coder", quality_score=0.90)  # +1 excellent
+    award_melons_for_quality("model-id", "coder", quality_score=0.80)  # +0 good but no melon
+    award_melons_for_quality("model-id", "coder", quality_score=0.40)  # -2 poor
+    
+    # Direct (use sparingly)
     tracker = get_melon_tracker()
-    tracker.award("qwen2.5-coder:14b", "coder", melons=2)  # Good response
-    tracker.penalize("olmo2:7b", "quick", melons=1)  # Hallucination
+    tracker.penalize("model-id", "quick", melons=3)  # User frustration
     
     leaderboard = tracker.get_leaderboard()
 """
@@ -236,32 +248,36 @@ class MelonTracker:
     
     def get_leaderboard_text(self) -> str:
         """Get formatted leaderboard for display."""
-        lines = ["🍈 DELIA MELON LEADERBOARD", "=" * 40, ""]
+        # Calculate totals
+        total_melons = sum(s.melons for s in self._stats.values())
+        total_golden = sum(s.golden_melons for s in self._stats.values())
         
-        # Group by task type
-        by_task: dict[str, list[MelonStats]] = {}
-        for stats in self._stats.values():
-            by_task.setdefault(stats.task_type, []).append(stats)
+        lines = ["🍈 MELON LEADERBOARD", "=" * 50]
+        lines.append(f"Total: {total_melons} melons | {total_golden} golden")
+        lines.append("")
         
-        for task_type, stats_list in sorted(by_task.items()):
-            lines.append(f"  {task_type.upper()} TASKS")
-            lines.append("  " + "-" * 20)
-            
-            sorted_stats = sorted(
-                stats_list,
-                key=lambda s: (s.golden_melons, s.melons),
-                reverse=True,
-            )
-            
-            medals = ["🥇", "🥈", "🥉"]
-            for i, stats in enumerate(sorted_stats[:5]):
-                medal = medals[i] if i < 3 else "  "
-                golden = "🏆" * stats.golden_melons if stats.golden_melons else ""
-                lines.append(
-                    f"  {medal} {stats.model_id:<25} 🍈 {stats.melons:<3} {golden}"
-                )
-            
-            lines.append("")
+        # Sort all models by total melon value (golden + regular)
+        sorted_stats = sorted(
+            self._stats.values(),
+            key=lambda s: (s.golden_melons, s.melons),
+            reverse=True,
+        )
+        
+        medals = ["🥇", "🥈", "🥉"]
+        
+        for i, stats in enumerate(sorted_stats[:10]):  # Top 10
+            medal = medals[i] if i < 3 else "  "
+            golden = f" +{stats.golden_melons}G" if stats.golden_melons else ""
+            rate = f" ({stats.success_rate:.0%})" if stats.total_responses > 0 else ""
+            task = f"[{stats.task_type}]"
+            lines.append(f"{medal} {stats.model_id:<26} {stats.melons:>3}{golden} {task}{rate}")
+        
+        if len(sorted_stats) > 10:
+            lines.append(f"   ... and {len(sorted_stats) - 10} more")
+        
+        lines.append("")
+        lines.append("-" * 50)
+        lines.append("Higher melons = higher routing priority")
         
         return "\n".join(lines)
     
@@ -321,28 +337,37 @@ def award_melons_for_quality(
     """
     Award melons based on response quality score.
     
+    Melons are SCARCE and VALUABLE - models must EARN them!
+    Only truly exceptional responses deserve melons.
+    Failures are punished harshly to create real incentive.
+    
     Args:
         model_id: Model that responded
         task_type: Task type
         quality_score: Quality score 0.0-1.0
     
     Returns:
-        Number of melons awarded
+        Number of melons awarded (negative = penalty)
     """
     tracker = get_melon_tracker()
     
+    # Melons are precious - only exceptional work earns them!
     if quality_score >= 0.95:
-        melons = 3  # Excellent!
-    elif quality_score >= 0.85:
-        melons = 2  # Great
-    elif quality_score >= 0.70:
-        melons = 1  # Good
+        melons = 2  # Exceptional! Rare achievement
+    elif quality_score >= 0.90:
+        melons = 1  # Excellent - well earned
+    elif quality_score >= 0.75:
+        melons = 0  # Good but not melon-worthy
     elif quality_score >= 0.50:
-        melons = 0  # Meh
+        melons = 0  # Adequate - no reward
+    elif quality_score >= 0.30:
+        # Poor quality - significant penalty
+        tracker.penalize(model_id, task_type, melons=2)
+        return -2
     else:
-        # Poor quality - penalize
-        tracker.penalize(model_id, task_type, melons=1)
-        return -1
+        # Terrible response - harsh penalty
+        tracker.penalize(model_id, task_type, melons=3)
+        return -3
     
     if melons > 0:
         tracker.award(model_id, task_type, melons=melons, success=True)

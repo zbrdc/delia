@@ -29,6 +29,9 @@ from pathlib import Path
 from pygments.lexers import get_lexer_for_filename
 from pygments.util import ClassNotFound
 
+# Import Delia's unified identity for consistent personality across all paths
+from .prompts import DELIA_IDENTITY
+
 import structlog
 
 log = structlog.get_logger()
@@ -648,7 +651,8 @@ TASK: QUICK ANSWER
 OUTPUT: Direct answer first. One sentence explanation if needed.""",
     }
 
-    return llm_prefix + base + task_instructions.get(task_type, "")
+    # Include Delia's identity for consistent personality across all LLM calls
+    return DELIA_IDENTITY + "\n" + llm_prefix + base + task_instructions.get(task_type, "")
 
 
 # ============================================================

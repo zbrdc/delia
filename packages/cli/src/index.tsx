@@ -72,12 +72,14 @@ program
   .option("--file-tools", "Include file/web tools (read_file, search_code)")
   .option("-w, --workspace <path>", "Workspace path for file operations")
   .action(async (options) => {
-    const orchestrated = !options.simple;  // Orchestrated by DEFAULT
-    
-    if (orchestrated) {
-      console.log("\x1b[35m✨ Delia - Multi-Model Orchestration\x1b[0m");
-      console.log("   Tools: delegate, compare, vote, think, health, models");
-      console.log("   ↳ compare works on single GPU (sequential model loading)");
+    // NLP orchestration is the DEFAULT (simple=false, legacyOrchestrated=false)
+    // Only --simple disables orchestration, only --legacy enables old tool-based mode
+    const simple = options.simple ?? false;
+
+    if (!simple) {
+      console.log("\x1b[35m✨ Delia - NLP Orchestration\x1b[0m");
+      console.log("   Auto-detects intent: voting, comparison, status queries");
+      console.log("   Try: 'whos on the leaderboard', 'verify this', 'compare models'");
       if (options.fileTools) {
         console.log("   + File tools: read_file, search_code, web_fetch");
       }
@@ -89,7 +91,8 @@ program
       backend: options.backend,
       session: options.session,
       api: options.apiUrl,
-      orchestrated,
+      // Don't pass orchestrated=true - let ChatView default to NLP mode
+      // legacyOrchestrated defaults to false in ChatView
       fileTools: options.fileTools ?? false,
       workspace: options.workspace,
     });

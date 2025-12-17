@@ -703,7 +703,7 @@ class ModelRouter:
         backend = self.backend_manager.get_active_backend()
         if not backend:
             log.error("no_backend_configured", hint="Run 'delia serve' to auto-detect backends")
-            raise RuntimeError("No backend configured. Check ~/.cache/delia/settings.json or run 'delia serve' to auto-detect.")
+            raise RuntimeError("No backend configured. Check ~/.delia/settings.json or run 'delia init' to setup.")
 
         model_quick = backend.models.get("quick", "current")
         model_coder = backend.models.get("coder", "current")

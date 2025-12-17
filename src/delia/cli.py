@@ -1061,7 +1061,7 @@ def melons(
 
     Models earn melons for helpful responses:
     - 🍈 Regular melons for good work
-    - 🏆 Golden melons (100 melons each) for top performers
+    - 🏆 Golden melons (500 melons each) for top performers
 
     Golden melons influence routing - trusted models get more requests.
 
@@ -1263,7 +1263,7 @@ def uninstall(
 
         print()
         print_info("To completely remove Delia, also delete:")
-        print_info(f"  • Data: ~/.cache/delia/")
+        print_info(f"  • Data: ~/.delia/")
         print_info(f"  • Source: {get_delia_root()}")
 
 

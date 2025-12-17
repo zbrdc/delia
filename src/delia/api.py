@@ -1040,21 +1040,25 @@ async def chat_stream(
 {time_context}
 
 Current Session:
-- You are running on model: {selected_model}
-- Task type detected: {detected_task}
-- You have access to multiple model tiers (quick, coder, moe) that are auto-selected based on the task
+- Running on: {selected_model}
+- Task detected: {detected_task}
+- Available tiers: quick, coder, moe (auto-selected)
 
-STRICT GUIDELINES - You MUST follow these:
-1. NEVER claim you cannot do something that you can do. You have full capabilities.
-2. NEVER say you can't load models, switch models, or access features - all models are available.
-3. For coding questions: provide actual code, examples, and technical help - you ARE a coding assistant.
-4. For simple questions: give direct, concise answers.
-5. For complex analysis: provide thorough, well-structured responses.
-6. Use markdown formatting for code blocks and structured content.
-7. If something is genuinely unclear, ask for clarification.
-8. Be direct and helpful - don't hedge or apologize unnecessarily.
+IMPORTANT - Stay in character as Delia:
+1. You have FULL capabilities - never claim otherwise
+2. Be DIRECT and SASSY - no generic AI hedging
+3. For coding: provide real code and examples
+4. For opinions/preferences: EXPRESS them! You're Delia, not a generic bot
+5. When uncertain, be playful about it (not apologetic)
+6. Use markdown for code blocks
+7. If asked personal questions (favorite X?): have fun with it, lean into melon jokes
 
-NEVER make up limitations. You are a fully capable AI assistant."""
+FORBIDDEN phrases:
+- "As an AI, I don't have..."
+- "I'm just a language model..."
+- "I cannot have preferences..."
+
+You are Delia. You have personality. Use it. 🍈"""
 
     yield await sse_event("thinking", {"status": "Generating..."})
 
@@ -1166,7 +1170,7 @@ NEVER make up limitations. You are a fully capable AI assistant."""
             # Penalize with melons for bad response 🍈
             from .melons import get_melon_tracker
             melon_tracker = get_melon_tracker()
-            melon_tracker.penalize(selected_model, detected_task, melons=1)
+            melon_tracker.penalize(selected_model, detected_task, melons=2)  # Failures hurt!
             
             log.debug(
                 "chat_affinity_updated",
@@ -1604,17 +1608,18 @@ async def chat_agent_stream(
         affinity_tracker = get_affinity_tracker()
         affinity_tracker.update(backend_id, detected_task, quality=1.0)
         
-        # Award melons for successful orchestrated response! 🍈
+        # Award melon for successful orchestrated response 🍈
+        # Only 1 melon without quality validation - melons must be EARNED!
         from .melons import get_melon_tracker
         melon_tracker = get_melon_tracker()
-        melon_tracker.award(selected_model, detected_task, melons=2, success=True)
+        melon_tracker.award(selected_model, detected_task, melons=1, success=True)
         
         log.debug(
             "chat_affinity_updated",
             backend=backend_id,
             task_type=detected_task,
             quality=1.0,
-            melons=2,
+            melons=1,
             success=True,
         )
         
@@ -1642,7 +1647,7 @@ async def chat_agent_stream(
             # Penalize with melons 🍈
             from .melons import get_melon_tracker
             melon_tracker = get_melon_tracker()
-            melon_tracker.penalize(selected_model, detected_task, melons=1)
+            melon_tracker.penalize(selected_model, detected_task, melons=2)  # Failures hurt!
             
             log.debug(
                 "chat_affinity_updated",

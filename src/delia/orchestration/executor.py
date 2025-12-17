@@ -259,7 +259,7 @@ class OrchestrationExecutor:
 
 Models earn melons by being helpful:
 - 🍈 Regular melons for quality responses
-- 🏆 Golden melons (100 melons) for star performers
+- 🏆 Golden melons (500 melons) for star performers
 
 **Why melons matter:**
 Models LOVE melons! Each melon gives a routing boost,
@@ -267,61 +267,34 @@ making trusted models more likely to be selected.
 
 *Start chatting to plant the first seeds!* 🌱"""
             else:
-                lines = ["🍈 **DELIA'S MELON GARDEN** 🍈", ""]
-                lines.append("*Where models grow through helpful responses!*")
-                lines.append("")
-                
-                # Calculate total garden stats
+                # Calculate totals
                 total_melons = sum(s.melons for s in leaderboard)
                 total_golden = sum(s.golden_melons for s in leaderboard)
                 
-                lines.append(f"**Garden Stats:** {total_melons} 🍈 | {total_golden} 🏆")
+                medals = ["🥇", "🥈", "🥉"]
+                
+                # Build markdown table
+                lines = [
+                    "🍈 **MELON LEADERBOARD**",
+                    "",
+                    f"**Total:** {total_melons} melons | {total_golden} golden",
+                    "",
+                    "| Rank | Model | Melons | Task | Rate |",
+                    "|------|-------|--------|------|------|",
+                ]
+                
+                for i, stats in enumerate(leaderboard[:10]):  # Top 10
+                    medal = medals[i] if i < 3 else f"{i+1}."
+                    golden = f"+{stats.golden_melons}G" if stats.golden_melons else ""
+                    melon_str = f"{stats.melons} {golden}".strip()
+                    rate = f"{stats.success_rate:.0%}" if stats.total_responses > 0 else "-"
+                    lines.append(f"| {medal} | {stats.model_id} | {melon_str} | {stats.task_type} | {rate} |")
+                
+                if len(leaderboard) > 10:
+                    lines.append(f"| | *...{len(leaderboard) - 10} more* | | | |")
+                
                 lines.append("")
-                
-                # Group by task type
-                by_task: dict[str, list] = {}
-                for stats in leaderboard:
-                    by_task.setdefault(stats.task_type, []).append(stats)
-                
-                # Garden titles for task types
-                garden_names = {
-                    "quick": "🌿 Quick Garden",
-                    "coder": "💻 Code Vineyard", 
-                    "moe": "🧠 Reasoning Grove",
-                    "generate": "🌱 Generation Beds",
-                    "review": "🔍 Review Rows",
-                    "analyze": "📊 Analysis Arbor",
-                    "plan": "📋 Planning Patch",
-                    "critique": "✨ Critique Corner",
-                }
-                
-                for task, stats_list in sorted(by_task.items()):
-                    title = garden_names.get(task, f"🌻 {task.upper()} Patch")
-                    lines.append(f"**{title}**")
-                    
-                    medals = ["🥇", "🥈", "🥉"]
-                    for i, stats in enumerate(stats_list[:5]):
-                        medal = medals[i] if i < 3 else "  "
-                        golden = " 🏆" * stats.golden_melons if stats.golden_melons else ""
-                        rate = f" ({stats.success_rate:.0%})" if stats.total_responses > 0 else ""
-                        
-                        # Add a growth indicator based on melons
-                        if stats.melons >= 100:
-                            growth = "🌳"  # Mature tree
-                        elif stats.melons >= 50:
-                            growth = "🌲"  # Growing tree
-                        elif stats.melons >= 10:
-                            growth = "🌿"  # Healthy plant
-                        else:
-                            growth = "🌱"  # Seedling
-                        
-                        lines.append(f"{medal} {growth} `{stats.model_id}` - 🍈 {stats.melons}{golden}{rate}")
-                    
-                    lines.append("")
-                
-                lines.append("---")
-                lines.append("*Models with more melons get routing preference!*")
-                lines.append("*Keep chatting to help your favorites grow!* 🌻")
+                lines.append("*Higher melons = higher routing priority*")
                 
                 response = "\n".join(lines)
             

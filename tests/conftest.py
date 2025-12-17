@@ -50,9 +50,11 @@ settings.load_profile(profile)
 
 @pytest.fixture(scope="session", autouse=True)
 def isolated_data_dir():
-    """Use isolated temp directory for all test data."""
+    """Use isolated temp directory for all test data AND settings."""
     with tempfile.TemporaryDirectory(prefix="delia-test-") as tmpdir:
         os.environ["DELIA_DATA_DIR"] = tmpdir
+        # CRITICAL: Also isolate settings file so tests don't overwrite user config!
+        os.environ["DELIA_SETTINGS_FILE"] = os.path.join(tmpdir, "settings.json")
         yield tmpdir
 
 

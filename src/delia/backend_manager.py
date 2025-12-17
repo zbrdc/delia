@@ -88,20 +88,30 @@ class BackendConfig:
     def from_dict(cls, data: dict[str, Any]) -> "BackendConfig":
         """Create a BackendConfig from a dictionary."""
         provider = data.get("provider", "unknown")
-        
+
         # Auto-detect native tool calling if not explicitly set
         if "supports_native_tool_calling" in data:
             supports_native = data["supports_native_tool_calling"]
         else:
             capabilities = cls.detect_capabilities(provider)
             supports_native = capabilities["supports_native_tool_calling"]
-        
+
+        # Provider-specific default URLs (not hardcoded 8080!)
+        default_urls = {
+            "ollama": "http://localhost:11434",
+            "llamacpp": "http://localhost:8080",
+            "lmstudio": "http://localhost:1234",
+            "openai": "https://api.openai.com",
+            "anthropic": "https://api.anthropic.com",
+        }
+        default_url = default_urls.get(provider, "http://localhost:11434")  # Ollama default
+
         return cls(
             id=data.get("id", "unknown"),
             name=data.get("name", "Unknown Backend"),
             provider=provider,
             type=data.get("type", "local"),
-            url=data.get("url", "http://localhost:8080"),
+            url=data.get("url", default_url),
             enabled=data.get("enabled", True),
             priority=data.get("priority", 0),
             models=data.get("models", {}),
@@ -311,8 +321,19 @@ class BackendManager:
             )
 
         except Exception as e:
-            _get_log().error("settings_load_failed", error=str(e))
-            self._create_default_settings()
+            _get_log().error("settings_load_failed", error=str(e), path=str(self.settings_file))
+            # DON'T overwrite user's settings on parse error!
+            # Just use empty config and warn them
+            _get_log().warning(
+                "preserving_user_settings",
+                message="Settings file exists but failed to parse - NOT overwriting. Please fix manually.",
+                path=str(self.settings_file),
+            )
+            self.backends = {}
+            self.routing_config = {}
+            self.system_config = {}
+            self.models_config = {}
+            self.mcp_servers_config = []
 
     def _create_default_settings(self) -> None:
         """Create default settings file with auto-detected backends."""
@@ -389,14 +410,14 @@ class BackendManager:
         """
         detected = []
 
-        # Common endpoints to probe
+        # Common endpoints to probe - Ollama first (most common)
         endpoints = [
             {
-                "url": "http://localhost:8080",
-                "provider": "llamacpp",
-                "name": "Local llama.cpp",
-                "health": "/health",
-                "models": "/v1/models",
+                "url": "http://localhost:11434",
+                "provider": "ollama",
+                "name": "Local Ollama",
+                "health": "/api/tags",
+                "models": "/api/tags",
             },
             {
                 "url": "http://localhost:1234",
@@ -406,11 +427,11 @@ class BackendManager:
                 "models": "/v1/models",
             },
             {
-                "url": "http://localhost:11434",
-                "provider": "ollama",
-                "name": "Local Ollama",
-                "health": "/api/tags",
-                "models": "/api/tags",
+                "url": "http://localhost:8080",
+                "provider": "llamacpp",
+                "name": "Local llama.cpp",
+                "health": "/health",
+                "models": "/v1/models",
             },
         ]
 
