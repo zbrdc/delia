@@ -151,6 +151,18 @@ class IntentDetector:
             reasoning="shell execution requested",
         ),
         IntentPattern(
+            re.compile(r"\b(run|execute|exec)\s+[`'\"]?[a-zA-Z]", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.4,
+            reasoning="command execution requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(run|execute)\s+(ls|pwd|cd|cat|echo|mkdir|rm|cp|mv|chmod|chown|ps|top|df|du|grep|find|curl|wget)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.5,
+            reasoning="shell command requested",
+        ),
+        IntentPattern(
             re.compile(r"\b(search|find|grep|look\s+for)\s+.*(in\s+)?(the\s+)?(code|files?|codebase|project|src|directory)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
             confidence_boost=0.4,
