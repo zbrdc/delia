@@ -2529,28 +2529,28 @@ Start chatting to plant the first seeds! 🌱"""
     total_melons = sum(s.melons for s in leaderboard)
     total_golden = sum(s.golden_melons for s in leaderboard)
 
-    lines = ["🍈 MELON LEADERBOARD", "=" * 50]
-    lines.append(f"Total: {total_melons} melons | {total_golden} golden")
-    lines.append("")
-    
-    # Sort by total melon value (already sorted from get_leaderboard)
     medals = ["🥇", "🥈", "🥉"]
     
+    # Build leaderboard lines
+    board_lines = []
     for i, stats in enumerate(leaderboard[:10]):  # Top 10
-        medal = medals[i] if i < 3 else "  "
-        golden = f" +{stats.golden_melons}G" if stats.golden_melons else ""
-        rate = f" ({stats.success_rate:.0%})" if stats.total_responses > 0 else ""
-        task = f"[{stats.task_type}]"
-        lines.append(f"{medal} {stats.model_id:<26} {stats.melons:>3}{golden} {task}{rate}")
+        medal = medals[i] if i < 3 else f"{i+1:>2}."
+        golden = f"+{stats.golden_melons}G" if stats.golden_melons else "   "
+        rate = f"{stats.success_rate:.0%}" if stats.total_responses > 0 else "  -"
+        board_lines.append(f"{medal} {stats.model_id:<28} {stats.melons:>3} {golden} [{stats.task_type:<6}] {rate}")
     
     if len(leaderboard) > 10:
-        lines.append(f"   ... and {len(leaderboard) - 10} more")
+        board_lines.append(f"    ...and {len(leaderboard) - 10} more")
     
-    lines.append("")
-    lines.append("-" * 50)
-    lines.append("Higher melons = higher routing priority")
+    board_text = "\n".join(board_lines)
     
-    return "\n".join(lines)
+    return f"""🍈 MELON LEADERBOARD
+Total: {total_melons} melons | {total_golden} golden
+
+```
+{board_text}
+```
+Higher melons = higher routing priority"""
 
 
 @mcp.tool()

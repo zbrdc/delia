@@ -273,30 +273,28 @@ making trusted models more likely to be selected.
                 
                 medals = ["🥇", "🥈", "🥉"]
                 
-                # Build markdown table
-                lines = [
-                    "🍈 **MELON LEADERBOARD**",
-                    "",
-                    f"**Total:** {total_melons} melons | {total_golden} golden",
-                    "",
-                    "| Rank | Model | Melons | Task | Rate |",
-                    "|------|-------|--------|------|------|",
-                ]
-                
+                # Build leaderboard in code block (preserves formatting)
+                board_lines = []
                 for i, stats in enumerate(leaderboard[:10]):  # Top 10
-                    medal = medals[i] if i < 3 else f"{i+1}."
-                    golden = f"+{stats.golden_melons}G" if stats.golden_melons else ""
-                    melon_str = f"{stats.melons} {golden}".strip()
-                    rate = f"{stats.success_rate:.0%}" if stats.total_responses > 0 else "-"
-                    lines.append(f"| {medal} | {stats.model_id} | {melon_str} | {stats.task_type} | {rate} |")
+                    medal = medals[i] if i < 3 else f"{i+1:>2}."
+                    golden = f"+{stats.golden_melons}G" if stats.golden_melons else "   "
+                    rate = f"{stats.success_rate:.0%}" if stats.total_responses > 0 else "  -"
+                    board_lines.append(f"{medal} {stats.model_id:<28} {stats.melons:>3} {golden} [{stats.task_type:<6}] {rate}")
                 
                 if len(leaderboard) > 10:
-                    lines.append(f"| | *...{len(leaderboard) - 10} more* | | | |")
+                    board_lines.append(f"    ...and {len(leaderboard) - 10} more")
                 
-                lines.append("")
-                lines.append("*Higher melons = higher routing priority*")
+                board_text = "\n".join(board_lines)
                 
-                response = "\n".join(lines)
+                response = f"""🍈 **MELON LEADERBOARD**
+
+**Total:** {total_melons} melons | {total_golden} golden
+
+```
+{board_text}
+```
+
+*Higher melons = higher routing priority*"""
             
             return OrchestrationResult(
                 response=response,
