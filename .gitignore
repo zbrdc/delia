@@ -47,6 +47,7 @@ settings.json
 # Legacy data directories (before centralization)
 /.user_data/
 /.serena/
+*.mcp
 
 # Node.js (dashboard)
 node_modules/
