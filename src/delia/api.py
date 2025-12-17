@@ -64,14 +64,42 @@ async def lifespan(app: Starlette):
     Lifespan context manager for proper startup/shutdown.
     
     Ensures:
+    - Initialization of OrchestrationService (loads affinity, prewarm)
+    - Background state persistence task
     - Clean shutdown of backend HTTP clients
     - Proper cleanup of pending confirmations
     - Graceful handling of in-flight requests
     """
+    from .orchestration import get_orchestration_service
+    
     log.info("api_server_startup")
+    
+    # Initialize the unified orchestration service
+    # This loads affinity and prewarm data from disk
+    service = get_orchestration_service()
+    log.info("orchestration_service_ready", stats=service.get_stats())
+    
+    # Start background state persistence task
+    persistence_task = asyncio.create_task(_state_persistence_loop(service))
+    
     yield
+    
     # Shutdown: cleanup resources
     log.info("api_server_shutdown_starting")
+    
+    # Cancel persistence task
+    persistence_task.cancel()
+    try:
+        await persistence_task
+    except asyncio.CancelledError:
+        pass
+    
+    # Save final state
+    try:
+        await service.save_state()
+        log.info("orchestration_state_saved_on_shutdown")
+    except Exception as e:
+        log.warning("orchestration_state_save_failed", error=str(e))
     
     # Clear any pending confirmations (they'll timeout anyway)
     _pending_confirmations.clear()
@@ -83,6 +111,23 @@ async def lifespan(app: Starlette):
         log.warning("shutdown_backends_error", error=str(e))
     
     log.info("api_server_shutdown_complete")
+
+
+async def _state_persistence_loop(service) -> None:
+    """
+    Background task that periodically saves orchestration state.
+    
+    Runs every 5 minutes to persist affinity, prewarm, and melon data.
+    """
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 minutes
+            await service.save_state()
+            log.debug("orchestration_state_persisted_periodic")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("state_persistence_error", error=str(e))
 
 
 # =============================================================================
@@ -318,7 +363,8 @@ async def agent_run_stream(
         )
 
         if result.get("success"):
-            response = result.get("response", "")
+            from .text_utils import strip_thinking_tags
+            response = strip_thinking_tags(result.get("response", ""))
             # Signal LLM call done
             await event_queue.put({"type": "llm_done", "response": response})
             return response
@@ -1028,7 +1074,8 @@ NEVER make up limitations. You are a fully capable AI assistant."""
         )
 
         if result.get("success"):
-            response = result.get("response", "")
+            from .text_utils import strip_thinking_tags
+            response = strip_thinking_tags(result.get("response", ""))
 
             # Validate response quality (same as delegation tools)
             from .quality import validate_response
@@ -1194,7 +1241,7 @@ async def chat_handler(request: Request) -> StreamingResponse:
     
     simple_mode = body.get("simple", False)
     legacy_orchestrated = body.get("orchestrated", False)
-    include_file_tools = body.get("include_file_tools", False)
+    include_file_tools = body.get("include_file_tools", True)  # Web search enabled by default
     workspace = body.get("workspace")
     
     # Simple mode - basic single model chat
@@ -1241,6 +1288,8 @@ async def chat_handler(request: Request) -> StreamingResponse:
             message=message,
             model=model,
             backend_type=backend_type,
+            include_file_tools=include_file_tools,
+            workspace=workspace,
         ),
         media_type="text/event-stream",
         headers={
@@ -1256,7 +1305,7 @@ async def chat_agent_stream(
     message: str,
     model: str | None = None,
     backend_type: str | None = None,
-    include_file_tools: bool = False,
+    include_file_tools: bool = True,  # Web search and file tools enabled by default
     workspace: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
@@ -1414,7 +1463,8 @@ async def chat_agent_stream(
         )
         
         if result.get("success"):
-            return result.get("response", "")
+            from .text_utils import strip_thinking_tags
+            return strip_thinking_tags(result.get("response", ""))
         raise RuntimeError(result.get("error", "LLM call failed"))
     
     yield await sse_event("thinking", {"status": "Processing with orchestration tools..."})
@@ -1621,40 +1671,41 @@ async def chat_nlp_orchestrated_stream(
     message: str,
     model: str | None = None,
     backend_type: str | None = None,
+    include_file_tools: bool = True,
+    workspace: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     NLP-Orchestrated Chat Stream - The New Paradigm.
     
-    This replaces the tool-based orchestration with NLP intent detection.
-    Models receive NO tools - Delia handles orchestration AROUND them.
+    Uses the unified OrchestrationService for all orchestration logic.
+    This ensures feature parity between Chat/API and MCP modes.
     
-    Key differences from chat_agent_stream:
-    - Models don't see tools - they just respond naturally in their role
-    - IntentDetector determines if voting/comparison/etc. is needed
-    - SystemPromptGenerator gives models role-specific prompts
-    - OrchestrationExecutor handles voting, comparison, etc. at Delia layer
+    The OrchestrationService handles:
+    - Frustration detection and penalties
+    - Intent detection (3-tier NLP)
+    - Prewarm tracking (EMA learning)
+    - Orchestration execution (voting, comparison, etc.)
+    - Quality validation
+    - Affinity and melon rewards
     
     Events:
         - session: Session created/loaded
         - intent: Detected intent (task_type, orchestration_mode, role)
         - status: Phase status updates
         - thinking: Processing indicator
+        - frustration: Repeat detected, penalty applied
+        - orchestration: Voting/comparison details
         - response: Full response
         - error: Error occurred
         - done: Complete with metadata
     """
     from .session_manager import SessionManager
-    from .orchestration import detect_intent, get_orchestration_executor
+    from .orchestration import get_orchestration_service, detect_intent
     from .orchestration.result import OrchestrationMode
-    from .config import get_affinity_tracker
-    from .melons import award_melons_for_quality, get_melon_tracker
-    from .frustration import get_frustration_tracker
     
     start_time = time.time()
     manager = SessionManager()
-    executor = get_orchestration_executor()
-    frustration_tracker = get_frustration_tracker()
-    melon_tracker = get_melon_tracker()
+    service = get_orchestration_service()
     
     # Get or create session
     if session_id:
@@ -1667,39 +1718,27 @@ async def chat_nlp_orchestrated_stream(
         session_id = session.session_id
         yield await sse_event("session", {"id": session_id, "created": True})
     
-    # STEP 0: Check for repeated questions (frustration detection)
-    # Repeated questions = implicit negative feedback for previous answer
-    repeat_info = frustration_tracker.check_repeat(session_id, message)
+    # Pre-process: Check for frustration (for SSE events only)
+    # The actual penalty is handled by the service, but we emit events here
+    repeat_info = service.frustration.check_repeat(session_id, message)
     
-    if repeat_info.is_repeat:
-        # Penalize previous model - user is frustrated with its answer
-        if repeat_info.previous_model:
-            penalty = 2 + repeat_info.repeat_count  # More repeats = more penalty
-            melon_tracker.penalize(repeat_info.previous_model, "quick", melons=penalty)
-            
-            log.warning(
-                "frustration_penalty_applied",
-                model=repeat_info.previous_model,
-                penalty=penalty,
-                repeat_count=repeat_info.repeat_count,
-            )
-            
-            yield await sse_event("frustration", {
-                "detected": True,
-                "repeat_count": repeat_info.repeat_count,
-                "previous_model": repeat_info.previous_model,
-                "penalty_melons": penalty,
-                "message": f"Repeat detected ({repeat_info.repeat_count}x) - penalized {repeat_info.previous_model}",
-            })
+    if repeat_info.is_repeat and repeat_info.previous_model:
+        penalty = 2 + repeat_info.repeat_count
+        yield await sse_event("frustration", {
+            "detected": True,
+            "repeat_count": repeat_info.repeat_count,
+            "previous_model": repeat_info.previous_model,
+            "penalty_melons": penalty,
+            "message": f"Repeat detected ({repeat_info.repeat_count}x) - penalizing {repeat_info.previous_model}",
+        })
     
-    # STEP 1: NLP Intent Detection (this is the key!)
-    # Delia determines what orchestration is needed, not the model
+    # Pre-process: Detect intent (for SSE events)
+    # The service also does this, but we need it early for UI feedback
     intent = detect_intent(message)
     
-    # Auto-upgrade to VOTING if repeated question (get a reliable answer this time)
+    # Auto-upgrade to VOTING if repeated question
     if repeat_info.is_repeat and repeat_info.repeat_count >= 2:
         if intent.orchestration_mode == OrchestrationMode.NONE:
-            log.info("frustration_auto_voting", repeat_count=repeat_info.repeat_count)
             intent.orchestration_mode = OrchestrationMode.VOTING
             intent.k_votes = min(3 + repeat_info.repeat_count, 5)
             intent.reasoning = f"auto-voting due to {repeat_info.repeat_count}x repeat; {intent.reasoning}"
@@ -1713,17 +1752,7 @@ async def chat_nlp_orchestrated_stream(
         "needs_orchestration": intent.orchestration_mode != OrchestrationMode.NONE,
     })
     
-    # Log intent detection
-    log.info(
-        "nlp_intent_detected",
-        task_type=intent.task_type,
-        orchestration_mode=intent.orchestration_mode.value,
-        role=intent.model_role.value,
-        confidence=intent.confidence,
-        keywords=intent.trigger_keywords[:5],
-    )
-    
-    # STEP 2: Select backend
+    # Select backend (for SSE events)
     yield await sse_event("status", {
         "phase": "routing",
         "message": "Selecting optimal backend...",
@@ -1753,9 +1782,7 @@ async def chat_nlp_orchestrated_stream(
     # Add user message to session
     manager.add_to_session(session.session_id, "user", message)
     
-    # STEP 3: Execute orchestration (Delia handles this, not the model!)
-    # The model just receives a role-specific prompt and responds naturally
-    
+    # Emit thinking status based on mode
     if intent.orchestration_mode == OrchestrationMode.VOTING:
         yield await sse_event("thinking", {
             "status": f"K-voting with k={intent.k_votes} for reliable answer...",
@@ -1772,14 +1799,16 @@ async def chat_nlp_orchestrated_stream(
         yield await sse_event("thinking", {"status": "Generating response..."})
     
     try:
-        # Execute orchestration - model never sees tools, just gets role-specific prompt
-        result = await executor.execute(
-            intent=intent,
+        # Execute via unified OrchestrationService
+        # This handles: frustration penalty, prewarm update, quality validation, rewards
+        processing_result = await service.process(
             message=message,
             session_id=session_id,
             backend_type=backend_type,
             model_override=model,
         )
+        
+        result = processing_result.result
         
         if result.success:
             # Store response in session
@@ -1788,14 +1817,6 @@ async def chat_nlp_orchestrated_stream(
                 "assistant",
                 result.response,
                 model=result.model_used,
-            )
-            
-            # Record for frustration tracking (detect future repeats)
-            frustration_tracker.record_response(
-                session_id=session_id,
-                message=message,
-                model_used=result.model_used,
-                response=result.response,
             )
             
             # Emit orchestration details if not simple
@@ -1809,54 +1830,43 @@ async def chat_nlp_orchestrated_stream(
                     "models_compared": result.models_compared,
                 })
             
-            # Quality validation
-            from .quality import validate_response
-            quality_result = validate_response(result.response, intent.task_type)
-            
+            # Emit quality status
             yield await sse_event("status", {
                 "phase": "quality",
-                "message": f"Quality: {quality_result.overall:.0%}",
+                "message": f"Quality: {processing_result.quality_score:.0%}" if processing_result.quality_score else "Quality: N/A",
                 "details": {
-                    "quality_score": quality_result.overall,
+                    "quality_score": processing_result.quality_score,
                     "model": result.model_used,
+                    "melons_awarded": processing_result.melons_awarded,
+                    "prewarm_updated": processing_result.prewarm_updated,
                 }
             })
-            
-            # Update affinity tracker
-            affinity_tracker = get_affinity_tracker()
-            affinity_tracker.update(backend_id, intent.task_type, quality=quality_result.overall)
-            
-            # Award melons! 🍈
-            melons_awarded = award_melons_for_quality(
-                model_id=result.model_used,
-                task_type=intent.task_type,
-                quality_score=quality_result.overall,
-            )
             
             log.info(
                 "nlp_orchestration_success",
                 mode=result.mode.value,
                 model=result.model_used,
-                quality=quality_result.overall,
-                melons=melons_awarded,
-                elapsed_ms=result.elapsed_ms,
+                quality=processing_result.quality_score,
+                melons=processing_result.melons_awarded,
+                prewarm_updated=processing_result.prewarm_updated,
+                elapsed_ms=processing_result.elapsed_ms,
             )
             
             # Emit response
             yield await sse_event("response", {"content": result.response})
             
             # Done
-            elapsed_ms = int((time.time() - start_time) * 1000)
             yield await sse_event("done", {
                 "success": True,
                 "session_id": session_id,
                 "model": result.model_used,
                 "backend": backend_name,
-                "elapsed_ms": elapsed_ms,
-                "quality": quality_result.overall,
+                "elapsed_ms": processing_result.elapsed_ms,
+                "quality": processing_result.quality_score,
                 "orchestration_mode": result.mode.value,
                 "consensus_reached": result.consensus_reached,
                 "confidence": result.confidence,
+                "melons_awarded": processing_result.melons_awarded,
             })
             
         else:
@@ -1867,7 +1877,7 @@ async def chat_nlp_orchestrated_stream(
                 "session_id": session_id,
                 "model": result.model_used,
                 "backend": backend_name,
-                "elapsed_ms": int((time.time() - start_time) * 1000),
+                "elapsed_ms": processing_result.elapsed_ms,
             })
             
     except Exception as e:

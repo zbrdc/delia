@@ -67,6 +67,36 @@ from .executor import (
     execute_orchestration,
 )
 
+from .service import (
+    OrchestrationService,
+    ProcessingContext,
+    ProcessingResult,
+    get_orchestration_service,
+    get_orchestration_service_async,
+    reset_orchestration_service,
+)
+
+from .outputs import (
+    # Output types
+    CodeReview,
+    CodeIssue,
+    Analysis,
+    Finding,
+    Plan,
+    PlanStep,
+    Comparison,
+    ComparisonItem,
+    QuestionAnswer,
+    StructuredResponse,
+    # Enums
+    Severity,
+    Priority,
+    # Utilities
+    get_default_output_type,
+    get_json_schema_prompt,
+    parse_structured_output,
+)
+
 from .semantic import (
     SemanticIntentMatcher,
     get_semantic_matcher,
@@ -121,5 +151,32 @@ __all__ = [
     "OrchestrationExecutor",
     "get_orchestration_executor",
     "execute_orchestration",
+    
+    # Unified Service
+    "OrchestrationService",
+    "ProcessingContext",
+    "ProcessingResult",
+    "get_orchestration_service",
+    "get_orchestration_service_async",
+    "reset_orchestration_service",
+    
+    # Structured Output Types
+    "CodeReview",
+    "CodeIssue",
+    "Analysis",
+    "Finding",
+    "Plan",
+    "PlanStep",
+    "Comparison",
+    "ComparisonItem",
+    "QuestionAnswer",
+    "StructuredResponse",
+    "Severity",
+    "Priority",
+    
+    # Output Utilities
+    "get_default_output_type",
+    "get_json_schema_prompt",
+    "parse_structured_output",
 ]
 

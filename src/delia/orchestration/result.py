@@ -14,10 +14,15 @@ prompts module to avoid duplication.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Generic, TypeVar
+
+from pydantic import BaseModel
 
 # Import from unified prompt system - single source of truth
 from ..prompts import ModelRole, OrchestrationMode
+
+# Type variable for structured outputs
+T = TypeVar("T", bound=BaseModel)
 
 
 @dataclass
@@ -48,6 +53,9 @@ class DetectedIntent:
     # For comparison: which models?
     comparison_models: list[str] = field(default_factory=list)
     
+    # For chain: sequential steps to execute
+    chain_steps: list[str] = field(default_factory=list)
+    
     # Is there code in the message?
     contains_code: bool = False
     
@@ -61,8 +69,11 @@ class OrchestrationResult:
     
     Contains the final response plus metadata about
     how it was produced (for logging, learning, UI).
+    
+    When output_type is specified, the `structured` field will
+    contain the parsed Pydantic model instance.
     """
-    # The response to show the user
+    # The response to show the user (raw text)
     response: str
     
     # Was orchestration successful?
@@ -71,6 +82,9 @@ class OrchestrationResult:
     # Which model(s) produced this?
     model_used: str = ""
     models_compared: list[str] = field(default_factory=list)
+    
+    # Which backend was used?
+    backend_used: str | None = None
     
     # What orchestration mode was used?
     mode: OrchestrationMode = OrchestrationMode.NONE
@@ -85,6 +99,14 @@ class OrchestrationResult:
     
     # Quality score (for melon rewards)
     quality_score: float = 0.5
+    
+    # Structured output (when output_type is specified)
+    # This will be a Pydantic model instance
+    structured: BaseModel | None = None
+    
+    # Was structured parsing successful?
+    structured_success: bool = True
+    structured_error: str | None = None
     
     # Errors if any
     error: str | None = None

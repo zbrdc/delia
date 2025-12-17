@@ -43,7 +43,6 @@ interface PendingConfirmation {
 interface AgentState {
   thinking: string | null;
   statusInfo: StatusInfo | null;
-  statusHistory: StatusInfo[];
   response: string;
   toolCalls: ToolCall[];
   done: boolean;
@@ -62,7 +61,6 @@ const AgentApp: React.FC<{
   const [state, setState] = useState<AgentState>({
     thinking: "Connecting...",
     statusInfo: null,
-    statusHistory: [],
     response: "",
     toolCalls: [],
     done: false,
@@ -124,7 +122,6 @@ const AgentApp: React.FC<{
           setState((s) => ({
             ...s,
             statusInfo: newStatus,
-            statusHistory: [...s.statusHistory, newStatus],
           }));
           break;
 
@@ -204,7 +201,6 @@ const AgentApp: React.FC<{
             ...s,
             thinking: null,
             statusInfo: null,
-            // Keep statusHistory - don't clear it so messages remain visible
             pendingConfirmation: null,
             done: true,
             success: event.success,
@@ -247,7 +243,6 @@ const AgentApp: React.FC<{
         task={task}
         thinking={state.thinking}
         statusInfo={state.statusInfo}
-        statusHistory={state.statusHistory}
         response={state.response}
         toolCalls={state.toolCalls}
         done={state.done}

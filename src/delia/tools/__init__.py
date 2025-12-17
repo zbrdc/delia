@@ -30,6 +30,7 @@ from .registry import ToolDefinition, ToolRegistry
 from .parser import ParsedToolCall, parse_tool_calls
 from .executor import execute_tool, ToolResult
 from .builtins import get_default_tools
+from .coding import get_coding_tools
 from .agent import run_agent_loop, AgentConfig, AgentResult
 from .mcp_client import (
     MCPClient,
@@ -51,6 +52,8 @@ __all__ = [
     "ToolResult",
     # Builtins
     "get_default_tools",
+    # Coding tools
+    "get_coding_tools",
     # Agent
     "run_agent_loop",
     "AgentConfig",

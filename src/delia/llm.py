@@ -242,6 +242,11 @@ async def call_llm(
             messages=messages,
         )
         result = response.to_dict()
+        
+        # Strip thinking tags from response (e.g., <think>...</think> from DeepSeek, Qwen3, nemotron)
+        if result.get("success") and result.get("response"):
+            from .text_utils import strip_thinking_tags
+            result["response"] = strip_thinking_tags(result["response"])
 
         await _model_queue.release_model(
             model, success=result.get("success", False), provider_name=provider_name

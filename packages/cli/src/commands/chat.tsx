@@ -36,7 +36,7 @@ export async function runChat(options: ChatCommandOptions): Promise<void> {
       model={options.model}
       backendType={options.backend}
       sessionId={options.session}
-      orchestrated={options.orchestrated}
+      legacyOrchestrated={options.orchestrated}
       includeFileTools={options.fileTools}
       workspace={options.workspace}
     />

@@ -6,6 +6,7 @@
  * - Collapsible output sections
  * - Syntax highlighting for common output types
  * - Diff display for file modifications
+ * - Animated progress for running tools
  */
 
 import React, { useState } from "react";
@@ -13,6 +14,7 @@ import { Box, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
 import { highlight, supportsLanguage } from "cli-highlight";
 import { DiffViewer } from "./DiffViewer.js";
+import { Panel } from "./Panel.js";
 
 export interface ToolCall {
   name: string;
@@ -109,7 +111,7 @@ function getStatusIndicator(status: ToolCall["status"]): { icon: string; color: 
     case "running":
       return { icon: "", color: "yellow" };
     case "success":
-      return { icon: "[OK]", color: "green" };
+      return { icon: "✓", color: "green" };
     case "error":
       return { icon: "✗", color: "red" };
   }
@@ -174,6 +176,32 @@ const OutputViewer: React.FC<{
 };
 
 /**
+ * Tool icon based on tool name.
+ */
+const ToolIcon: React.FC<{ name: string }> = ({ name }) => {
+  const icons: Record<string, string> = {
+    read_file: "📄",
+    list_directory: "📁",
+    search_code: "🔍",
+    web_fetch: "🌐",
+    delegate: "🤖",
+    think: "🧠",
+    compare: "⚖️",
+    vote: "🗳️",
+    default: "🔧",
+  };
+
+  // Match partial names
+  for (const [key, icon] of Object.entries(icons)) {
+    if (name.toLowerCase().includes(key.replace("_", ""))) {
+      return <Text>{icon}</Text>;
+    }
+  }
+
+  return <Text>{icons.default}</Text>;
+};
+
+/**
  * Individual tool call panel with expandable output.
  */
 export const ToolCallPanel: React.FC<ToolCallPanelProps> = ({
@@ -190,37 +218,47 @@ export const ToolCallPanel: React.FC<ToolCallPanelProps> = ({
   const canExpand = tool.status !== "running" && tool.output && tool.output.length > 100;
 
   return (
-    <Box flexDirection="column" marginBottom={isLast ? 0 : 1}>
+    <Box
+      flexDirection="column"
+      marginBottom={isLast ? 0 : 1}
+      borderStyle={tool.status === "running" ? "round" : "single"}
+      borderColor={color}
+      paddingX={1}
+      paddingY={0}
+    >
       {/* Header row */}
-      <Box>
-        {/* Status indicator */}
-        {tool.status === "running" ? (
-          <Text color={color}>
-            <Spinner type="dots" />{" "}
+      <Box justifyContent="space-between">
+        <Box>
+          {/* Status indicator */}
+          {tool.status === "running" ? (
+            <Text color={color}>
+              <Spinner type="dots" />{" "}
+            </Text>
+          ) : (
+            <Text color={color}>{icon} </Text>
+          )}
+
+          {/* Tool icon and name */}
+          <ToolIcon name={tool.name} />
+          <Text bold color="yellow">
+            {" "}{tool.name}
           </Text>
-        ) : (
-          <Text color={color}>{icon} </Text>
-        )}
 
-        {/* Tool name */}
-        <Text bold color="yellow">
-          {tool.name}
-        </Text>
-
-        {/* Timing */}
-        {tool.elapsed_ms !== undefined && (
-          <Text color="dim"> ({tool.elapsed_ms}ms)</Text>
-        )}
+          {/* Timing */}
+          {tool.elapsed_ms !== undefined && (
+            <Text color="dim"> ({tool.elapsed_ms}ms)</Text>
+          )}
+        </Box>
 
         {/* Expand indicator */}
         {canExpand && (
-          <Text color="dim"> [{expanded ? "▼" : "▶"}]</Text>
+          <Text color="dim">[{expanded ? "▼" : "▶"}]</Text>
         )}
       </Box>
 
       {/* Arguments row */}
       {argsStr && (
-        <Box marginLeft={2}>
+        <Box marginLeft={3}>
           <Text color="dim">{argsStr}</Text>
         </Box>
       )}
@@ -230,9 +268,18 @@ export const ToolCallPanel: React.FC<ToolCallPanelProps> = ({
         <OutputViewer output={tool.output} expanded={expanded || !canExpand} />
       )}
 
+      {/* Running indicator */}
+      {tool.status === "running" && (
+        <Box marginLeft={3}>
+          <Text color="dim" italic>
+            executing...
+          </Text>
+        </Box>
+      )}
+
       {/* Error message for failed tools */}
       {tool.status === "error" && !tool.output && (
-        <Box marginLeft={2}>
+        <Box marginLeft={3}>
           <Text color="red" italic>
             Tool execution failed
           </Text>
@@ -259,22 +306,21 @@ export const ToolCallList: React.FC<{
     <Box flexDirection="column" marginY={1}>
       {/* Summary header */}
       {showSummary && toolCalls.length > 1 && (
-        <Box marginBottom={1}>
-          <Text color="dim">
-            Tools: {completed > 0 && <Text color="green">{completed} done</Text>}
-            {failed > 0 && (
-              <Text color="red">
-                {completed > 0 ? ", " : ""}
-                {failed} failed
-              </Text>
-            )}
-            {running > 0 && (
-              <Text color="yellow">
-                {completed > 0 || failed > 0 ? ", " : ""}
-                {running} running
-              </Text>
-            )}
-          </Text>
+        <Box
+          marginBottom={1}
+          paddingX={2}
+          borderStyle="single"
+          borderColor="dim"
+        >
+          <Text color="cyan" bold>🔧 Tools </Text>
+          <Text color="dim">│ </Text>
+          {completed > 0 && <Text color="green">✓ {completed} </Text>}
+          {failed > 0 && <Text color="red">✗ {failed} </Text>}
+          {running > 0 && (
+            <Text color="yellow">
+              <Spinner type="dots" /> {running}
+            </Text>
+          )}
         </Box>
       )}
 
@@ -287,6 +333,55 @@ export const ToolCallList: React.FC<{
           isLast={i === toolCalls.length - 1}
         />
       ))}
+    </Box>
+  );
+};
+
+/**
+ * Real-time tool execution panel for orchestrated mode.
+ * Simplified - no iteration counter, minimal chrome.
+ */
+export interface ToolExecutionInfo {
+  name: string;
+  args?: Record<string, unknown>;
+  success?: boolean;
+  output_preview?: string;
+}
+
+export const ToolExecutionPanel: React.FC<{
+  calls: ToolExecutionInfo[];
+  results: ToolExecutionInfo[];
+}> = ({ calls, results }) => {
+  if (calls.length === 0) return null;
+
+  return (
+    <Box flexDirection="column" marginY={1}>
+      {calls.map((call, i) => {
+        const result = results.find((r) => r.name === call.name);
+        const isRunning = !result;
+        const isSuccess = result?.success;
+
+        return (
+          <Box key={i}>
+            {/* Status */}
+            {isRunning ? (
+              <Text color="yellow">
+                <Spinner type="dots" />{" "}
+              </Text>
+            ) : isSuccess ? (
+              <Text color="green">✓ </Text>
+            ) : (
+              <Text color="red">✗ </Text>
+            )}
+
+            {/* Tool name */}
+            <ToolIcon name={call.name} />
+            <Text color={isRunning ? "yellow" : "dim"}>
+              {" "}{call.name}
+            </Text>
+          </Box>
+        );
+      })}
     </Box>
   );
 };

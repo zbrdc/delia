@@ -8,21 +8,15 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { Box, Text, useApp } from "ink";
 import Spinner from "ink-spinner";
-import { DeliaClient, type ChatEvent, type StatusEvent, type ToolCallInfo } from "../lib/api.js";
+import { DeliaClient, type ChatEvent } from "../lib/api.js";
 import { MarkdownText } from "./MarkdownText.js";
 import { InputPrompt } from "./InputPrompt.js";
-import { StatusIndicator, type StatusInfo } from "./StatusIndicator.js";
-
-export interface Message {
-  role: "user" | "assistant" | "system";
-  content: string;
-  timestamp: Date;
-  model?: string;
-  elapsed_ms?: number;
-  tokens?: number;
-  toolsUsed?: string[];
-  orchestrated?: boolean;
-}
+import { StatusIndicator, VotingProgress, type StatusInfo } from "./StatusIndicator.js";
+import { Header, WelcomeScreen } from "./Header.js";
+import { MessageBubble, StreamingBubble, type Message } from "./MessageBubble.js";
+import { Panel, Divider } from "./Panel.js";
+import { ThinkingIndicator } from "./ProgressBar.js";
+import { ConfirmPrompt } from "./ConfirmPrompt.js";
 
 export interface ChatViewProps {
   /** API base URL (required) */
@@ -33,17 +27,20 @@ export interface ChatViewProps {
   backendType?: string;
   /** Session ID to resume */
   sessionId?: string;
-  /** 
+  /**
    * Enable simple mode (no orchestration).
    * Default is FALSE - NLP orchestration is enabled by default.
    */
   simple?: boolean;
-  /** 
+  /**
    * Enable legacy tool-based orchestrated mode.
    * If true, uses old tool-calling approach instead of NLP.
    */
   legacyOrchestrated?: boolean;
-  /** Include file/web tools in orchestrated mode */
+  /**
+   * Include file/web tools in orchestrated mode.
+   * Default is TRUE - web search and file tools available by default.
+   */
   includeFileTools?: boolean;
   /** Workspace path for file operations */
   workspace?: string;
@@ -51,151 +48,36 @@ export interface ChatViewProps {
   onExit?: () => void;
 }
 
-const MessageBubble: React.FC<{
-  message: Message;
-  isLast?: boolean;
-}> = ({ message, isLast }) => {
-  const isUser = message.role === "user";
-
-  // Build stats string for right side
-  const stats: string[] = [];
-  if (message.tokens !== undefined && message.tokens > 0) {
-    stats.push(`${message.tokens} tok`);
-  }
-  if (message.elapsed_ms !== undefined) {
-    stats.push(`${(message.elapsed_ms / 1000).toFixed(1)}s`);
-  }
-  const statsStr = stats.join(" · ");
-
-  return (
-    <Box flexDirection="column" marginY={1}>
-      {/* Role header with stats on right */}
-      <Box justifyContent="space-between">
-        <Box>
-          <Text color={isUser ? "blue" : "green"} bold>
-            {isUser ? "You" : "Delia"}
-          </Text>
-          {message.model && (
-            <Text color="dim"> ({message.model})</Text>
-          )}
-          {message.orchestrated && (
-            <Text color="magenta"> [orchestrated]</Text>
-          )}
-        </Box>
-        {statsStr && (
-          <Text color="dim">{statsStr}</Text>
-        )}
+/**
+ * Help panel content.
+ */
+const HelpPanel: React.FC<{ simple: boolean }> = ({ simple }) => (
+  <Panel title="Help" icon="❓" titleColor="cyan" borderColor="cyan">
+    <Box flexDirection="column">
+      <Text color="dim" bold>Commands:</Text>
+      <Box marginLeft={2} flexDirection="column">
+        <Text><Text color="cyan">/clear</Text> - Clear messages</Text>
+        <Text><Text color="cyan">/new</Text> - Start new session</Text>
+        <Text><Text color="cyan">/simple</Text> - Toggle simple/NLP mode</Text>
+        <Text><Text color="cyan">/help</Text> - Show this help</Text>
+        <Text><Text color="cyan">/exit</Text> - Exit chat</Text>
       </Box>
 
-      {/* Tools used indicator */}
-      {message.toolsUsed && message.toolsUsed.length > 0 && (
-        <Box marginLeft={2}>
-          <Text color="cyan">🔧 Tools: {message.toolsUsed.join(", ")}</Text>
-        </Box>
-      )}
-
-      {/* Message content */}
-      <Box marginLeft={2}>
-        {isUser ? (
-          <Text>{message.content}</Text>
-        ) : (
-          <MarkdownText>{message.content}</MarkdownText>
-        )}
-      </Box>
-    </Box>
-  );
-};
-
-/** Component to display tool calls as they happen */
-const ToolCallsIndicator: React.FC<{ calls: ToolCallInfo[] }> = ({ calls }) => (
-  <Box flexDirection="column" marginY={1} marginLeft={2}>
-    {calls.map((call, i) => (
-      <Box key={i}>
-        <Text color="cyan">🔧 {call.name}</Text>
-        <Text color="dim"> ({JSON.stringify(call.args).slice(0, 50)}...)</Text>
-      </Box>
-    ))}
-  </Box>
-);
-
-/** Component to show real-time tool execution */
-const ToolExecutionPanel: React.FC<{
-  iteration: number;
-  calls: ToolCallInfo[];
-  results: Array<{ name: string; success: boolean; output_preview: string }>;
-}> = ({ iteration, calls, results }) => (
-  <Box flexDirection="column" marginY={1} borderStyle="single" borderColor="cyan" paddingX={1}>
-    <Text color="cyan" bold>🔧 Tool Execution (Iteration {iteration})</Text>
-    {calls.map((call, i) => {
-      const result = results.find(r => r.name === call.name);
-      return (
-        <Box key={i} flexDirection="column" marginLeft={1}>
-          <Box>
-            <Text color={result?.success ? "green" : result ? "red" : "yellow"}>
-              {result ? (result.success ? "✓" : "✗") : "⋯"} {call.name}
-            </Text>
+      {!simple && (
+        <>
+          <Box marginTop={1}>
+            <Text color="magenta" bold>✨ NLP Orchestration (DEFAULT):</Text>
           </Box>
-          {result && (
-            <Box marginLeft={2}>
-              <Text color="dim" wrap="truncate-end">
-                {result.output_preview.slice(0, 100)}
-              </Text>
-            </Box>
-          )}
-        </Box>
-      );
-    })}
-  </Box>
-);
-
-const ThinkingIndicator: React.FC<{ status: string }> = ({ status }) => (
-  <Box marginY={1}>
-    <Text color="yellow">
-      <Spinner type="dots" /> {status}
-    </Text>
-  </Box>
-);
-
-const WelcomeMessage: React.FC<{ sessionId?: string; simple?: boolean }> = ({ sessionId, simple }) => (
-  <Box flexDirection="column" marginY={1} paddingX={1}>
-    <Box paddingX={2} paddingY={1}>
-      <Text bold color="cyan">
-        Delia
-      </Text>
-      <Text color="dim"> - Multi-Model AI Orchestrator</Text>
+          <Box marginLeft={2} flexDirection="column">
+            <Text color="dim">Delia detects your intent and orchestrates automatically:</Text>
+            <Text>• "verify this" / "make sure" → K-voting for reliability</Text>
+            <Text>• "compare models" / "what do different models think" → Multi-model</Text>
+            <Text>• "think carefully" / "analyze thoroughly" → Deep reasoning</Text>
+          </Box>
+        </>
+      )}
     </Box>
-    <Box marginTop={1}>
-      <Text color="dim">
-        Commands: /help, /clear, /new, /simple (toggle mode)
-      </Text>
-    </Box>
-    {simple ? (
-      <Box>
-        <Text color="dim">
-          Simple mode - single model, no orchestration
-        </Text>
-      </Box>
-    ) : (
-      <Box flexDirection="column">
-        <Text color="magenta">
-          NLP Orchestration: voting, comparison, deep thinking
-        </Text>
-        <Text color="dim">
-          Delia detects intent and orchestrates automatically
-        </Text>
-        <Text color="dim">
-          Try: "verify this", "compare models", "think deeply"
-        </Text>
-      </Box>
-    )}
-    {sessionId && (
-      <Box>
-        <Text color="dim">
-          Session: {sessionId.slice(0, 8)}...
-        </Text>
-      </Box>
-    )}
-  </Box>
+  </Panel>
 );
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -205,7 +87,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   sessionId: initialSessionId,
   simple: initialSimple = false,  // NLP orchestration by DEFAULT!
   legacyOrchestrated = false,
-  includeFileTools = false,
+  includeFileTools = true,  // Web search and file tools enabled by default
   workspace,
   onExit,
 }) => {
@@ -216,15 +98,34 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [thinkingStatus, setThinkingStatus] = useState<string | null>(null);
   const [statusInfo, setStatusInfo] = useState<StatusInfo | null>(null);
-  const [statusHistory, setStatusHistory] = useState<StatusInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentResponse, setCurrentResponse] = useState<string>("");
   const [simple, setSimple] = useState(initialSimple);
-  const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallInfo[]>([]);
-  const [currentIteration, setCurrentIteration] = useState(0);
-  const [toolResults, setToolResults] = useState<Array<{ name: string; success: boolean; output_preview: string }>>([]);
+  const [connectionStatus, setConnectionStatus] = useState<"connected" | "connecting" | "disconnected" | "error">("connecting");
+  const [showHelp, setShowHelp] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    confirmId: string;
+    tool: string;
+    args: Record<string, unknown>;
+    message: string;
+  } | null>(null);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   const client = new DeliaClient(apiUrl);
+
+  // Check connection on mount
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        setConnectionStatus("connecting");
+        await client.health();
+        setConnectionStatus("connected");
+      } catch {
+        setConnectionStatus("error");
+      }
+    };
+    checkConnection();
+  }, [apiUrl]);
 
   const handleSubmit = useCallback(async (input: string) => {
     // Handle commands
@@ -248,37 +149,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
           {
             role: "system",
             content: simple 
-              ? "NLP Orchestration enabled - Delia auto-detects voting/comparison needs"
-              : "Simple mode - Single model, no orchestration",
+              ? "✨ NLP Orchestration enabled - Delia auto-detects voting/comparison needs"
+              : "📝 Simple mode - Single model, no orchestration",
             timestamp: new Date(),
           },
         ]);
         return;
       }
       if (cmd === "/help") {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "system",
-            content: `Commands:
-/clear - Clear messages
-/new - Start new session  
-/simple - Toggle simple/NLP mode
-/help - Show this help
-/exit - Exit chat
-
-${!simple ? `NLP Orchestration (DEFAULT):
-Delia detects your intent and orchestrates automatically:
-
-- "verify this" / "make sure" -> K-voting for reliability
-- "compare models" / "what do different models think" -> Multi-model comparison
-- "think carefully" / "analyze thoroughly" -> Deep reasoning mode
-
-Models receive role-specific prompts (code_reviewer, architect, etc.)
-No tool calls shown - just natural conversation.` : "Simple mode - direct single-model chat, no orchestration"}`,
-            timestamp: new Date(),
-          },
-        ]);
+        setShowHelp((prev) => !prev);
         return;
       }
     }
@@ -295,10 +174,7 @@ No tool calls shown - just natural conversation.` : "Simple mode - direct single
     setError(null);
     setCurrentResponse("");
     setStatusInfo(null);
-    setStatusHistory([]);
-    setCurrentToolCalls([]);
-    setCurrentIteration(0);
-    setToolResults([]);
+    setShowHelp(false);
 
     // Track response in local variable to avoid closure issues
     let responseContent = "";
@@ -334,36 +210,35 @@ No tool calls shown - just natural conversation.` : "Simple mode - direct single
               break;
 
             case "status":
-              // Advanced logic status (routing, voting, quality)
-              const newStatus: StatusInfo = {
+              // Transient status (routing, voting, quality) - disappears when done
+              setStatusInfo({
                 phase: event.phase as StatusInfo["phase"],
                 message: event.message,
                 details: event.details,
-              };
-              setStatusInfo(newStatus);
-              // Keep status history so messages persist after completion
-              setStatusHistory((prev) => [...prev, newStatus]);
+              });
+              break;
+
+            case "confirm":
+              // File operation confirmation prompt
+              setPendingConfirmation({
+                confirmId: event.confirm_id,
+                tool: event.tool,
+                args: event.args,
+                message: event.message,
+              });
+              setThinkingStatus(null); // Clear thinking while waiting
               break;
 
             case "tools":
-              // Summary of all tool calls (at end)
-              setCurrentToolCalls(event.calls);
+              // Tool calls completed - we just track for the message
               break;
 
             case "tool_call":
-              // Real-time tool call notification
-              setCurrentIteration(event.iteration);
-              setCurrentToolCalls(event.calls);
-              setToolResults([]); // Reset results for new iteration
+              // Tool execution in progress
               break;
 
             case "tool_result":
-              // Real-time tool result
-              setToolResults((prev) => [...prev, {
-                name: event.name,
-                success: event.success,
-                output_preview: event.output_preview,
-              }]);
+              // Real-time tool result - handled by status updates
               break;
 
             case "token":
@@ -414,10 +289,6 @@ No tool calls shown - just natural conversation.` : "Simple mode - direct single
       setIsProcessing(false);
       setThinkingStatus(null);
       setStatusInfo(null);
-      setCurrentToolCalls([]);
-      setCurrentIteration(0);
-      setToolResults([]);
-      // Keep statusHistory - don't clear it so messages remain visible
       setCurrentResponse("");
     }
   }, [client, sessionId, model, backendType, simple, legacyOrchestrated, includeFileTools, workspace]);
@@ -427,13 +298,70 @@ No tool calls shown - just natural conversation.` : "Simple mode - direct single
     exit();
   }, [exit, onExit]);
 
+  // Handle interrupt (Escape key during processing)
+  const handleInterrupt = useCallback(() => {
+    if (abortController) {
+      abortController.abort();
+      setAbortController(null);
+    }
+    setIsProcessing(false);
+    setThinkingStatus(null);
+    setStatusInfo(null);
+    setPendingConfirmation(null);
+    if (currentResponse) {
+      // Keep partial response as message
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: currentResponse + "\n\n*[interrupted]*",
+          timestamp: new Date(),
+        },
+      ]);
+    }
+    setCurrentResponse("");
+  }, [abortController, currentResponse]);
+
+  // Handle confirmation prompt responses
+  const handleConfirm = useCallback(
+    async (confirmId: string, confirmed: boolean, allowAll: boolean) => {
+      setPendingConfirmation(null);
+      try {
+        await client.confirmTool({ confirmId, confirmed, allowAll });
+      } catch (err) {
+        setError(`Confirmation failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      }
+    },
+    [client]
+  );
+
   // Get last few messages to display (keep view manageable)
   const displayMessages = messages.slice(-20);
 
+  // Determine current mode
+  const currentMode = simple ? "simple" : legacyOrchestrated ? "orchestrated" : "nlp";
+
   return (
     <Box flexDirection="column" padding={1}>
-      {/* Welcome/header */}
-      {messages.length === 0 && <WelcomeMessage sessionId={sessionId} simple={simple} />}
+      {/* Header - always visible */}
+      <Header
+        variant={messages.length === 0 ? "compact" : "minimal"}
+        sessionId={sessionId}
+        status={connectionStatus}
+        mode={currentMode}
+      />
+
+      {/* Welcome screen - only when no messages */}
+      {messages.length === 0 && !showHelp && (
+        <WelcomeScreen
+          sessionId={sessionId}
+          mode={currentMode}
+          showHelp={true}
+        />
+      )}
+
+      {/* Help panel - toggle with /help */}
+      {showHelp && <HelpPanel simple={simple} />}
 
       {/* Messages */}
       {displayMessages.map((msg, i) => (
@@ -446,67 +374,75 @@ No tool calls shown - just natural conversation.` : "Simple mode - direct single
 
       {/* Current streaming response */}
       {currentResponse && (
-        <Box flexDirection="column" marginY={1}>
-          <Box>
-            <Text color="green" bold>
-              Delia
-            </Text>
-            {!simple && (
-              <Text color="magenta"> [nlp]</Text>
-            )}
-          </Box>
-          <Box marginLeft={2}>
-            <MarkdownText>{currentResponse}</MarkdownText>
-          </Box>
-        </Box>
-      )}
-
-      {/* Real-time tool execution panel (orchestrated mode) */}
-      {isProcessing && currentIteration > 0 && currentToolCalls.length > 0 && (
-        <ToolExecutionPanel
-          iteration={currentIteration}
-          calls={currentToolCalls}
-          results={toolResults}
+        <StreamingBubble
+          content={currentResponse}
+          orchestrated={!simple}
         />
       )}
 
-      {/* Status indicators for advanced logic (routing, voting, quality) */}
-      {/* Show history when not processing, or current status when processing */}
-      {!isProcessing && statusHistory.length > 0 && (
-        <Box flexDirection="column">
-          {statusHistory.map((status, i) => (
-            <StatusIndicator key={i} status={status} />
-          ))}
-        </Box>
-      )}
+      {/* Status indicator - transient, only while processing */}
       {isProcessing && statusInfo && <StatusIndicator status={statusInfo} />}
 
+      {/* Voting progress bar - only during k-voting */}
+      {isProcessing && statusInfo?.phase === "voting" && statusInfo.details?.voting_k && (
+        <VotingProgress
+          totalVotes={statusInfo.details.voting_k}
+          votesCast={statusInfo.details.votes_cast || 0}
+          consensus={statusInfo.details.votes_cast ? statusInfo.details.votes_cast - (statusInfo.details.red_flagged || 0) : 0}
+          flagged={statusInfo.details.red_flagged || 0}
+        />
+      )}
+
       {/* Thinking indicator */}
-      {thinkingStatus && <ThinkingIndicator status={thinkingStatus} />}
+      {thinkingStatus && (
+        <ThinkingIndicator status={thinkingStatus} variant="melon" />
+      )}
 
       {/* Error display */}
       {error && (
-        <Box marginY={1}>
-          <Text color="red">Error: {error}</Text>
-        </Box>
+        <Panel status="error" padding={1}>
+          <Text color="red">{error}</Text>
+        </Panel>
       )}
 
       {/* Separator */}
-      <Box marginY={1}>
-        <Text color="dim">{"─".repeat(60)}</Text>
-      </Box>
+      <Divider />
+
+      {/* Confirmation prompt */}
+      {pendingConfirmation && (
+        <ConfirmPrompt
+          confirmId={pendingConfirmation.confirmId}
+          tool={pendingConfirmation.tool}
+          args={pendingConfirmation.args}
+          message={pendingConfirmation.message}
+          onConfirm={handleConfirm}
+        />
+      )}
 
       {/* Input prompt */}
       <InputPrompt
         prompt={simple ? "> " : ">> "}
         onSubmit={handleSubmit}
         onExit={handleExit}
-        disabled={isProcessing}
+        onInterrupt={handleInterrupt}
+        processing={isProcessing}
         history={history}
         promptColor={simple ? "dim" : "cyan"}
+        showBorder={true}
+        mode={currentMode}
       />
+
+      {/* Footer hints */}
+      <Box marginTop={1}>
+        <Text color="dim">
+          {isProcessing ? "Esc to interrupt · " : ""}/help · /clear · /new · /simple · Ctrl+C to exit
+        </Text>
+      </Box>
     </Box>
   );
 };
+
+// Re-export Message type for external use
+export type { Message };
 
 export default ChatView;

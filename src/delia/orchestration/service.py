@@ -1,0 +1,419 @@
+# Copyright (C) 2024 Delia Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""
+Unified Orchestration Service - Single Entry Point for Chat and MCP.
+
+This service unifies all orchestration capabilities so both the HTTP API
+(delia chat) and MCP Server share the same logic:
+
+- Frustration detection and penalties
+- Intent detection (3-tier NLP)
+- Prewarm tracking (EMA learning)
+- Orchestration execution (voting, comparison, etc.)
+- Quality validation
+- Affinity and melon rewards
+
+Usage:
+    service = get_orchestration_service()
+    result = await service.process(message, session_id=session_id)
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+import structlog
+
+from pydantic import BaseModel
+
+from .intent import detect_intent
+from .executor import get_orchestration_executor, OrchestrationExecutor
+from .result import DetectedIntent, OrchestrationMode, OrchestrationResult
+from ..tracing import trace, add_event
+
+if TYPE_CHECKING:
+    from ..config import AffinityTracker, PrewarmTracker
+    from ..melons import MelonTracker
+    from ..frustration import FrustrationTracker
+
+
+log = structlog.get_logger()
+
+
+@dataclass
+class ProcessingContext:
+    """Context for a single orchestration request."""
+    
+    message: str
+    session_id: str | None = None
+    backend_type: str | None = None
+    model_override: str | None = None
+    
+    # Populated during processing
+    intent: DetectedIntent | None = None
+    repeat_info: Any | None = None
+    start_time: float = field(default_factory=time.time)
+
+
+@dataclass
+class ProcessingResult:
+    """Extended result with all tracking metadata."""
+    
+    result: OrchestrationResult
+    intent: DetectedIntent
+    quality_score: float | None = None
+    melons_awarded: int = 0
+    affinity_updated: bool = False
+    prewarm_updated: bool = False
+    frustration_penalty: int = 0
+    elapsed_ms: int = 0
+
+
+class OrchestrationService:
+    """
+    Unified orchestration service for both Chat and MCP.
+    
+    This is the single entry point for all orchestration logic.
+    Both API endpoints and MCP tools should use this service.
+    
+    Responsibilities:
+    1. Frustration detection - penalize models for repeated questions
+    2. Intent detection - determine orchestration mode via NLP
+    3. Prewarm update - learn hourly usage patterns
+    4. Execute orchestration - voting, comparison, deep thinking
+    5. Quality validation - score response quality
+    6. Rewards - update affinity and award melons
+    """
+    
+    def __init__(
+        self,
+        executor: OrchestrationExecutor,
+        affinity: AffinityTracker,
+        prewarm: PrewarmTracker,
+        melons: MelonTracker,
+        frustration: FrustrationTracker,
+    ) -> None:
+        self.executor = executor
+        self.affinity = affinity
+        self.prewarm = prewarm
+        self.melons = melons
+        self.frustration = frustration
+        self._initialized = True
+        
+        log.info("orchestration_service_initialized")
+    
+    @classmethod
+    def create(cls) -> "OrchestrationService":
+        """
+        Factory method to create a properly initialized service.
+        
+        Loads persisted state (affinity, prewarm) from disk.
+        """
+        from ..config import (
+            get_affinity_tracker,
+            get_prewarm_tracker,
+            load_affinity,
+            load_prewarm,
+        )
+        from ..melons import get_melon_tracker
+        from ..frustration import get_frustration_tracker
+        
+        # Load persisted state
+        load_affinity()
+        load_prewarm()
+        
+        return cls(
+            executor=get_orchestration_executor(),
+            affinity=get_affinity_tracker(),
+            prewarm=get_prewarm_tracker(),
+            melons=get_melon_tracker(),
+            frustration=get_frustration_tracker(),
+        )
+    
+    async def process(
+        self,
+        message: str,
+        session_id: str | None = None,
+        backend_type: str | None = None,
+        model_override: str | None = None,
+        output_type: type[BaseModel] | None = None,
+    ) -> ProcessingResult:
+        """
+        Process a message through the full orchestration pipeline.
+        
+        This is the main entry point for all orchestration.
+        
+        Pipeline:
+        1. Frustration check - detect repeated questions, penalize bad models
+        2. Intent detection - NLP-based determination of orchestration mode
+        3. Auto-upgrade - promote to VOTING on repeated frustration
+        4. Prewarm update - learn usage patterns for this task type
+        5. Execute - run the orchestration (voting, comparison, etc.)
+        6. Quality validation - score the response
+        7. Rewards - update affinity, award melons
+        
+        Args:
+            message: User's message
+            session_id: Optional session for conversation tracking
+            backend_type: Optional backend preference (local/remote)
+            model_override: Optional model to force
+            
+        Returns:
+            ProcessingResult with orchestration result and metadata
+        """
+        # Wrap entire pipeline in a trace for observability
+        with trace(
+            "orchestration",
+            message_len=len(message),
+            session=session_id[:8] if session_id else None,
+            structured=output_type.__name__ if output_type else None,
+        ) as span:
+            return await self._process_traced(
+                span, message, session_id, backend_type, model_override, output_type
+            )
+    
+    async def _process_traced(
+        self,
+        span,
+        message: str,
+        session_id: str | None,
+        backend_type: str | None,
+        model_override: str | None,
+        output_type: type[BaseModel] | None,
+    ) -> ProcessingResult:
+        """Internal traced implementation of process()."""
+        start_time = time.time()
+        frustration_penalty = 0
+        
+        # STEP 1: Frustration detection
+        repeat_info = None
+        if session_id:
+            repeat_info = self.frustration.check_repeat(session_id, message)
+            
+            if repeat_info.is_repeat and repeat_info.previous_model:
+                # Penalize the model that gave an unsatisfactory answer
+                frustration_penalty = 2 + repeat_info.repeat_count
+                self.melons.penalize(
+                    repeat_info.previous_model,
+                    "quick",  # Use quick as default task type for penalty
+                    melons=frustration_penalty,
+                )
+                
+                span.event(
+                    "frustration_detected",
+                    repeat_count=repeat_info.repeat_count,
+                    previous_model=repeat_info.previous_model,
+                    penalty=frustration_penalty,
+                )
+                
+                log.warning(
+                    "frustration_penalty_applied",
+                    model=repeat_info.previous_model,
+                    penalty=frustration_penalty,
+                    repeat_count=repeat_info.repeat_count,
+                )
+        
+        # STEP 2: Intent detection (3-tier NLP)
+        intent = detect_intent(message)
+        
+        span.event(
+            "intent_detected",
+            task_type=intent.task_type,
+            mode=intent.orchestration_mode.value,
+            confidence=round(intent.confidence, 2),
+        )
+        
+        # STEP 3: Auto-upgrade to VOTING on repeated frustration
+        if repeat_info and repeat_info.is_repeat and repeat_info.repeat_count >= 2:
+            if intent.orchestration_mode == OrchestrationMode.NONE:
+                log.info(
+                    "frustration_auto_voting",
+                    repeat_count=repeat_info.repeat_count,
+                )
+                intent.orchestration_mode = OrchestrationMode.VOTING
+                intent.k_votes = min(3 + repeat_info.repeat_count, 5)
+                intent.reasoning = (
+                    f"auto-voting due to {repeat_info.repeat_count}x repeat; "
+                    f"{intent.reasoning}"
+                )
+                span.event("auto_upgrade_voting", k_votes=intent.k_votes)
+        
+        # STEP 4: Prewarm update - learn usage patterns
+        self.prewarm.update(intent.task_type)
+        prewarm_updated = True
+        
+        log.info(
+            "orchestration_intent_detected",
+            task_type=intent.task_type,
+            mode=intent.orchestration_mode.value,
+            role=intent.model_role.value,
+            confidence=intent.confidence,
+        )
+        
+        # STEP 5: Execute orchestration
+        span.event("execute_start", mode=intent.orchestration_mode.value)
+        
+        result = await self.executor.execute(
+            intent=intent,
+            message=message,
+            session_id=session_id,
+            backend_type=backend_type,
+            model_override=model_override,
+            output_type=output_type,
+        )
+        
+        span.event(
+            "execute_complete",
+            success=result.success,
+            model=result.model_used,
+            elapsed_ms=result.elapsed_ms,
+        )
+        
+        # STEP 6 & 7: Quality validation and rewards (only on success)
+        quality_score = None
+        melons_awarded = 0
+        affinity_updated = False
+        
+        if result.success and result.model_used:
+            # Quality validation
+            from ..quality import validate_response
+            quality_result = validate_response(result.response, intent.task_type)
+            quality_score = quality_result.overall
+            
+            span.event("quality_validated", score=round(quality_score, 2))
+            
+            # Update affinity tracker
+            backend_id = result.backend_used or "unknown"
+            self.affinity.update(backend_id, intent.task_type, quality=quality_score)
+            affinity_updated = True
+            
+            # Award melons! 🍈
+            from ..melons import award_melons_for_quality
+            melons_awarded = award_melons_for_quality(
+                model_id=result.model_used,
+                task_type=intent.task_type,
+                quality_score=quality_score,
+            )
+            
+            # Record for frustration tracking
+            if session_id:
+                self.frustration.record_response(
+                    session_id=session_id,
+                    message=message,
+                    model_used=result.model_used,
+                    response=result.response,
+                )
+            
+            span.event(
+                "rewards_applied",
+                melons=melons_awarded,
+                affinity_updated=affinity_updated,
+            )
+            
+            log.info(
+                "orchestration_complete",
+                mode=result.mode.value,
+                model=result.model_used,
+                quality=quality_score,
+                melons=melons_awarded,
+                elapsed_ms=result.elapsed_ms,
+            )
+        else:
+            # Mark span as error if orchestration failed
+            if not result.success:
+                span.set_error(result.error or "orchestration_failed")
+        
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        
+        # Final span attributes
+        span.set_attribute("total_elapsed_ms", elapsed_ms)
+        span.set_attribute("success", result.success)
+        if quality_score is not None:
+            span.set_attribute("quality_score", round(quality_score, 2))
+        
+        return ProcessingResult(
+            result=result,
+            intent=intent,
+            quality_score=quality_score,
+            melons_awarded=melons_awarded,
+            affinity_updated=affinity_updated,
+            prewarm_updated=prewarm_updated,
+            frustration_penalty=frustration_penalty,
+            elapsed_ms=elapsed_ms,
+        )
+    
+    async def save_state(self) -> None:
+        """
+        Persist all learned state to disk.
+        
+        Should be called periodically (e.g., every 5 minutes) or on shutdown.
+        """
+        from ..config import save_affinity, save_prewarm
+        
+        await asyncio.to_thread(save_affinity)
+        await asyncio.to_thread(save_prewarm)
+        self.melons.save()
+        
+        log.debug("orchestration_service_state_saved")
+    
+    def get_stats(self) -> dict[str, Any]:
+        """Get current service statistics."""
+        return {
+            "affinity_entries": len(self.affinity._scores),
+            "prewarm_entries": len(self.prewarm._scores),
+            "melon_models": len(self.melons._stats),
+            "frustration_sessions": len(self.frustration._records),
+        }
+
+
+# =============================================================================
+# Global Service Instance
+# =============================================================================
+
+_SERVICE: OrchestrationService | None = None
+_SERVICE_LOCK = asyncio.Lock()
+
+
+def get_orchestration_service() -> OrchestrationService:
+    """
+    Get the global orchestration service instance.
+    
+    Creates the service on first call (lazy initialization).
+    Thread-safe via lock.
+    """
+    global _SERVICE
+    
+    if _SERVICE is None:
+        _SERVICE = OrchestrationService.create()
+    
+    return _SERVICE
+
+
+async def get_orchestration_service_async() -> OrchestrationService:
+    """
+    Async version of get_orchestration_service.
+    
+    Uses asyncio lock for proper async initialization.
+    """
+    global _SERVICE
+    
+    async with _SERVICE_LOCK:
+        if _SERVICE is None:
+            _SERVICE = OrchestrationService.create()
+        return _SERVICE
+
+
+def reset_orchestration_service() -> None:
+    """
+    Reset the global service instance.
+    
+    Used for testing or when configuration changes require re-initialization.
+    """
+    global _SERVICE
+    _SERVICE = None
+    log.info("orchestration_service_reset")
+

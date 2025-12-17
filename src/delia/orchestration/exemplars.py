@@ -117,6 +117,14 @@ AGENTIC_EXEMPLARS = [
     IntentExemplar("find all usages of this function", OrchestrationMode.AGENTIC),
     IntentExemplar("search for TODO comments", OrchestrationMode.AGENTIC),
     IntentExemplar("grep for error handling", OrchestrationMode.AGENTIC),
+
+    # Web search
+    IntentExemplar("search the web for python best practices", OrchestrationMode.AGENTIC),
+    IntentExemplar("look up the latest React documentation", OrchestrationMode.AGENTIC),
+    IntentExemplar("search online for how to fix this error", OrchestrationMode.AGENTIC),
+    IntentExemplar("what's the latest news about AI", OrchestrationMode.AGENTIC),
+    IntentExemplar("find information online about this library", OrchestrationMode.AGENTIC),
+    IntentExemplar("web search for rust async patterns", OrchestrationMode.AGENTIC),
 ]
 
 

@@ -126,6 +126,10 @@ export function getVotingStatsFile(): string {
   return join(getCacheDir(), "voting_stats.json")
 }
 
+export function getMelonsFile(): string {
+  return join(getDataDir(), "melons.json")
+}
+
 // Export constants for convenience
 export const SETTINGS_FILE = getSettingsFile()
 export const DATA_DIR = getDataDir()

@@ -2176,8 +2176,10 @@ async def agent(
         model_tier_warning = " [WARN] Small model may have reduced tool-calling reliability"
 
     # Set up tool registry with optional workspace confinement
+    # Use coding tools (includes all default tools + run_tests, apply_diff, git_*)
+    from .tools.coding import get_coding_tools
     workspace_obj = Workspace(root=workspace) if workspace else None
-    registry = get_default_tools(workspace=workspace_obj)
+    registry = get_coding_tools(workspace=workspace_obj, allow_exec=True)
 
     # Register MCP tools if any servers are running
     if mcp_client_manager.get_all_tools():

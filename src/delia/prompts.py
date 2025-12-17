@@ -167,6 +167,8 @@ class OrchestrationMode(str, Enum):
     DEEP_THINKING = "deep_thinking"
     BATCH = "batch"
     AGENTIC = "agentic"  # Full agent loop with tools
+    CHAIN = "chain"  # Sequential multi-step pipeline
+    STATUS = "status"  # Status queries (melons, health, etc.)
 
 
 ORCHESTRATION_CONTEXT: dict[OrchestrationMode, str] = {
@@ -185,7 +187,14 @@ Take your time. Consider multiple angles. Show your reasoning.""",
     OrchestrationMode.AGENTIC: """
 You have access to tools for interacting with the system:
 - read_file: Read file contents
-- list_directory: List directory contents
+- list_directory: List directory contents""",
+
+    OrchestrationMode.CHAIN: """
+Note: This is one step in a multi-step pipeline.
+Focus on your specific task. Your output may be used by subsequent steps.""",
+
+    OrchestrationMode.STATUS: """
+This is a system status query. Respond with the requested information.
 - search_code: Search for patterns in code
 - write_file: Write content to files
 - shell_exec: Execute shell commands

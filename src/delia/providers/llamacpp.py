@@ -106,6 +106,7 @@ class LlamaCppProvider:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         temperature: float | None = None,
+        messages: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         """Call OpenAI-compatible API with Pydantic validation, retry, and circuit breaker."""
         start_time = time.time()
@@ -165,14 +166,20 @@ class LlamaCppProvider:
             temp_value = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
 
         # Build messages for OpenAI-compatible API
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+        # Use passed messages if provided, otherwise construct from prompt/system
+        if messages:
+            # Use full conversation history
+            built_messages = messages
+        else:
+            # Build from prompt/system
+            built_messages = []
+            if system:
+                built_messages.append({"role": "system", "content": system})
+            built_messages.append({"role": "user", "content": prompt})
 
         payload = {
             "model": model,
-            "messages": messages,
+            "messages": built_messages,
             "temperature": temp_value,
             "max_tokens": max_tokens if max_tokens else num_ctx,
             "stream": False,

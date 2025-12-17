@@ -26,11 +26,14 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, TYPE_CHECKING
 
 import structlog
 
 from . import paths
+
+if TYPE_CHECKING:
+    from .session_backends import SessionBackend
 
 log = structlog.get_logger()
 
@@ -236,6 +239,7 @@ class SessionManager:
         ttl_seconds: int = SESSION_TTL_SECONDS,
         max_sessions: int = MAX_SESSIONS,
         max_messages_per_session: int = MAX_MESSAGES_PER_SESSION,
+        backend: "SessionBackend | None" = None,
     ):
         """
         Initialize the session manager.
@@ -245,12 +249,16 @@ class SessionManager:
             ttl_seconds: Time-to-live for sessions in seconds (default 24 hours)
             max_sessions: Maximum number of sessions before LRU eviction
             max_messages_per_session: Maximum messages per session
+            backend: Optional SessionBackend (SQLite, JSON, etc.). If None, uses JSON.
         """
         self.session_dir = session_dir or paths.SESSIONS_DIR
         self.ttl_seconds = ttl_seconds
         self.max_sessions = max_sessions
         self.max_messages_per_session = max_messages_per_session
 
+        # Storage backend (None = use legacy JSON file operations)
+        self._backend = backend
+        
         # In-memory session cache (lazy loaded)
         self._memory_cache: dict[str, SessionState] = {}
 
@@ -264,6 +272,8 @@ class SessionManager:
 
         # Ensure session directory exists
         paths.ensure_directories()
+        
+        backend_type = type(backend).__name__ if backend else "legacy_json"
 
         log.info(
             "session_manager_initialized",
@@ -271,6 +281,7 @@ class SessionManager:
             max_sessions=max_sessions,
             max_messages_per_session=max_messages_per_session,
             session_dir=str(self.session_dir),
+            backend=backend_type,
         )
 
     def create_session(
@@ -523,7 +534,7 @@ class SessionManager:
 
     def _save_session(self, session_id: str) -> None:
         """
-        Save a session to disk as individual JSON file (atomic write).
+        Save a session to storage (backend or legacy JSON).
 
         Must be called while holding self._lock.
 
@@ -534,13 +545,16 @@ class SessionManager:
         if session is None:
             return
 
-        session_file = self.session_dir / f"{session_id}.json"
-
         try:
-            # Atomic write using temp file
-            temp_file = session_file.with_suffix(".tmp")
-            temp_file.write_text(json.dumps(session.to_dict(), indent=2))
-            temp_file.replace(session_file)  # Atomic on POSIX
+            if self._backend:
+                # Use pluggable backend
+                self._backend.save(session_id, session.to_dict())
+            else:
+                # Legacy JSON file storage
+                session_file = self.session_dir / f"{session_id}.json"
+                temp_file = session_file.with_suffix(".tmp")
+                temp_file.write_text(json.dumps(session.to_dict(), indent=2))
+                temp_file.replace(session_file)  # Atomic on POSIX
 
             log.debug("session_saved", session_id=session_id, messages=len(session.messages))
         except Exception as e:
@@ -548,12 +562,11 @@ class SessionManager:
                 "session_save_failed",
                 error=str(e),
                 session_id=session_id,
-                filepath=str(session_file),
             )
 
     def _load_session(self, session_id: str) -> SessionState | None:
         """
-        Load a session from disk.
+        Load a session from storage (backend or legacy JSON).
 
         Must be called while holding self._lock.
 
@@ -563,20 +576,26 @@ class SessionManager:
         Returns:
             SessionState if found, None otherwise
         """
-        session_file = self.session_dir / f"{session_id}.json"
-
-        if not session_file.exists():
-            return None
-
         try:
-            session_data = json.loads(session_file.read_text())
+            if self._backend:
+                # Use pluggable backend
+                session_data = self._backend.load(session_id)
+                if session_data is None:
+                    return None
+            else:
+                # Legacy JSON file storage
+                session_file = self.session_dir / f"{session_id}.json"
+                if not session_file.exists():
+                    return None
+                session_data = json.loads(session_file.read_text())
+
             session = SessionState.from_dict(session_data)
 
             log.debug(
                 "session_loaded",
                 session_id=session_id,
                 messages=len(session.messages),
-                from_disk=True,
+                from_storage=True,
             )
             return session
 
@@ -586,7 +605,6 @@ class SessionManager:
                 error=str(e),
                 reason="invalid_json",
                 session_id=session_id,
-                filepath=str(session_file),
             )
             return None
         except Exception as e:
@@ -594,7 +612,6 @@ class SessionManager:
                 "session_load_failed",
                 error=str(e),
                 session_id=session_id,
-                filepath=str(session_file),
             )
             return None
 
@@ -616,29 +633,30 @@ class SessionManager:
 
     def load_all_from_disk(self) -> int:
         """
-        Load all sessions from disk into memory.
+        Load all sessions from storage into memory.
 
         Filters out expired sessions during load.
 
         Returns:
             Number of sessions loaded
         """
-        if not self.session_dir.exists():
-            log.debug("session_load_all_skipped", reason="dir_not_found")
-            return 0
-
         with self._lock:
-            session_files = list(self.session_dir.glob("*.json"))
+            # Get list of session IDs from backend or filesystem
+            if self._backend:
+                session_ids = self._backend.list_sessions()
+            else:
+                if not self.session_dir.exists():
+                    log.debug("session_load_all_skipped", reason="dir_not_found")
+                    return 0
+                session_ids = [
+                    f.stem for f in self.session_dir.glob("*.json")
+                    if f.suffix != ".tmp"
+                ]
+            
             loaded_count = 0
             expired_count = 0
 
-            for session_file in session_files:
-                # Skip temp files
-                if session_file.suffix == ".tmp":
-                    continue
-
-                session_id = session_file.stem
-
+            for session_id in session_ids:
                 # Skip if already in memory
                 if session_id in self._memory_cache:
                     continue
@@ -650,8 +668,13 @@ class SessionManager:
                 # Check expiration
                 if session.is_expired(self.ttl_seconds):
                     expired_count += 1
-                    # Delete expired session file
-                    session_file.unlink()
+                    # Delete expired session
+                    if self._backend:
+                        self._backend.delete(session_id)
+                    else:
+                        session_file = self.session_dir / f"{session_id}.json"
+                        if session_file.exists():
+                            session_file.unlink()
                     continue
 
                 self._memory_cache[session_id] = session
@@ -741,14 +764,35 @@ class SessionManager:
 _global_session_manager: SessionManager | None = None
 
 
-def get_session_manager() -> SessionManager:
+def get_session_manager(backend_type: str | None = None) -> SessionManager:
     """
     Get or create the global session manager instance with lazy initialization.
+    
+    Args:
+        backend_type: Optional backend type override ("json", "sqlite").
+                     If None, uses settings.json configuration or defaults to "json".
 
     Returns:
         Global SessionManager instance
     """
     global _global_session_manager
     if _global_session_manager is None:
-        _global_session_manager = SessionManager()
+        # Get configured backend
+        from .session_backends import get_session_backend
+        backend = get_session_backend(backend_type)
+        _global_session_manager = SessionManager(backend=backend)
     return _global_session_manager
+
+
+def create_sqlite_session_manager() -> SessionManager:
+    """
+    Create a SessionManager with SQLite backend.
+    
+    Convenience function for explicit SQLite usage.
+    
+    Returns:
+        SessionManager with SQLiteSessionBackend
+    """
+    from .session_backends import SQLiteSessionBackend
+    backend = SQLiteSessionBackend()
+    return SessionManager(backend=backend)

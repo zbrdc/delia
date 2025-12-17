@@ -132,6 +132,25 @@ class IntentDetector:
     
     # Agentic signals → Agent mode with tools
     AGENTIC_PATTERNS = [
+        # Web search - explicit requests for web/internet search
+        IntentPattern(
+            re.compile(r"\b(web\s+)?search\s+(the\s+)?(web|internet|online|google|duckduckgo)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.5,
+            reasoning="web search requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(search|look\s*up|find)\s+(online|on\s+the\s+web|on\s+the\s+internet)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.5,
+            reasoning="web search requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(what('?s|\s+is)\s+(the\s+)?(latest|current|recent)|latest\s+news)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.4,
+            reasoning="current information requested - may need web search",
+        ),
         IntentPattern(
             re.compile(r"\b(read|open|show|cat|view)\s+(the\s+)?(file|contents?|code)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
@@ -204,6 +223,52 @@ class IntentDetector:
             orchestration_mode=OrchestrationMode.AGENTIC,
             confidence_boost=0.3,
             reasoning="specific file referenced",
+        ),
+    ]
+    
+    # Chain/pipeline signals → Sequential multi-step execution
+    CHAIN_PATTERNS = [
+        IntentPattern(
+            re.compile(r"\bfirst\s+\w+.*\bthen\s+\w+", re.I | re.DOTALL),
+            orchestration_mode=OrchestrationMode.CHAIN,
+            confidence_boost=0.4,
+            reasoning="first...then sequence detected",
+        ),
+        IntentPattern(
+            re.compile(r"\bstep\s*[1I]\b.*\bstep\s*[2II]\b", re.I | re.DOTALL),
+            orchestration_mode=OrchestrationMode.CHAIN,
+            confidence_boost=0.45,
+            reasoning="step 1...step 2 sequence detected",
+        ),
+        IntentPattern(
+            re.compile(r"\b(1\.|1\))\s*\w+.*\b(2\.|2\))\s*\w+", re.I | re.DOTALL),
+            orchestration_mode=OrchestrationMode.CHAIN,
+            confidence_boost=0.4,
+            reasoning="numbered list detected",
+        ),
+        IntentPattern(
+            re.compile(r"\b(analyze|review).*\b(then|and\s+then|after\s+that)\s*(generate|implement|write|create)\b", re.I),
+            orchestration_mode=OrchestrationMode.CHAIN,
+            confidence_boost=0.45,
+            reasoning="analyze-then-generate pipeline",
+        ),
+        IntentPattern(
+            re.compile(r"\b(generate|write|create).*\b(then|and\s+then)\s*(review|test|verify)\b", re.I),
+            orchestration_mode=OrchestrationMode.CHAIN,
+            confidence_boost=0.45,
+            reasoning="generate-then-review pipeline",
+        ),
+        IntentPattern(
+            re.compile(r"\b(plan|design).*\b(then|and\s+then|after\s+that)\s*(implement|build|create)\b", re.I),
+            orchestration_mode=OrchestrationMode.CHAIN,
+            confidence_boost=0.45,
+            reasoning="plan-then-implement pipeline",
+        ),
+        IntentPattern(
+            re.compile(r"\bpipeline\b.*\b(steps?|stages?|phases?)\b", re.I),
+            orchestration_mode=OrchestrationMode.CHAIN,
+            confidence_boost=0.35,
+            reasoning="pipeline mentioned",
         ),
     ]
     
@@ -321,9 +386,11 @@ class IntentDetector:
         """Initialize the intent detector with all patterns."""
         # Combine all patterns in priority order
         # AGENTIC first - file/shell ops take precedence
+        # CHAIN second - multi-step pipelines
         # STATUS early - melon/leaderboard queries should be fast
         self.all_patterns = (
             self.AGENTIC_PATTERNS +
+            self.CHAIN_PATTERNS +
             self.STATUS_PATTERNS +
             self.VERIFICATION_PATTERNS +
             self.COMPARISON_PATTERNS +
@@ -499,6 +566,18 @@ class IntentDetector:
         if intent.orchestration_mode == OrchestrationMode.VOTING:
             intent.k_votes = self._calculate_k(message, intent)
         
+        # Extract chain steps for chain mode
+        if intent.orchestration_mode == OrchestrationMode.CHAIN:
+            intent.chain_steps = self._extract_chain_steps(message)
+            # Fall back to NONE if we couldn't extract steps
+            if len(intent.chain_steps) < 2:
+                log.warning(
+                    "chain_steps_extraction_failed",
+                    message_preview=message[:100],
+                )
+                intent.orchestration_mode = OrchestrationMode.NONE
+                intent.reasoning += "; chain fallback (couldn't extract steps)"
+        
         log.info(
             "intent_detected",
             layer="regex",
@@ -579,6 +658,100 @@ class IntentDetector:
         )
         
         return max(2, min(k, 5))  # Clamp to reasonable range
+    
+    def _extract_chain_steps(self, message: str) -> list[str]:
+        """
+        Extract sequential steps from a chain-like message.
+        
+        Parses various formats:
+        - "First analyze, then generate, then review"
+        - "1. analyze 2. generate 3. review"
+        - "Step 1: analyze Step 2: generate"
+        
+        Returns list of step descriptions like ["analyze", "generate", "review"]
+        """
+        steps: list[str] = []
+        
+        # Pattern 1: "first... then... then..." 
+        first_then = re.search(
+            r"\bfirst\s+(.+?)(?:\.|,)?\s+(?:and\s+)?then\s+(.+?)(?:\.|,|$)",
+            message, re.I
+        )
+        if first_then:
+            steps.append(first_then.group(1).strip())
+            # Handle chained "then"s
+            remainder = message[first_then.end():]
+            then_matches = re.findall(r"\bthen\s+([^,.]+)", first_then.group(2) + " " + remainder, re.I)
+            if then_matches:
+                steps.extend([m.strip() for m in then_matches])
+            else:
+                steps.append(first_then.group(2).strip())
+            if steps:
+                return self._normalize_steps(steps)
+        
+        # Pattern 2: Numbered list "1. analyze 2. generate" or "1) analyze 2) generate"
+        numbered = re.findall(r"\b(\d+)[.)]\s*([^0-9.),]+)", message, re.I)
+        if len(numbered) >= 2:
+            steps = [step.strip() for _, step in sorted(numbered, key=lambda x: int(x[0]))]
+            return self._normalize_steps(steps)
+        
+        # Pattern 3: "Step 1: analyze, Step 2: generate" or "Step 1. analyze. Step 2. generate."
+        step_n = re.findall(r"\bstep\s*(\d+)[:.]\s*([^.]+)", message, re.I)
+        if len(step_n) >= 2:
+            steps = [step.strip() for _, step in sorted(step_n, key=lambda x: int(x[0]))]
+            return self._normalize_steps(steps)
+        
+        # Pattern 4: Comma-separated actions with "then" or "and"
+        action_chain = re.search(
+            r"\b(analyze|review|generate|write|plan|design|implement|test|debug|summarize|critique)"
+            r".*?(?:,\s*|\s+(?:then|and)\s+)"
+            r"(analyze|review|generate|write|plan|design|implement|test|debug|summarize|critique)",
+            message, re.I
+        )
+        if action_chain:
+            # Extract all action verbs in order
+            actions = re.findall(
+                r"\b(analyze|review|generate|write|plan|design|implement|test|debug|summarize|critique)\b",
+                message, re.I
+            )
+            if len(actions) >= 2:
+                steps = [a.lower() for a in actions]
+                return self._normalize_steps(steps)
+        
+        return []
+    
+    def _normalize_steps(self, steps: list[str]) -> list[str]:
+        """Normalize step descriptions to task types."""
+        # Map common phrases to task types
+        task_mapping = {
+            "analyze": "analyze",
+            "review": "review",
+            "generate": "generate",
+            "write": "generate",
+            "create": "generate",
+            "implement": "generate",
+            "build": "generate",
+            "plan": "plan",
+            "design": "plan",
+            "test": "review",
+            "debug": "analyze",
+            "summarize": "summarize",
+            "critique": "critique",
+            "fix": "generate",
+            "refactor": "generate",
+        }
+        
+        normalized = []
+        for step in steps:
+            # Extract first word as action
+            words = step.lower().split()
+            if words:
+                action = words[0]
+                task = task_mapping.get(action, "quick")
+                # Keep original step description but add task type
+                normalized.append(f"{task}: {step}")
+        
+        return normalized
     
     def needs_orchestration(self, intent: DetectedIntent) -> bool:
         """Check if intent requires orchestration (vs simple model call)."""

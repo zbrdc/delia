@@ -4,7 +4,7 @@
 """
 Melon Reward System 🍈
 
-Models earn melons for helpful responses. 100 melons = 1 golden melon.
+Models earn melons for helpful responses. 500 melons = 1 golden melon.
 This gamifies the ToolOrchestra "outcome reward" concept.
 
 Usage:
@@ -51,8 +51,8 @@ class MelonStats:
     
     @property
     def total_melon_value(self) -> int:
-        """Total value in melons (golden = 100 each)."""
-        return self.melons + (self.golden_melons * 100)
+        """Total value in melons (golden = 500 each)."""
+        return self.melons + (self.golden_melons * 500)
     
     def award(self, count: int = 1) -> bool:
         """
@@ -64,9 +64,9 @@ class MelonStats:
         self.melons += count
         earned_golden = False
         
-        # Check for golden melon promotion
-        while self.melons >= 100:
-            self.melons -= 100
+        # Check for golden melon promotion (500 melons = 1 golden)
+        while self.melons >= 500:
+            self.melons -= 500
             self.golden_melons += 1
             earned_golden = True
             log.info(
@@ -101,7 +101,7 @@ class MelonTracker:
     Tracks melon rewards across all models and task types.
     
     Melons are the currency of trust in Delia. Models earn them
-    by being helpful and accurate. Golden melons (100 melons)
+    by being helpful and accurate. Golden melons (500 melons)
     are highly prized and influence routing decisions.
     """
     
@@ -188,20 +188,22 @@ class MelonTracker:
     
     def get_melon_boost(self, model_id: str, task_type: str) -> float:
         """
-        Calculate routing boost based on melon count.
+        Calculate routing boost based on total melon value.
         
-        Golden melons give +10% boost each (up to 50% max).
-        Regular melons give +0.1% each.
+        Uses total_melon_value (melons + golden*500) for continuous scaling.
+        Max boost (50%) is reached at 500 total value (= 1 golden melon).
+        
+        Formula: boost = min(total_value * 0.001, 0.5)
         
         Returns:
             Boost factor (0.0 to 0.5)
         """
         stats = self._get_or_create(model_id, task_type)
         
-        golden_boost = stats.golden_melons * 0.10  # +10% per golden
-        melon_boost = stats.melons * 0.001  # +0.1% per melon
+        # Continuous scaling: 0.1% per melon, max 50% at 500 (1 golden)
+        total_boost = stats.total_melon_value * 0.001
         
-        return min(0.5, golden_boost + melon_boost)  # Cap at 50%
+        return min(0.5, total_boost)  # Cap at 50%
     
     def get_leaderboard(self, task_type: str | None = None) -> list[MelonStats]:
         """

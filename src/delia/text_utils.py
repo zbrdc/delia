@@ -21,12 +21,13 @@ import re
 def strip_thinking_tags(response: str) -> str:
     """Remove <think> tags from LLM response.
 
-    Some models (e.g., Qwen3, DeepSeek-R1) output thinking in <think>...</think>
-    tags. This function extracts the useful content:
+    Some models (e.g., Qwen3, DeepSeek-R1, nemotron) output thinking in 
+    <think>...</think> tags. This function extracts the useful content:
 
     1. If there's content after </think>, return that (the "answer")
-    2. If </think> is at the end, return the thinking content itself
-    3. If no thinking tags, return the original response
+    2. If </think> is at the end but <think> exists, return thinking content
+    3. If </think> exists without <think> (malformed), strip everything before it
+    4. If no thinking tags, return the original response
 
     Args:
         response: Raw LLM response text
@@ -42,9 +43,14 @@ def strip_thinking_tags(response: str) -> str:
     if after_think:
         return after_think
 
-    # No content after thinking - extract thinking content itself
-    match = re.search(r"<think>(.*?)</think>", response, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-
-    return response
+    # No content after </think> - check if <think> tag exists
+    if "<think>" in response:
+        # Extract thinking content between tags
+        match = re.search(r"<think>(.*?)</think>", response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+    
+    # Malformed: </think> exists but no <think> and no content after
+    # This shouldn't normally happen, but return empty or original
+    # Remove everything up to and including </think>
+    return response.replace("</think>", "").strip()

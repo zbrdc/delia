@@ -31,9 +31,13 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 import structlog
 
+from pydantic import BaseModel
+
 from .intent import DetectedIntent
 from .prompts import get_prompt_generator
 from .result import OrchestrationMode, OrchestrationResult, StreamEvent
+from .outputs import get_json_schema_prompt, parse_structured_output
+from ..text_utils import strip_thinking_tags
 
 if TYPE_CHECKING:
     from ..backend_manager import BackendConfig
@@ -69,6 +73,7 @@ class OrchestrationExecutor:
         session_id: str | None = None,
         backend_type: str | None = None,
         model_override: str | None = None,
+        output_type: type[BaseModel] | None = None,
     ) -> OrchestrationResult:
         """
         Execute orchestration based on detected intent.
@@ -79,9 +84,12 @@ class OrchestrationExecutor:
             session_id: Optional session for conversation continuity
             backend_type: Optional backend preference (local/remote)
             model_override: Optional model to force
+            output_type: Optional Pydantic model for structured output
             
         Returns:
-            OrchestrationResult with response and metadata
+            OrchestrationResult with response and metadata.
+            If output_type is specified, result.structured will contain
+            the parsed Pydantic model instance.
         """
         start_time = time.time()
         
@@ -91,11 +99,18 @@ class OrchestrationExecutor:
             task_type=intent.task_type,
             role=intent.model_role.value,
             confidence=intent.confidence,
+            structured_output=output_type.__name__ if output_type else None,
         )
         
         # Handle status queries directly (melons, health, etc.)
         if intent.task_type == "status":
             return await self._execute_status_query(intent, message)
+        
+        # If structured output requested, modify the message to request JSON
+        original_message = message
+        if output_type:
+            json_instruction = get_json_schema_prompt(output_type)
+            message = f"{message}\n\n{json_instruction}"
         
         # Route to appropriate handler based on mode
         try:
@@ -115,6 +130,10 @@ class OrchestrationExecutor:
                 result = await self._execute_deep_thinking(
                     intent, message, backend_type, model_override
                 )
+            elif intent.orchestration_mode == OrchestrationMode.CHAIN:
+                result = await self._execute_chain(
+                    intent, message, backend_type, model_override
+                )
             else:
                 # Default: simple single model call
                 result = await self._execute_simple(
@@ -122,6 +141,27 @@ class OrchestrationExecutor:
                 )
             
             result.elapsed_ms = int((time.time() - start_time) * 1000)
+            
+            # Parse structured output if requested
+            if output_type and result.success:
+                try:
+                    result.structured = parse_structured_output(
+                        result.response, output_type
+                    )
+                    result.structured_success = True
+                    log.debug(
+                        "structured_output_parsed",
+                        output_type=output_type.__name__,
+                    )
+                except ValueError as e:
+                    result.structured_success = False
+                    result.structured_error = str(e)
+                    log.warning(
+                        
+                        "structured_output_parse_failed",
+                        output_type=output_type.__name__,
+                        error=str(e),
+                    )
             
             # Award melons based on quality
             if result.success and result.model_used:
@@ -171,6 +211,11 @@ class OrchestrationExecutor:
                 yield event
         elif intent.orchestration_mode == OrchestrationMode.COMPARISON:
             async for event in self._execute_comparison_stream(
+                intent, message, backend_type, model_override
+            ):
+                yield event
+        elif intent.orchestration_mode == OrchestrationMode.CHAIN:
+            async for event in self._execute_chain_stream(
                 intent, message, backend_type, model_override
             ):
                 yield event
@@ -245,8 +290,7 @@ Start chatting to grow the garden!"""
                 response=response,
                 success=True,
                 model_used="system",
-                backend_used="delia",
-                orchestration_mode="status",
+                mode=OrchestrationMode.NONE,
             )
         
         # Unknown status query - fall through to simple
@@ -315,7 +359,7 @@ Start chatting to grow the garden!"""
                 model_used=selected_model,
             )
         
-        response = result.get("response", "")
+        response = strip_thinking_tags(result.get("response", ""))
         
         # Validate quality
         quality_result = validate_response(response, intent.task_type)
@@ -502,7 +546,7 @@ Start chatting to grow the garden!"""
                 config=agent_config,
             )
             
-            response = agent_result.response or "No response"
+            response = strip_thinking_tags(agent_result.response or "No response")
             
             # Validate quality
             quality_result = validate_response(response, intent.task_type)
@@ -618,7 +662,7 @@ Start chatting to grow the garden!"""
             if not result.get("success"):
                 continue
             
-            response = result.get("response", "")
+            response = strip_thinking_tags(result.get("response", ""))
             vote_result = consensus.add_vote(response)
             
             if vote_result.red_flagged:
@@ -785,7 +829,7 @@ Start chatting to grow the garden!"""
             elapsed = int((time.time() - start) * 1000)
             
             if result.get("success"):
-                responses.append((model, result.get("response", ""), elapsed))
+                responses.append((model, strip_thinking_tags(result.get("response", "")), elapsed))
             else:
                 responses.append((model, f"Error: {result.get('error')}", elapsed))
         
@@ -898,11 +942,200 @@ Start chatting to grow the garden!"""
             )
         
         return OrchestrationResult(
-            response=result.get("response", ""),
+            response=strip_thinking_tags(result.get("response", "")),
             success=True,
             model_used=selected_model,
             mode=OrchestrationMode.DEEP_THINKING,
         )
+    
+    async def _execute_chain(
+        self,
+        intent: DetectedIntent,
+        message: str,
+        backend_type: str | None,
+        model_override: str | None,
+    ) -> OrchestrationResult:
+        """
+        Execute a chain of sequential steps, passing outputs forward.
+        
+        Each step's output is appended to the context for the next step.
+        This enables pipelines like: analyze → generate → review
+        """
+        from ..backend_manager import backend_manager
+        from ..llm import call_llm
+        from ..routing import select_model
+        from ..mcp_server import _select_optimal_backend_v2
+        from ..tracing import trace, add_event
+        
+        if not intent.chain_steps or len(intent.chain_steps) < 2:
+            log.warning("chain_no_steps", intent=intent)
+            return await self._execute_simple(intent, message, backend_type, model_override)
+        
+        with trace("chain_execution", steps=len(intent.chain_steps)) as span:
+            step_outputs: list[str] = []
+            models_used: list[str] = []
+            current_context = message
+            
+            for i, step_desc in enumerate(intent.chain_steps):
+                # Parse step: "task_type: description"
+                if ":" in step_desc:
+                    task_type, step_prompt = step_desc.split(":", 1)
+                    task_type = task_type.strip()
+                    step_prompt = step_prompt.strip()
+                else:
+                    task_type = "quick"
+                    step_prompt = step_desc
+                
+                span.event(f"step_{i+1}_start", task_type=task_type, prompt_preview=step_prompt[:50])
+                
+                # Select backend and model for this step
+                _, backend_obj = await _select_optimal_backend_v2(
+                    current_context, None, task_type, backend_type
+                )
+                
+                if not backend_obj:
+                    span.set_error(f"No backend available for step {i+1}")
+                    return OrchestrationResult(
+                        response=f"Error: No backend available for step {i+1}",
+                        success=False,
+                        error="no_backend",
+                    )
+                
+                selected_model = model_override or await select_model(
+                    task_type=task_type,
+                    content_size=len(current_context),
+                    content=current_context,
+                )
+                
+                # Build prompt with context from previous steps
+                if step_outputs:
+                    context_section = "\n\n---\n**Previous step output:**\n" + step_outputs[-1]
+                    full_prompt = f"{step_prompt}\n\n**Original request:** {message}{context_section}"
+                else:
+                    full_prompt = f"{step_prompt}\n\n**Original request:** {message}"
+                
+                # Generate step-specific system prompt
+                step_intent = DetectedIntent(
+                    task_type=task_type,
+                    orchestration_mode=OrchestrationMode.CHAIN,
+                    confidence=intent.confidence,
+                )
+                system_prompt = self.prompt_generator.generate(
+                    step_intent,
+                    user_message=full_prompt,
+                    model_name=selected_model,
+                )
+                
+                # Execute step
+                result = await call_llm(
+                    model=selected_model,
+                    prompt=full_prompt,
+                    system=system_prompt,
+                    task_type=task_type,
+                    original_task="chain_step",
+                    language="unknown",
+                    content_preview=full_prompt[:100],
+                    backend_obj=backend_obj,
+                )
+                
+                if not result.get("success"):
+                    span.set_error(f"Step {i+1} failed: {result.get('error', 'unknown')}")
+                    return OrchestrationResult(
+                        response=f"Chain failed at step {i+1}: {result.get('error', 'unknown')}",
+                        success=False,
+                        error=f"chain_step_{i+1}_failed",
+                        model_used=selected_model,
+                        mode=OrchestrationMode.CHAIN,
+                    )
+                
+                step_output = strip_thinking_tags(result.get("response", ""))
+                step_outputs.append(step_output)
+                models_used.append(selected_model)
+                
+                # Update context with this step's output
+                current_context = f"{message}\n\nStep {i+1} output: {step_output}"
+                
+                span.event(f"step_{i+1}_complete", model=selected_model, output_len=len(step_output))
+            
+            # Combine all step outputs for final response
+            final_response = self._format_chain_response(intent.chain_steps, step_outputs)
+            
+            return OrchestrationResult(
+                response=final_response,
+                success=True,
+                model_used=models_used[-1] if models_used else None,
+                mode=OrchestrationMode.CHAIN,
+                voting_stats={
+                    "chain_steps": len(intent.chain_steps),
+                    "models_used": models_used,
+                    "step_lengths": [len(o) for o in step_outputs],
+                },
+            )
+    
+    async def _execute_chain_stream(
+        self,
+        intent: DetectedIntent,
+        message: str,
+        backend_type: str | None,
+        model_override: str | None,
+    ) -> AsyncIterator[StreamEvent]:
+        """
+        Execute a chain with streaming progress updates.
+        """
+        if not intent.chain_steps or len(intent.chain_steps) < 2:
+            result = await self._execute_simple(intent, message, backend_type, model_override)
+            yield StreamEvent(
+                event_type="response",
+                message=result.response,
+                details={"model": result.model_used}
+            )
+            return
+        
+        yield StreamEvent(
+            event_type="status",
+            message=f"Executing {len(intent.chain_steps)}-step chain...",
+            details={"steps": intent.chain_steps}
+        )
+        
+        # Execute chain and yield progress
+        result = await self._execute_chain(intent, message, backend_type, model_override)
+        
+        if result.success:
+            yield StreamEvent(
+                event_type="response",
+                message=result.response,
+                details={
+                    "model": result.model_used,
+                    "chain_stats": result.voting_stats,
+                }
+            )
+        else:
+            yield StreamEvent(
+                event_type="error",
+                message=result.response,
+                details={"error": result.error}
+            )
+    
+    def _format_chain_response(
+        self,
+        steps: list[str],
+        outputs: list[str],
+    ) -> str:
+        """Format chain outputs into a readable response."""
+        parts = ["## Chain Execution Results\n"]
+        
+        for i, (step, output) in enumerate(zip(steps, outputs)):
+            # Extract task type from step description
+            if ":" in step:
+                task_type, desc = step.split(":", 1)
+                step_header = f"### Step {i+1}: {task_type.upper()} - {desc.strip()}"
+            else:
+                step_header = f"### Step {i+1}: {step}"
+            
+            parts.append(f"{step_header}\n")
+            parts.append(f"{output.strip()}\n")
+        
+        return "\n".join(parts)
     
     def _award_melons(self, result: OrchestrationResult, intent: DetectedIntent) -> None:
         """Award melons based on orchestration result."""
