@@ -365,27 +365,7 @@ class OrchestrationExecutor:
             handler=delegate_subtask,
         ))
         
-        # Create LLM call function for agent loop
-        async def agent_llm_call(
-            prompt: str,
-            system: str | None = None,
-            tools: list | None = None,
-            tool_choice: str | None = None,
-        ) -> dict:
-            return await call_llm(
-                model=selected_model,
-                prompt=prompt,
-                system=system or system_prompt,
-                task_type=intent.task_type,
-                original_task=intent.task_type,
-                language="unknown",
-                content_preview=prompt[:100],
-                backend_obj=backend_obj,
-                tools=tools,
-                tool_choice=tool_choice,
-            )
-        
-        # Configure agent
+        # Configure agent first (needed by llm_call closure)
         agent_config = AgentConfig(
             max_iterations=10,
             timeout_per_tool=60,
@@ -396,6 +376,34 @@ class OrchestrationExecutor:
             allow_exec=True,
             require_confirmation=False,  # No confirmation in programmatic mode
         )
+        
+        # Create LLM call function for agent loop
+        # Signature must be: (messages: list[dict], system: str | None) -> str | dict
+        async def agent_llm_call(
+            messages: list[dict],
+            system: str | None = None,
+        ) -> dict:
+            # Extract the last user message as prompt
+            prompt = ""
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    prompt = msg.get("content", "")
+                    break
+            
+            # Get tool schemas from registry for native tool calling
+            tools = registry.to_openai_tools() if agent_config.native_tool_calling else None
+            
+            return await call_llm(
+                model=selected_model,
+                prompt=prompt,
+                system=system or system_prompt,
+                task_type=intent.task_type,
+                original_task=intent.task_type,
+                language="unknown",
+                content_preview=prompt[:100],
+                backend_obj=backend_obj,
+                tools=tools,
+            )
         
         log.info(
             "agentic_execution_started",
