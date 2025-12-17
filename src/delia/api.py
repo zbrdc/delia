@@ -1647,11 +1647,14 @@ async def chat_nlp_orchestrated_stream(
     from .orchestration import detect_intent, get_orchestration_executor
     from .orchestration.result import OrchestrationMode
     from .config import get_affinity_tracker
-    from .melons import award_melons_for_quality
+    from .melons import award_melons_for_quality, get_melon_tracker
+    from .frustration import get_frustration_tracker
     
     start_time = time.time()
     manager = SessionManager()
     executor = get_orchestration_executor()
+    frustration_tracker = get_frustration_tracker()
+    melon_tracker = get_melon_tracker()
     
     # Get or create session
     if session_id:
@@ -1664,9 +1667,42 @@ async def chat_nlp_orchestrated_stream(
         session_id = session.session_id
         yield await sse_event("session", {"id": session_id, "created": True})
     
+    # STEP 0: Check for repeated questions (frustration detection)
+    # Repeated questions = implicit negative feedback for previous answer
+    repeat_info = frustration_tracker.check_repeat(session_id, message)
+    
+    if repeat_info.is_repeat:
+        # Penalize previous model - user is frustrated with its answer
+        if repeat_info.previous_model:
+            penalty = 2 + repeat_info.repeat_count  # More repeats = more penalty
+            melon_tracker.penalize(repeat_info.previous_model, "quick", melons=penalty)
+            
+            log.warning(
+                "frustration_penalty_applied",
+                model=repeat_info.previous_model,
+                penalty=penalty,
+                repeat_count=repeat_info.repeat_count,
+            )
+            
+            yield await sse_event("frustration", {
+                "detected": True,
+                "repeat_count": repeat_info.repeat_count,
+                "previous_model": repeat_info.previous_model,
+                "penalty_melons": penalty,
+                "message": f"Repeat detected ({repeat_info.repeat_count}x) - penalized {repeat_info.previous_model}",
+            })
+    
     # STEP 1: NLP Intent Detection (this is the key!)
     # Delia determines what orchestration is needed, not the model
     intent = detect_intent(message)
+    
+    # Auto-upgrade to VOTING if repeated question (get a reliable answer this time)
+    if repeat_info.is_repeat and repeat_info.repeat_count >= 2:
+        if intent.orchestration_mode == OrchestrationMode.NONE:
+            log.info("frustration_auto_voting", repeat_count=repeat_info.repeat_count)
+            intent.orchestration_mode = OrchestrationMode.VOTING
+            intent.k_votes = min(3 + repeat_info.repeat_count, 5)
+            intent.reasoning = f"auto-voting due to {repeat_info.repeat_count}x repeat; {intent.reasoning}"
     
     yield await sse_event("intent", {
         "task_type": intent.task_type,
@@ -1752,6 +1788,14 @@ async def chat_nlp_orchestrated_stream(
                 "assistant",
                 result.response,
                 model=result.model_used,
+            )
+            
+            # Record for frustration tracking (detect future repeats)
+            frustration_tracker.record_response(
+                session_id=session_id,
+                message=message,
+                model_used=result.model_used,
+                response=result.response,
             )
             
             # Emit orchestration details if not simple

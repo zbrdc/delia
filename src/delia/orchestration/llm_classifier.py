@@ -47,7 +47,7 @@ Output ONLY valid JSON (no markdown, no explanation):
 
 Guidelines:
 - task_type: "quick" for simple questions, "coder" for programming, "moe" for complex analysis, "thinking" for deep reasoning, "status" for system queries
-- orchestration_mode: "voting" if user wants verification/certainty, "comparison" for multiple viewpoints, "deep_thinking" for thorough analysis, "agentic" for file/shell operations,code, coding quesitons, "none" otherwise
+- orchestration_mode: "voting" if user wants verification/certainty, "comparison" for multiple viewpoints, "deep_thinking" for thorough analysis, "agentic" for file/shell operations,code,logic, reasoning, coding quesitons, "none" otherwise
 - model_role: Choose based on what the user needs (reviewing code? generating code? explaining? debugging?)
 - confidence: Your certainty about this classification (0.5 = uncertain, 0.9 = very confident)
 
