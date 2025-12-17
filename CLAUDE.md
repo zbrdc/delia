@@ -42,7 +42,7 @@ DELIA_DATA_DIR=/tmp/delia-test-data uv run pytest
 
 - **`src/delia/config.py`**: Configuration models (`ModelConfig`, `Config`) and backend health tracking with circuit breaker logic (`BackendHealth`). Also contains model name parsing utilities to detect model tiers from names.
 
-- **`src/delia/paths.py`**: Centralized path management. Uses `DELIA_DATA_DIR` env var if set, otherwise `~/.cache/delia`. All data files (stats, logs, database) go through this module.
+- **`src/delia/paths.py`**: Centralized path management. Settings file priority: `DELIA_SETTINGS_FILE` env → `./settings.json` → `~/.delia/settings.json` → `<project>/settings.json`. Data dir priority: `DELIA_DATA_DIR` env → `<project>/data/` (if exists) → `~/.delia/data/`.
 
 - **`src/delia/schemas/`**: Typed Pydantic schemas for structured JSON tool interfaces. Contains `enums.py` (TaskType, ModelTier, Language, etc.), `requests.py` (CodeReviewRequest, etc.), and `responses.py` (StructuredResponse, etc.).
 
@@ -99,7 +99,7 @@ Backend configuration lives in `settings.json` (created at first run). Structure
 
 ### Data Storage
 
-All persistent data stored in `DELIA_DATA_DIR` (default `~/.cache/delia`):
+All persistent data stored in `DELIA_DATA_DIR` (default `~/.delia/data/` or `<project>/data/` if it exists):
 - `usage_stats.json`: Model usage counts
 - `enhanced_stats.json`: Detailed statistics
 - `circuit_breaker.json`: Backend failure states

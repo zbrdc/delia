@@ -168,6 +168,7 @@ class GeminiProvider:
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        temperature: float | None = None,
     ) -> LLMResponse:
         """Call Google Gemini API with stats tracking and circuit breaker.
 

@@ -63,14 +63,8 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
   const detectedLang = detectLanguage(code, language);
   const highlighted = highlightCode(code, detectedLang);
 
-  // Split into lines and optionally truncate
-  let lines = highlighted.split("\n");
-  let truncated = false;
-
-  if (maxLines && lines.length > maxLines) {
-    lines = lines.slice(0, maxLines);
-    truncated = true;
-  }
+  // Split into lines - no truncation, show full content
+  const lines = highlighted.split("\n");
 
   // Add line numbers if requested
   const lineNumberWidth = String(lines.length).length;
@@ -94,17 +88,10 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
         </Box>
       )}
       <Box
-        borderStyle="round"
-        borderColor="dim"
-        paddingX={1}
+        paddingX={2}
         flexDirection="column"
       >
         <Text>{content}</Text>
-        {truncated && (
-          <Text color="dim" italic>
-            ... ({lines.length} of {code.split("\n").length} lines shown)
-          </Text>
-        )}
       </Box>
     </Box>
   );

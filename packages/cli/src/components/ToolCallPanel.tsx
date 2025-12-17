@@ -109,7 +109,7 @@ function getStatusIndicator(status: ToolCall["status"]): { icon: string; color: 
     case "running":
       return { icon: "", color: "yellow" };
     case "success":
-      return { icon: "✓", color: "green" };
+      return { icon: "[OK]", color: "green" };
     case "error":
       return { icon: "✗", color: "red" };
   }
@@ -154,7 +154,7 @@ const OutputViewer: React.FC<{
 
   return (
     <Box flexDirection="column" marginLeft={2}>
-      <Box borderStyle="round" borderColor="dim" paddingX={1}>
+      <Box paddingX={2}>
         <Text>{text}</Text>
       </Box>
       {truncated && !expanded && (

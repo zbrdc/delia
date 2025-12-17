@@ -39,6 +39,8 @@ dependencies = [
     # CLI
     "typer>=0.15.0",
     "duckduckgo-search>=8.1.1",
+    # Use wsproto instead of websockets legacy API (websockets 15+ deprecated legacy)
+    "wsproto>=1.2.0",
 ]
 
 [build-system]

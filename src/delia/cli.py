@@ -182,25 +182,25 @@ def print_header(text: str) -> None:
 def print_success(text: str) -> None:
     """Print success message."""
     if RICH_AVAILABLE and console:
-        console.print(f"  [green]✅ {text}[/green]")
+        console.print(f"  [green][OK] {text}[/green]")
     else:
-        print(f"  ✅ {text}")
+        print(f"  [OK] {text}")
 
 
 def print_warning(text: str) -> None:
     """Print warning message."""
     if RICH_AVAILABLE and console:
-        console.print(f"  [yellow]⚠️  {text}[/yellow]")
+        console.print(f"  [yellow][WARN] {text}[/yellow]")
     else:
-        print(f"  ⚠️  {text}")
+        print(f"  [WARN] {text}")
 
 
 def print_error(text: str) -> None:
     """Print error message."""
     if RICH_AVAILABLE and console:
-        console.print(f"  [red]❌ {text}[/red]")
+        console.print(f"  [red][FAIL] {text}[/red]")
     else:
-        print(f"  ❌ {text}")
+        print(f"  [FAIL] {text}")
 
 
 def print_info(text: str) -> None:
@@ -466,7 +466,7 @@ def generate_settings(backends: list[DetectedBackend]) -> dict[str, Any]:
 
 app = typer.Typer(
     name="delia",
-    help="Delia MCP Server - Route prompts to local LLMs",
+    help="Delia - Local LLM chat and orchestration",
     no_args_is_help=False,
 )
 
@@ -665,9 +665,9 @@ def doctor() -> None:
     """
     print()
     if RICH_AVAILABLE and console:
-        console.print("[bold]🔍 Delia Health Check[/bold]")
+        console.print("[bold]Delia Health Check[/bold]")
     else:
-        print("🔍 Delia Health Check")
+        print("Delia Health Check")
         print("=" * 40)
 
     delia_root = get_delia_root()
@@ -784,7 +784,7 @@ def serve(
 
 @app.command()
 def api(
-    port: int = typer.Option(8201, "--port", "-p", help="Port for API server"),
+    port: int = typer.Option(None, "--port", "-p", help="Port for API server (default: auto-select)"),
     host: str = typer.Option("0.0.0.0", "--host", help="Host to bind"),
 ) -> None:
     """
@@ -798,10 +798,170 @@ def api(
         GET  /api/sessions    - List sessions
 
     Example:
-        delia api --port 8201
+        delia api --port 34589
     """
     from .api import run_api
+
+    if port is None:
+        port = _find_free_port()
+        print_info(f"Using port {port}")
+
     run_api(host=host, port=port)
+
+
+def _find_free_port(start: int = 34589, end: int = 34689) -> int:
+    """Find a free port in the given range."""
+    import socket
+    import random
+
+    # Try random ports in range
+    ports = list(range(start, end))
+    random.shuffle(ports)
+
+    for port in ports:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("localhost", port)) != 0:
+                return port
+
+    # Fallback: let OS pick
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+@app.command()
+def chat(
+    model: str = typer.Option(None, "--model", "-m", help="Model tier (quick/coder/moe) or specific model"),
+    backend: str = typer.Option(None, "--backend", "-b", help="Force backend type (local/remote)"),
+    session: str = typer.Option(None, "--session", "-s", help="Resume existing session by ID"),
+    port: int = typer.Option(None, "--port", "-p", help="API server port (default: auto-select)"),
+) -> None:
+    """
+    Start an interactive chat session.
+
+    This launches the chat interface, automatically starting the API server
+    if needed. The chat provides a REPL-style interface for conversations.
+
+    Examples:
+        delia chat                    # Start chat with default settings
+        delia chat --model coder      # Use coder model tier
+        delia chat --session abc123   # Resume existing session
+    """
+    import atexit
+    import signal
+    import socket
+    import sys
+    import time
+
+    # Auto-select port if not specified
+    if port is None:
+        port = _find_free_port()
+
+    api_url = f"http://localhost:{port}"
+
+    # Check if API server is already running
+    def is_port_in_use(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(("localhost", port)) == 0
+
+    api_process = None
+
+    if not is_port_in_use(port):
+        print_info(f"Starting API server on port {port}...")
+
+        # Pass settings file to subprocess via environment variable
+        # This ensures the API uses the same settings as the CLI
+        env = os.environ.copy()
+        env["DELIA_SETTINGS_FILE"] = str(SETTINGS_FILE)
+
+        # Start API server in background
+        # Capture stderr for debugging startup failures
+        import tempfile
+        stderr_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.log')
+        api_process = subprocess.Popen(
+            [sys.executable, "-m", "delia.api", "--port", str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_file,
+            env=env,
+        )
+
+        # Register cleanup
+        def cleanup():
+            if api_process and api_process.poll() is None:
+                api_process.terminate()
+                try:
+                    api_process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    api_process.kill()
+
+        atexit.register(cleanup)
+
+        # Also handle signals
+        def signal_handler(sig, frame):
+            cleanup()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+        # Wait for server to be ready
+        for _ in range(50):  # 5 second timeout (increased from 3s)
+            if is_port_in_use(port):
+                break
+            # Check if process died
+            if api_process.poll() is not None:
+                stderr_file.close()
+                with open(stderr_file.name) as f:
+                    stderr_content = f.read()
+                os.unlink(stderr_file.name)
+                print_error("API server process exited unexpectedly")
+                if stderr_content.strip():
+                    print_error(f"Error output:\n{stderr_content[:500]}")
+                raise typer.Exit(1)
+            time.sleep(0.1)
+        else:
+            # Timeout - server didn't respond
+            stderr_file.close()
+            with open(stderr_file.name) as f:
+                stderr_content = f.read()
+            os.unlink(stderr_file.name)
+            print_error("API server failed to start (timeout)")
+            if stderr_content.strip():
+                print_info(f"Server output:\n{stderr_content[:500]}")
+            if api_process:
+                api_process.terminate()
+            raise typer.Exit(1)
+        
+        # Clean up temp file on success
+        stderr_file.close()
+        os.unlink(stderr_file.name)
+
+        print_success("API server started")
+
+    # Build delia-cli command
+    cli_cmd = ["delia-cli", "chat", "--api-url", api_url]
+    if model:
+        cli_cmd.extend(["--model", model])
+    if backend:
+        cli_cmd.extend(["--backend", backend])
+    if session:
+        cli_cmd.extend(["--session", session])
+
+    # Check if delia-cli is available
+    if not shutil.which("delia-cli"):
+        print_error("delia-cli not found in PATH")
+        print_info("Install it with: cd packages/cli && npm install && npm link")
+        if api_process:
+            api_process.terminate()
+        raise typer.Exit(1)
+
+    # Run the chat CLI
+    try:
+        result = subprocess.run(cli_cmd, check=False)
+        raise typer.Exit(result.returncode)
+    finally:
+        if api_process and api_process.poll() is None:
+            api_process.terminate()
 
 
 @app.command()
@@ -990,18 +1150,19 @@ def uninstall(
         print_info(f"  • Source: {get_delia_root()}")
 
 
-# Default command: run the server if no command specified
+# Default command: launch chat if no command specified
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
     """
-    Delia MCP Server - Route prompts to local LLMs.
+    Delia - Local LLM orchestration and chat.
 
-    Run without arguments to start the server in STDIO mode.
+    Run without arguments to start an interactive chat session.
+    Use 'delia serve' to start the MCP server.
     Use 'delia init' for first-time setup.
     """
     if ctx.invoked_subcommand is None:
-        # No command specified, run the server
-        run()
+        # No command specified, launch chat with defaults
+        chat(model=None, backend=None, session=None, port=None)
 
 
 if __name__ == "__main__":

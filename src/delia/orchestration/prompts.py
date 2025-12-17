@@ -1,0 +1,122 @@
+# Copyright (C) 2024 Delia Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""
+Orchestration-specific prompt generation.
+
+Wraps the unified prompt system with orchestration-specific logic.
+All base prompts come from src/delia/prompts.py - no duplication.
+"""
+
+from __future__ import annotations
+
+from ..prompts import (
+    ModelRole,
+    OrchestrationMode,
+    build_system_prompt,
+    detect_language,
+    get_role_for_task,
+    ROLE_PROMPTS,
+)
+from .result import DetectedIntent
+
+
+class SystemPromptGenerator:
+    """
+    Generates task-specific system prompts for orchestrated operations.
+    
+    Thin wrapper around the unified prompt system that handles
+    DetectedIntent objects from the orchestration layer.
+    """
+    
+    def generate(
+        self,
+        intent: DetectedIntent,
+        user_message: str | None = None,
+        model_name: str | None = None,
+        backend_name: str | None = None,
+    ) -> str:
+        """
+        Generate a task-specific system prompt from a DetectedIntent.
+        
+        Args:
+            intent: The detected intent from the user message
+            user_message: Optional - the original message for context
+            model_name: Optional - current model for self-reference
+            backend_name: Optional - current backend (unused, for API compat)
+            
+        Returns:
+            Complete system prompt for the model
+        """
+        # Detect language if this is a coding task
+        language = None
+        if intent.task_type == "coder" and user_message:
+            language = detect_language(user_message)
+        
+        # Map orchestration mode
+        orch_mode = self._map_orchestration_mode(intent.orchestration_mode)
+        
+        return build_system_prompt(
+            task_type=intent.task_type,
+            role=intent.model_role,
+            orchestration_mode=orch_mode,
+            model_name=model_name,
+            language=language,
+            include_capabilities=True,
+            k_votes=getattr(intent, 'k_votes', None),
+        )
+    
+    def _map_orchestration_mode(self, mode) -> OrchestrationMode:
+        """Map from result.OrchestrationMode to prompts.OrchestrationMode."""
+        # Handle both string and enum
+        mode_str = mode.value if hasattr(mode, 'value') else str(mode)
+        
+        mapping = {
+            "none": OrchestrationMode.NONE,
+            "voting": OrchestrationMode.VOTING,
+            "comparison": OrchestrationMode.COMPARISON,
+            "deep_thinking": OrchestrationMode.DEEP_THINKING,
+            "batch": OrchestrationMode.BATCH,
+        }
+        return mapping.get(mode_str, OrchestrationMode.NONE)
+    
+    def get_role_description(self, role: ModelRole) -> str:
+        """Get human-readable description of a role."""
+        descriptions = {
+            ModelRole.ASSISTANT: "General Assistant",
+            ModelRole.CODE_REVIEWER: "Code Reviewer",
+            ModelRole.CODE_GENERATOR: "Code Generator",
+            ModelRole.ARCHITECT: "Software Architect",
+            ModelRole.EXPLAINER: "Teacher/Explainer",
+            ModelRole.DEBUGGER: "Debugger",
+            ModelRole.ANALYST: "Technical Analyst",
+            ModelRole.SUMMARIZER: "Summarizer",
+        }
+        return descriptions.get(role, str(role.value))
+
+
+# Singleton instance
+_generator: SystemPromptGenerator | None = None
+
+
+def get_prompt_generator() -> SystemPromptGenerator:
+    """Get the singleton prompt generator."""
+    global _generator
+    if _generator is None:
+        _generator = SystemPromptGenerator()
+    return _generator
+
+
+def generate_system_prompt(intent: DetectedIntent, **kwargs) -> str:
+    """Generate a system prompt from a DetectedIntent."""
+    return get_prompt_generator().generate(intent, **kwargs)
+
+
+# Re-export for convenience
+__all__ = [
+    "SystemPromptGenerator",
+    "get_prompt_generator",
+    "generate_system_prompt",
+    "ModelRole",
+    "OrchestrationMode",
+]

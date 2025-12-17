@@ -34,24 +34,33 @@ USER_DELIA_DIR = Path.home() / ".delia"
 
 # Determine Settings File
 # Priority:
-# 1. DELIA_SETTINGS_FILE environment variable
-# 2. settings.json in Current Working Directory (local override)
-# 3. settings.json in ~/.delia/ (global user config)
-# 4. settings.json in Project Root (legacy/dev mode)
+# 1. DELIA_SETTINGS_FILE environment variable (allows explicit override)
+# 2. settings.json in ~/.delia/ (global user config - preferred)
+# 3. settings.json in Current Working Directory (local override for dev)
+# 4. settings.json in Project Root (legacy/dev mode fallback)
 def _find_settings_file() -> Path:
+    # Environment variable takes absolute priority (used by subprocess communication)
     env_path = os.environ.get("DELIA_SETTINGS_FILE")
     if env_path:
         return Path(env_path)
     
+    # User config is the preferred location (consistent across all contexts)
+    user_path = USER_DELIA_DIR / "settings.json"
+    if user_path.exists():
+        return user_path
+    
+    # CWD for local development overrides
     cwd_path = Path.cwd() / "settings.json"
     if cwd_path.exists():
         return cwd_path
         
-    user_path = USER_DELIA_DIR / "settings.json"
-    if user_path.exists():
-        return user_path
-        
-    return PROJECT_ROOT / "settings.json"
+    # Project root fallback for dev mode
+    project_path = PROJECT_ROOT / "settings.json"
+    if project_path.exists():
+        return project_path
+    
+    # Default to user path (will be created on first run)
+    return user_path
 
 SETTINGS_FILE = _find_settings_file()
 

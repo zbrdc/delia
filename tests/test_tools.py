@@ -115,8 +115,9 @@ class TestToolRegistry:
         registry = get_default_tools()
         schemas = registry.get_openai_schemas()
 
-        # Default tools: read_file, list_directory, search_code, web_fetch, web_search, web_news
-        assert len(schemas) == 6
+        # All tools: read_file, list_directory, search_code, web_fetch, web_search, web_news,
+        # write_file, delete_file, shell_exec
+        assert len(schemas) == 9
         assert all(s["type"] == "function" for s in schemas)
 
     def test_filter_registry(self):
@@ -326,10 +327,23 @@ class TestBuiltinTools:
         """Test that default tools are properly registered."""
         registry = get_default_tools()
 
+        # Read-only tools
         assert "read_file" in registry
         assert "list_directory" in registry
         assert "search_code" in registry
         assert "web_fetch" in registry
+        assert "web_search" in registry
+        assert "web_news" in registry
+
+        # Dangerous tools (always registered, but require confirmation)
+        assert "write_file" in registry
+        assert "delete_file" in registry
+        assert "shell_exec" in registry
+
+        # Verify dangerous tools are marked as such
+        assert registry.get("write_file").dangerous is True
+        assert registry.get("delete_file").dangerous is True
+        assert registry.get("shell_exec").dangerous is True
 
     @pytest.mark.asyncio
     async def test_read_file_success(self):
@@ -758,8 +772,9 @@ class TestAgentLoop:
         # Verify tools were included in payload
         assert captured_payload is not None
         assert "tools" in captured_payload
-        # Default tools: read_file, list_directory, search_code, web_fetch, web_search, web_news
-        assert len(captured_payload["tools"]) == 6
+        # All tools: read_file, list_directory, search_code, web_fetch, web_search, web_news,
+        # write_file, delete_file, shell_exec
+        assert len(captured_payload["tools"]) == 9
         assert all(t["type"] == "function" for t in captured_payload["tools"])
 
         # Verify expected tool names

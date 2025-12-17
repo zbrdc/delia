@@ -139,6 +139,7 @@ async def call_llm(
     max_tokens: int | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | None = None,
+    temperature: float | None = None,
 ) -> dict[str, Any]:
     """
     Unified LLM call dispatcher that routes to the appropriate backend.
@@ -156,6 +157,7 @@ async def call_llm(
         max_tokens: Maximum response tokens (limits verbosity)
         tools: Optional list of OpenAI-format tool schemas for native tool calling
         tool_choice: Optional tool choice strategy ("auto", "none", or specific tool name)
+        temperature: Sampling temperature (0.0-2.0, higher = more random/diverse)
 
     Returns:
         Dict with 'success', 'response', 'tokens', 'error' keys
@@ -235,6 +237,7 @@ async def call_llm(
             max_tokens=max_tokens,
             tools=tools,
             tool_choice=tool_choice,
+            temperature=temperature,
         )
         result = response.to_dict()
 

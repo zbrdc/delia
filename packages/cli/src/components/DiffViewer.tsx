@@ -145,15 +145,10 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   filePath,
   diff,
   lines: preLines,
-  maxLines = 50,
   showLineNumbers = true,
 }) => {
   // Parse diff if not pre-parsed
   const lines = preLines || (diff ? parseDiff(diff) : []);
-
-  // Truncate if needed
-  const displayLines = lines.slice(0, maxLines);
-  const truncated = lines.length > maxLines;
 
   // Count additions and deletions
   const additions = lines.filter((l) => l.type === "add").length;
@@ -179,22 +174,15 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
       {/* Diff content */}
       <Box
         flexDirection="column"
-        borderStyle="round"
-        borderColor="dim"
-        paddingX={1}
+        paddingX={2}
       >
-        {displayLines.map((line, i) => (
+        {lines.map((line, i) => (
           <DiffLineComponent
             key={i}
             line={line}
             showLineNumbers={showLineNumbers}
           />
         ))}
-        {truncated && (
-          <Text color="dim" italic>
-            ... ({lines.length - maxLines} more lines)
-          </Text>
-        )}
       </Box>
     </Box>
   );

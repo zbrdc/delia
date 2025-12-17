@@ -196,6 +196,8 @@ def detect_chat_task_type(message: str) -> tuple[str, float, str]:
         (r"\b(api|endpoint|database|sql|query|json|xml|http|rest|graphql)\b", "technical term"),
         (r"\b(import|export|module|package|library|dependency|npm|pip)\b", "module keyword"),
         (r"\b(coding model|coder model|code model)\b", "explicit model request"),
+        (r"\b(prototype|implementation|algorithm|component|module)\b", "development keyword"),
+        (r"\b(generate|create|build)\b.*\b(file|output|markdown)\b", "file generation"),
     ]
 
     for pattern, reason in coder_patterns:
@@ -755,15 +757,19 @@ class ModelRouter:
                 )
                 return model_moe
 
-        # Code-focused tasks with regex detection
-        if task_type in self.config.coder_tasks and code_detection:
-            is_code, confidence, reasoning = code_detection
-            if is_code:
-                log.info("model_selected", source="coder_task_regex", task=task_type, tier="coder", reasoning=reasoning)
-                return model_coder
+        # Code-focused tasks: use coder model even without code in message
+        # The task_type detection already determined this is code-related
+        # task_type can be a tier name ("coder") or a task name ("generate", "review", etc.)
+        if task_type == "coder" or task_type in self.config.coder_tasks:
+            if code_detection:
+                is_code, confidence, reasoning = code_detection
+                if is_code:
+                    log.info("model_selected", source="coder_task_regex", task=task_type, tier="coder", reasoning=reasoning)
+                else:
+                    log.info("model_selected", source="coder_task_intent", task=task_type, tier="coder", reasoning="code-related task detected")
             else:
-                log.info("model_selected", source="coder_task_text_regex", task=task_type, tier="quick", reasoning=reasoning)
-                # Fall through to default
+                log.info("model_selected", source="coder_task_intent", task=task_type, tier="coder", reasoning="code-related task detected")
+            return model_coder
 
         # Priority 5: Default to quick (fastest model)
         log.info("model_selected", source="default", task=task_type, tier="quick")

@@ -15,9 +15,9 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-Delia — Local LLM Delegation Server
+Delia — Multi-Model LLM Delegation Server
 
-A pure MCP server that intelligently routes tasks to optimal local models.
+A pure MCP server that intelligently routes tasks to optimal models.
 Automatically selects quick/coder/moe tiers based on task type and content.
 
 Usage:
@@ -110,6 +110,11 @@ from .config import (
     save_backend_metrics,
     save_prewarm,
 )
+
+# Import voting system for batch consensus
+from .voting import VotingConsensus
+from .voting_stats import get_voting_stats_tracker
+from .quality import ResponseQualityValidator
 
 # Import status messages for logging and dashboard
 from .messages import (
@@ -1056,13 +1061,12 @@ async def delegate(
     stream: bool = False,
 ) -> str:
     """
-    Execute a task on local/remote GPU with intelligent 3-tier model selection.
-    Routes to optimal backend based on content size, task type, and GPU availability.
+    Execute a task with intelligent 3-tier model selection.
+    Routes to optimal backend based on content size, task type, and availability.
 
     WHEN TO USE:
-    - "locally", "on my GPU", "without API", "privately" → Use this tool
     - Code review, generation, analysis tasks → Use this tool
-    - Any task you want processed on local hardware → Use this tool
+    - Any task you want processed by an LLM → Use this tool
 
     Args:
         task: Task type determines model tier:
@@ -1073,11 +1077,11 @@ async def delegate(
         file: Optional file path to include in context
         model: Force specific tier - "quick" | "coder" | "moe" | "thinking"
               OR natural language: "7b", "14b", "30b", "small", "large", "coder model", "fast", "complex", "thinking"
-        language: Language hint for better prompts - python|typescript|react|nextjs|rust|go
+        language: Language hint for better prompts - python|c|cpp|java|csharp|javascript|sql|visualbasic|perl|r|delphi|fortran|matlab|ada|go|php|rust|kotlin|assembly|bash
         context: Serena memory names to include (comma-separated: "architecture,decisions")
         symbols: Code symbols to focus on (comma-separated: "Foo,Bar/calculate")
         include_references: True if content includes symbol usages from elsewhere
-        backend_type: Force backend type - "local" | "remote" (default: auto-select)
+        backend_type: Force backend type (default: auto-select)
         files: Comma-separated file paths - Delia reads directly from disk (efficient, no serialization)
         include_metadata: If False, skip the metadata footer (saves ~30 tokens). Default: True
         max_tokens: Limit response length to N tokens (forces concise output). Default: None (unlimited)
@@ -1088,9 +1092,9 @@ async def delegate(
 
     ROUTING LOGIC:
     1. Content > 32K tokens → Uses backend with largest context window
-    2. Prefer local GPUs (lower latency) unless unavailable
-    3. Falls back to remote if local circuit breaker is open
-    4. Load balances across available backends based on priority weights
+    2. Routes to best available backend based on priority and health
+    3. Falls back automatically if primary backend is unavailable
+    4. Load balances across backends based on priority weights
 
     Returns:
         LLM response optimized for orchestrator processing, with optional metadata footer
@@ -1197,7 +1201,7 @@ async def delegate(
             return f"""{full_response}
 
 ---
-_✓ {task} (streamed) | {tier} tier | {elapsed_ms}ms | {selected_model}_"""
+_[OK] {task} (streamed) | {tier} tier | {elapsed_ms}ms | {selected_model}_"""
         return full_response
 
     # Non-streaming mode: use existing implementation
@@ -1227,8 +1231,8 @@ async def think(
     session_id: str | None = None,
 ) -> str:
     """
-    Deep reasoning for complex problems using local GPU with extended thinking.
-    Offloads complex analysis to local LLM - zero API costs.
+    Deep reasoning for complex problems with extended thinking.
+    Uses thinking-capable models for thorough analysis.
 
     WHEN TO USE:
     - Complex multi-step problems requiring careful reasoning
@@ -1248,7 +1252,7 @@ async def think(
     ROUTING:
     - Uses largest available GPU for deep thinking
     - Automatically enables thinking mode for normal/deep
-    - Prefers local GPU, falls back to remote if needed
+    - Routes to best available thinking-capable backend
 
     Returns:
         Structured analysis with step-by-step reasoning and conclusions
@@ -1426,8 +1430,8 @@ async def batch(
     session_id: str | None = None,
 ) -> str:
     """
-    Execute multiple tasks in PARALLEL across all available GPUs for maximum throughput.
-    Distributes work across local and remote backends intelligently.
+    Execute multiple tasks in PARALLEL across all available backends for maximum throughput.
+    Distributes work across backends intelligently.
 
     WHEN TO USE:
     - Processing multiple files/documents simultaneously
@@ -1449,7 +1453,7 @@ async def batch(
         session_id: Optional session ID shared across all tasks in the batch
 
     ROUTING LOGIC:
-    - Distributes tasks across ALL available GPUs (local + remote)
+    - Distributes tasks across ALL available backends
     - Large content (>32K tokens) → Routes to backend with sufficient context
     - Normal content → Round-robin for parallel execution
     - Respects backend health and circuit breakers
@@ -1558,6 +1562,191 @@ async def batch(
 
 ---
 _Total tasks: {len(task_list)} | Total time: {elapsed_ms}ms | {routing_info}_"""
+
+
+@mcp.tool()
+async def batch_vote(
+    prompt: str,
+    task: str = "analyze",
+    k: int = 3,
+    backends: str | None = None,
+    target_accuracy: float = 0.9999,
+) -> str:
+    """
+    Run the SAME prompt across multiple backends and vote on the best result.
+    
+    Uses MDAP k-voting consensus for mathematically guaranteed accuracy.
+    This is ideal for high-stakes questions where you want multiple models
+    to validate each other.
+    
+    WHEN TO USE:
+    - High-stakes analysis requiring verification
+    - Comparing model opinions on the same question
+    - Getting consensus from multiple LLMs
+    
+    Args:
+        prompt: The prompt to send to all backends
+        task: Task type (analyze, review, generate, etc.)
+        k: Votes needed for consensus (default: 3)
+        backends: Comma-separated backend IDs (default: all enabled backends)
+        target_accuracy: Target accuracy for auto-kmin calculation (default: 0.9999)
+    
+    Returns:
+        Consensus response with voting statistics
+    
+    Example:
+        batch_vote(prompt="Is this code secure?", k=3)
+        batch_vote(prompt="Analyze this design", backends="ollama-local,ollama-remote")
+    """
+    start_time = time.time()
+    
+    # Get backends to use
+    if backends:
+        backend_ids = [b.strip() for b in backends.split(",")]
+        selected_backends = [
+            b for b in backend_manager.get_enabled_backends()
+            if b.id in backend_ids
+        ]
+    else:
+        selected_backends = backend_manager.get_enabled_backends()
+    
+    if not selected_backends:
+        return "Error: No backends available for voting"
+    
+    # Initialize voting consensus
+    validator = ResponseQualityValidator()
+    consensus = VotingConsensus(
+        k=k,
+        quality_validator=validator,
+        similarity_threshold=0.85,
+        max_response_length=700,
+    )
+    
+    # Get voting stats tracker
+    voting_tracker = get_voting_stats_tracker()
+    
+    log.info(
+        "batch_vote_start",
+        prompt_len=len(prompt),
+        k=k,
+        num_backends=len(selected_backends),
+        backend_ids=[b.id for b in selected_backends],
+    )
+    
+    # Collect responses from all backends in parallel
+    async def get_response(backend: BackendConfig) -> tuple[str, str, bool]:
+        """Get response from a backend. Returns (backend_id, response, success)."""
+        try:
+            result = await _delegate_impl(
+                task=task,
+                content=prompt,
+                backend=backend.id,
+                include_metadata=False,
+            )
+            return (backend.id, result, True)
+        except Exception as e:
+            log.warning("batch_vote_backend_error", backend=backend.id, error=str(e))
+            return (backend.id, str(e), False)
+    
+    # Run all backends in parallel
+    responses = await asyncio.gather(*[get_response(b) for b in selected_backends])
+    
+    # Add votes to consensus
+    backend_results = []
+    for backend_id, response, success in responses:
+        if not success:
+            backend_results.append({
+                "backend": backend_id,
+                "status": "error",
+                "response_preview": response[:100],
+            })
+            continue
+        
+        vote_result = consensus.add_vote(response)
+        
+        if vote_result.red_flagged:
+            voting_tracker.record_rejection(
+                reason=vote_result.red_flag_reason or "unknown",
+                backend_id=backend_id,
+                tier=task,
+                response_preview=response[:100],
+            )
+            backend_results.append({
+                "backend": backend_id,
+                "status": "red_flagged",
+                "reason": vote_result.red_flag_reason,
+            })
+            continue
+        
+        backend_results.append({
+            "backend": backend_id,
+            "status": "voted",
+            "response_preview": response[:100] + "..." if len(response) > 100 else response,
+        })
+        
+        if vote_result.consensus_reached:
+            # Record successful consensus
+            voting_tracker.record_consensus(
+                votes_cast=vote_result.total_votes,
+                k=k,
+                tier=task,
+                backend_id=backend_id,
+                success=True,
+            )
+            
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            prob = VotingConsensus.voting_probability(k, 0.95)
+            
+            # Update affinity for winning backend
+            affinity_tracker = get_affinity_tracker()
+            affinity_tracker.update(backend_id, task, quality=1.0)
+            
+            return f"""# ✓ Batch Vote Consensus Reached
+
+{vote_result.winning_response}
+
+---
+**Voting Stats**
+- Consensus: {vote_result.votes_for_winner}/{k} votes
+- Total backends queried: {len(selected_backends)}
+- Backends voted: {vote_result.total_votes}
+- Confidence: {prob:.2%}
+- Winning backend: {backend_id}
+- Time: {elapsed_ms}ms
+
+**Backend Results:**
+{chr(10).join([f"- {r['backend']}: {r['status']}" for r in backend_results])}"""
+    
+    # No consensus - get best response
+    best_response, metadata = consensus.get_best_response()
+    
+    voting_tracker.record_consensus(
+        votes_cast=metadata.total_votes,
+        k=k,
+        tier=task,
+        backend_id="none",
+        success=False,
+    )
+    
+    elapsed_ms = int((time.time() - start_time) * 1000)
+    
+    if best_response:
+        return f"""# ⚠ Batch Vote (No Full Consensus)
+
+{best_response}
+
+---
+**Voting Stats**
+- Best response: {metadata.winning_votes}/{k} votes needed
+- Unique responses: {metadata.unique_responses}
+- Red-flagged: {metadata.red_flagged_count}
+- Total backends queried: {len(selected_backends)}
+- Time: {elapsed_ms}ms
+
+**Backend Results:**
+{chr(10).join([f"- {r['backend']}: {r['status']}" for r in backend_results])}"""
+    else:
+        return f"Error: All {len(selected_backends)} backends failed or were red-flagged"
 
 
 @mcp.tool()
@@ -1928,7 +2117,7 @@ async def agent(
             - "search_code" - Search code with regex
             - "web_fetch" - Fetch URL contents
             If not specified, all tools are enabled.
-        backend_type: Force backend type - "local" | "remote"
+        backend_type: Force backend type (optional)
         workspace: Optional workspace directory to confine file operations.
             If provided, all file operations (read_file, list_directory, search_code)
             are restricted to this directory. Prevents agent from accessing files
@@ -1973,6 +2162,19 @@ async def agent(
         content=prompt,
     )
 
+    # Warn if using quick-tier model for agent tasks (may struggle with tool calling)
+    quick_model = backend_obj.models.get("quick") if backend_obj else None
+    coder_model = backend_obj.models.get("coder") if backend_obj else None
+    is_quick_tier = quick_model and selected_model == quick_model and selected_model != coder_model
+    model_tier_warning = ""
+    if is_quick_tier:
+        log.warning(
+            "agent_using_small_model",
+            model=selected_model,
+            hint="Small models may struggle with reliable tool calling. Consider using --model coder or moe.",
+        )
+        model_tier_warning = " [WARN] Small model may have reduced tool-calling reliability"
+
     # Set up tool registry with optional workspace confinement
     workspace_obj = Workspace(root=workspace) if workspace else None
     registry = get_default_tools(workspace=workspace_obj)
@@ -2012,8 +2214,6 @@ async def agent(
 
         combined_prompt = "\n\n".join(prompt_parts)
 
-        # TODO: When provider interface supports tools parameter, pass tools_schemas here
-        # for native tool calling mode
         # Create preview from the user's original prompt for logging
         content_preview = combined_prompt[:200].replace("\n", " ").strip()
 
@@ -2026,6 +2226,8 @@ async def agent(
             language="unknown",
             content_preview=content_preview,
             backend_obj=backend_obj,
+            tools=tools_schemas,
+            tool_choice="auto" if tools_schemas else None,
         )
 
         if result.get("success"):
@@ -2065,11 +2267,11 @@ async def agent(
         tool_summary = f"\nTools used: {', '.join(tool_names)}"
 
     workspace_info = f" | Workspace: {workspace}" if workspace else ""
-    status = "✓" if result.success else "⚠"
+    status = "[OK]" if result.success else "[WARN]"
     return f"""{result.response}
 
 ---
-_{status} Agent completed | Iterations: {result.iterations} | Time: {elapsed_ms}ms | Model: {selected_model}{workspace_info}{tool_summary}_"""
+_{status} Agent completed | Iterations: {result.iterations} | Time: {elapsed_ms}ms | Model: {selected_model}{workspace_info}{tool_summary}{model_tier_warning}_"""
 
 
 @mcp.tool()
@@ -2447,9 +2649,9 @@ async def mcp_servers(
     env: str | None = None,
 ) -> str:
     """
-    Manage external MCP servers for tool passthrough to local LLMs.
+    Manage external MCP servers for tool passthrough.
 
-    This enables Delia's local LLMs to use tools from any MCP server.
+    This enables Delia to use tools from any MCP server.
     Configure servers in settings.json under "mcp_servers" array.
 
     WHEN TO USE:

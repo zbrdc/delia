@@ -165,6 +165,7 @@ class LLMProvider(Protocol):
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        temperature: float | None = None,
     ) -> LLMResponse:
         """Call the LLM provider with the given parameters.
 
@@ -204,12 +205,14 @@ class LLMProvider(Protocol):
         content_preview: str = "",
         backend_obj: BackendConfig | None = None,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from the LLM provider token by token.
 
         This method provides incremental output as the model generates tokens,
-        enabling real-time feedback to users. Not all providers support streaming;
-        those that don't should yield a single chunk with the complete response.
+        enabling real-time feedback to users. The primary use case is UX/latency
+        optimization - getting tokens to users as quickly as possible.
 
         Args:
             model: Model name to use (provider-specific format)
@@ -222,6 +225,10 @@ class LLMProvider(Protocol):
             content_preview: Short preview of content for logging
             backend_obj: Backend configuration to use (or None to auto-select)
             max_tokens: Optional limit on response length
+            tools: Optional list of OpenAI-format tool schemas. Tool support in
+                streaming mode is provider-dependent and best-effort.
+            tool_choice: Optional tool choice strategy ("auto", "none", or
+                specific tool name). Only meaningful if tools are provided.
 
         Yields:
             StreamChunk objects containing:
@@ -229,13 +236,28 @@ class LLMProvider(Protocol):
             - done: True on the final chunk
             - tokens: Total token count (only on final chunk)
             - error: Error message if streaming fails mid-stream
+            - metadata: May contain "tool_calls" on final chunk if tools were used
+
+        Tool Calling Behavior:
+            Streaming tool support is provider-dependent and may be handled in
+            one of the following ways:
+
+            1. **Ignored**: Provider streams text normally, tools have no effect
+            2. **Final chunk**: Tool calls accumulated and returned in the final
+               chunk's metadata["tool_calls"] field
+            3. **Fallback**: Provider internally calls non-streaming call() method
+               which fully supports tools, then yields result as single chunk
+
+            Incremental tool-call deltas (partial JSON fragments mid-stream) are
+            NOT currently supported. For guaranteed tool execution, use the
+            non-streaming call() method.
 
         Note:
             Implementations should handle errors gracefully by yielding a final
             chunk with done=True and error set, rather than raising exceptions.
         """
         # Default implementation: fall back to non-streaming call
-        # Providers that support streaming should override this
+        # This fallback DOES support tools since call() supports them
         response = await self.call(
             model=model,
             prompt=prompt,
@@ -247,6 +269,8 @@ class LLMProvider(Protocol):
             content_preview=content_preview,
             backend_obj=backend_obj,
             max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
         )
         if response.success:
             yield StreamChunk(

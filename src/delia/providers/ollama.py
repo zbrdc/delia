@@ -228,6 +228,7 @@ class OllamaProvider:
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        temperature: float | None = None,
     ) -> LLMResponse:
         """Call Ollama API with Pydantic validation, retry logic, and circuit breaker.
 
@@ -281,11 +282,14 @@ class OllamaProvider:
         else:
             num_ctx = self.config.model_quick.num_ctx
 
-        # Temperature based on thinking mode
-        temperature = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
+        # Temperature: use override if provided, otherwise based on thinking mode
+        if temperature is not None:
+            temp_value = temperature
+        else:
+            temp_value = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
 
         options: dict[str, float | int] = {
-            "temperature": temperature,
+            "temperature": temp_value,
             "num_ctx": num_ctx,
         }
         if max_tokens:

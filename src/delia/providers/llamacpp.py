@@ -105,6 +105,7 @@ class LlamaCppProvider:
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        temperature: float | None = None,
     ) -> LLMResponse:
         """Call OpenAI-compatible API with Pydantic validation, retry, and circuit breaker."""
         start_time = time.time()
@@ -157,8 +158,11 @@ class LlamaCppProvider:
         else:
             num_ctx = self.config.model_quick.num_ctx
 
-        # Temperature based on thinking mode
-        temperature = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
+        # Temperature: use override if provided, otherwise based on thinking mode
+        if temperature is not None:
+            temp_value = temperature
+        else:
+            temp_value = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
 
         # Build messages for OpenAI-compatible API
         messages = []
@@ -169,7 +173,7 @@ class LlamaCppProvider:
         payload = {
             "model": model,
             "messages": messages,
-            "temperature": temperature,
+            "temperature": temp_value,
             "max_tokens": max_tokens if max_tokens else num_ctx,
             "stream": False,
         }

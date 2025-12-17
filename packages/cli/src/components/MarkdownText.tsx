@@ -15,8 +15,6 @@ import { highlight, supportsLanguage } from "cli-highlight";
 
 export interface MarkdownTextProps {
   children: string;
-  /** Maximum lines for code blocks */
-  maxCodeLines?: number;
 }
 
 interface ParsedBlock {
@@ -233,8 +231,7 @@ const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
 const CodeBlockRender: React.FC<{
   code: string;
   language?: string;
-  maxLines?: number;
-}> = ({ code, language, maxLines }) => {
+}> = ({ code, language }) => {
   let highlighted = code;
 
   if (language && supportsLanguage(language)) {
@@ -245,14 +242,6 @@ const CodeBlockRender: React.FC<{
     }
   }
 
-  let lines = highlighted.split("\n");
-  let truncated = false;
-
-  if (maxLines && lines.length > maxLines) {
-    lines = lines.slice(0, maxLines);
-    truncated = true;
-  }
-
   return (
     <Box flexDirection="column" marginY={1}>
       {language && (
@@ -260,21 +249,15 @@ const CodeBlockRender: React.FC<{
           {language}
         </Text>
       )}
-      <Box borderStyle="round" borderColor="dim" paddingX={1}>
-        <Text>{lines.join("\n")}</Text>
+      <Box paddingX={2}>
+        <Text>{highlighted}</Text>
       </Box>
-      {truncated && (
-        <Text color="dim" italic>
-          ... (truncated)
-        </Text>
-      )}
     </Box>
   );
 };
 
 export const MarkdownText: React.FC<MarkdownTextProps> = ({
   children,
-  maxCodeLines = 30,
 }) => {
   const blocks = parseBlocks(children);
 
@@ -300,7 +283,6 @@ export const MarkdownText: React.FC<MarkdownTextProps> = ({
                 key={i}
                 code={block.content}
                 language={block.language}
-                maxLines={maxCodeLines}
               />
             );
 

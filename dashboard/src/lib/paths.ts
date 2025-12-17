@@ -5,12 +5,38 @@
  * to ensure CLI and dashboard use the same config/data files.
  */
 
-import { join } from "path"
+import { join, dirname } from "path"
 import { homedir } from "os"
 import { existsSync } from "fs"
+import { fileURLToPath } from "url"
 
-// Project root (dashboard is in {repo}/dashboard, so go up one level)
-const PROJECT_ROOT = join(process.cwd(), "..")
+// Get the actual project root by going up from this file's location
+// This file is at: dashboard/src/lib/paths.ts
+// Project root is: dashboard/../ = repo root
+function getProjectRoot(): string {
+  // In Next.js, __dirname may not work, but we can use import.meta or process.cwd
+  // For reliability, check multiple locations
+  const candidates = [
+    // If running from dashboard directory (npm run dev)
+    join(process.cwd(), ".."),
+    // If running from repo root
+    process.cwd(),
+    // Relative to this file (for ESM)
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."),
+  ]
+  
+  // Find the one that has a pyproject.toml (definitive marker of repo root)
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "pyproject.toml"))) {
+      return candidate
+    }
+  }
+  
+  // Fallback to dashboard parent
+  return join(process.cwd(), "..")
+}
+
+const PROJECT_ROOT = getProjectRoot()
 
 // User config root
 const USER_DELIA_DIR = join(homedir(), ".delia")
@@ -18,9 +44,11 @@ const USER_DELIA_DIR = join(homedir(), ".delia")
 /**
  * Find settings file with same priority as CLI:
  * 1. DELIA_SETTINGS_FILE environment variable
- * 2. settings.json in Current Working Directory
- * 3. settings.json in ~/.delia/ (global user config)
- * 4. settings.json in Project Root (legacy/dev mode)
+ * 2. settings.json in ~/.delia/ (global user config - preferred)
+ * 3. settings.json in Project Root (dev mode)
+ * 
+ * Note: We skip CWD check for dashboard since CWD is unpredictable
+ * (could be dashboard/, repo root, etc. depending on how it's run)
  */
 export function getSettingsFile(): string {
   const envPath = process.env.DELIA_SETTINGS_FILE
@@ -28,18 +56,20 @@ export function getSettingsFile(): string {
     return envPath
   }
 
-  const cwdPath = join(process.cwd(), "settings.json")
-  if (existsSync(cwdPath)) {
-    return cwdPath
-  }
-
+  // User config takes priority (consistent location)
   const userPath = join(USER_DELIA_DIR, "settings.json")
   if (existsSync(userPath)) {
     return userPath
   }
 
-  // Fallback to project root (create here if needed)
-  return join(PROJECT_ROOT, "settings.json")
+  // Project root for dev mode
+  const projectPath = join(PROJECT_ROOT, "settings.json")
+  if (existsSync(projectPath)) {
+    return projectPath
+  }
+
+  // Fallback - will be created in user dir
+  return userPath
 }
 
 /**
@@ -54,7 +84,7 @@ export function getDataDir(): string {
     return envPath
   }
 
-  // If running from source/dev and data exists, use it
+  // If running from source/dev and data dir exists, use it
   const projectData = join(PROJECT_ROOT, "data")
   if (existsSync(projectData)) {
     return projectData

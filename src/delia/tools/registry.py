@@ -130,7 +130,31 @@ class ToolRegistry:
             Text prompt describing available tools
         """
         lines = [
-            "You have access to the following tools:",
+            "You are an AI assistant with access to tools. You MUST use tools to complete tasks.",
+            "",
+            "CRITICAL RULES - VIOLATIONS WILL CAUSE FAILURES:",
+            "",
+            "1. USE TOOLS - NOT CODE EXAMPLES",
+            "   [X] WRONG: 'Here's how to read a file: open(path).read()'",
+            "   [OK] RIGHT: Use the read_file tool to actually read the file",
+            "",
+            "2. USE REAL PATHS - NOT PLACEHOLDERS",
+            "   [X] WRONG: read_file(path='/path/to/file.py')",
+            "   [X] WRONG: read_file(path='<filepath>')",
+            "   [OK] RIGHT: read_file(path='src/config.py')  # Use actual paths from context",
+            "",
+            "3. DO NOT HALLUCINATE FILE CONTENTS",
+            "   [X] WRONG: 'The file contains: class Config...' (without reading it)",
+            "   [OK] RIGHT: Call read_file first, then describe what you actually saw",
+            "",
+            "4. ONE TOOL CALL AT A TIME",
+            "   Call a tool, wait for the result, then decide next action.",
+            "   Do not assume tool results before receiving them.",
+            "",
+            "5. IF INFORMATION IS MISSING, USE A TOOL TO GET IT",
+            "   Don't guess or make up file contents, directory structures, or search results.",
+            "",
+            "Available tools:",
             "",
         ]
 
@@ -146,7 +170,8 @@ class ToolRegistry:
             '{"name": "tool_name", "arguments": {"arg1": "value1"}}',
             "</tool_call>",
             "",
-            "Wait for the tool result before continuing.",
+            "REMEMBER: Use ACTUAL paths/values from context. Never use placeholder paths like '/path/to/...'.",
+            "Wait for tool results before continuing. Do not fabricate results.",
         ])
 
         return "\n".join(lines)

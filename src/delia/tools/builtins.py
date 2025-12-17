@@ -346,6 +346,69 @@ async def write_file(
         return f"Error writing file: {e}"
 
 
+async def delete_file(
+    path: str,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Delete a file or empty directory.
+
+    Requires user confirmation. Cannot delete non-empty directories
+    for safety (use shell_exec with rm -r if needed, which also requires confirmation).
+
+    Args:
+        path: Path to file or empty directory to delete
+        workspace: Optional workspace to confine file access
+
+    Returns:
+        Success message or error
+    """
+    # Validate path (with workspace if provided)
+    valid, error = validate_path(path, workspace)
+    if not valid:
+        return f"Error: {error}"
+
+    # Resolve path (relative to workspace if provided)
+    if workspace and not Path(path).is_absolute():
+        file_path = (workspace.root / path).resolve()
+    else:
+        file_path = Path(path).expanduser().resolve()
+
+    # Additional safety: never delete from critical system paths
+    path_str = str(file_path).lower()
+    dangerous_patterns = [
+        "/etc/", "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/",
+        "/boot/", "/lib/", "/lib64/", "system32", "windows/system",
+        "/home", "/root", "/var",  # Extra protection for delete
+    ]
+    for pattern in dangerous_patterns:
+        if path_str.startswith(pattern) or f"/{pattern}/" in path_str:
+            return f"Error: Cannot delete from protected directory: {path}"
+
+    if not file_path.exists():
+        return f"Error: Path does not exist: {path}"
+
+    try:
+        if file_path.is_file():
+            file_path.unlink()
+            log.info("file_deleted", path=str(file_path))
+            return f"Successfully deleted file: {path}"
+        elif file_path.is_dir():
+            # Only delete empty directories for safety
+            if any(file_path.iterdir()):
+                return f"Error: Directory is not empty: {path}. Use shell_exec with 'rm -r' if you really need to delete it."
+            file_path.rmdir()
+            log.info("directory_deleted", path=str(file_path))
+            return f"Successfully deleted empty directory: {path}"
+        else:
+            return f"Error: Path is not a file or directory: {path}"
+
+    except PermissionError:
+        return f"Error: Permission denied deleting {path}"
+    except Exception as e:
+        return f"Error deleting: {e}"
+
+
 async def shell_exec(
     command: str,
     cwd: str | None = None,
@@ -500,14 +563,13 @@ def get_default_tools(
         workspace: Optional workspace to confine file operations.
                    If provided, read_file, list_directory, and search_code
                    will be confined to this workspace.
-        allow_write: If True, include write_file tool (requires --allow-write)
-        allow_exec: If True, include shell_exec tool (requires --allow-exec)
+        allow_write: If True, auto-approve write_file and delete_file (skip confirmation)
+        allow_exec: If True, auto-approve shell_exec (skip confirmation prompt)
 
     Returns:
-        ToolRegistry with tools based on permissions.
-        Default: read_file, list_directory, search_code, web_fetch, web_search, web_news
-        With --allow-write: + write_file
-        With --allow-exec: + shell_exec
+        ToolRegistry with all tools. Dangerous tools (write_file, delete_file, shell_exec)
+        are always included but marked as dangerous - they require user
+        confirmation unless auto-approved via flags.
     """
     registry = ToolRegistry()
 
@@ -679,76 +741,93 @@ def get_default_tools(
     ))
 
     # ============================================================
-    # DANGEROUS TOOLS - Only registered when explicitly enabled
+    # DANGEROUS TOOLS - Always registered, require confirmation
+    # unless auto-approved via --allow-write / --allow-exec flags
     # ============================================================
 
-    if allow_write:
-        # Create workspace-bound handler if workspace is provided
-        if workspace:
-            write_handler = partial(write_file, workspace=workspace)
-            write_path_desc = f"Path (relative to workspace: {workspace.root})"
-        else:
-            write_handler = write_file
-            write_path_desc = "Path to the file (absolute or relative to current directory)"
+    # Create workspace-bound handlers if workspace is provided
+    if workspace:
+        write_handler = partial(write_file, workspace=workspace)
+        delete_handler = partial(delete_file, workspace=workspace)
+        write_path_desc = f"Path (relative to workspace: {workspace.root})"
+    else:
+        write_handler = write_file
+        delete_handler = delete_file
+        write_path_desc = "Path to the file (absolute or relative to current directory)"
 
-        registry.register(ToolDefinition(
-            name="write_file",
-            description="Write content to a file. Creates the file if it doesn't exist, overwrites if it does. USE WITH CAUTION.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": write_path_desc
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
-                    }
+    registry.register(ToolDefinition(
+        name="write_file",
+        description="Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Requires user confirmation.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": write_path_desc
                 },
-                "required": ["path", "content"]
+                "content": {
+                    "type": "string",
+                    "description": "Content to write to the file"
+                }
             },
-            handler=write_handler,
-            permission_level="write",
-            dangerous=True,
-        ))
-        log.info("dangerous_tool_registered", tool="write_file", workspace=str(workspace.root) if workspace else None)
+            "required": ["path", "content"]
+        },
+        handler=write_handler,
+        permission_level="write",
+        dangerous=not allow_write,  # Not dangerous if auto-approved
+    ))
 
-    if allow_exec:
-        # Create workspace-bound handler if workspace is provided
-        if workspace:
-            exec_handler = partial(shell_exec, workspace=workspace)
-            exec_cwd_desc = f"Working directory (default: workspace {workspace.root})"
-        else:
-            exec_handler = shell_exec
-            exec_cwd_desc = "Working directory (default: current directory)"
+    registry.register(ToolDefinition(
+        name="delete_file",
+        description="Delete a file or empty directory. Cannot delete non-empty directories. Requires user confirmation.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": write_path_desc
+                }
+            },
+            "required": ["path"]
+        },
+        handler=delete_handler,
+        permission_level="write",
+        dangerous=not allow_write,  # Grouped with write operations
+    ))
 
-        registry.register(ToolDefinition(
-            name="shell_exec",
-            description="Execute a shell command. USE WITH EXTREME CAUTION. Some dangerous commands are blocked.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Shell command to execute"
-                    },
-                    "cwd": {
-                        "type": "string",
-                        "description": exec_cwd_desc
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "description": "Command timeout in seconds (default: 60)",
-                        "default": 60
-                    }
+    # Create workspace-bound handler if workspace is provided
+    if workspace:
+        exec_handler = partial(shell_exec, workspace=workspace)
+        exec_cwd_desc = f"Working directory (default: workspace {workspace.root})"
+    else:
+        exec_handler = shell_exec
+        exec_cwd_desc = "Working directory (default: current directory)"
+
+    registry.register(ToolDefinition(
+        name="shell_exec",
+        description="Execute a shell command. Some dangerous commands are blocked. Requires user confirmation.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute"
                 },
-                "required": ["command"]
+                "cwd": {
+                    "type": "string",
+                    "description": exec_cwd_desc
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Command timeout in seconds (default: 60)",
+                    "default": 60
+                }
             },
-            handler=exec_handler,
-            permission_level="exec",
-            dangerous=True,
-        ))
-        log.info("dangerous_tool_registered", tool="shell_exec", workspace=str(workspace.root) if workspace else None)
+            "required": ["command"]
+        },
+        handler=exec_handler,
+        permission_level="exec",
+        dangerous=not allow_exec,  # Not dangerous if auto-approved
+    ))
 
     return registry

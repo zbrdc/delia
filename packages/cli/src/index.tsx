@@ -15,7 +15,11 @@ const program = new Command();
 program
   .name("delia-cli")
   .description("Rich CLI for Delia - local LLM orchestration")
-  .version("0.1.0");
+  .version("0.1.0")
+  .action(async () => {
+    // Default action: start chat
+    await runChat({});
+  });
 
 // Agent command
 program
@@ -27,7 +31,7 @@ program
   .option("--max-iterations <n>", "Maximum tool call iterations", "10")
   .option("--tools <tools>", "Comma-separated tools to enable")
   .option("-b, --backend <type>", "Force backend type (local/remote)")
-  .option("--api-url <url>", "Delia API URL", "http://localhost:8201")
+  .option("--api-url <url>", "Delia API URL (required)", process.env.DELIA_API_URL)
   // Permission flags (dangerous - disabled by default)
   .option("--allow-write", "Enable file write operations (DANGEROUS)")
   .option("--allow-exec", "Enable shell command execution (DANGEROUS)")
@@ -35,7 +39,7 @@ program
   .action(async (task: string, options) => {
     // Show warning for dangerous flags
     if (options.allowWrite || options.allowExec) {
-      console.log("\x1b[33m⚠️  DANGEROUS: Permission flags enabled:\x1b[0m");
+      console.log("\x1b[33m[WARN] DANGEROUS: Permission flags enabled:\x1b[0m");
       if (options.allowWrite) console.log("   --allow-write: Agent can write/modify files");
       if (options.allowExec) console.log("   --allow-exec: Agent can execute shell commands");
       if (options.yolo) console.log("   --yolo: Skipping confirmation prompts!");
@@ -63,13 +67,31 @@ program
   .option("-m, --model <model>", "Model tier (quick/coder/moe) or specific model")
   .option("-b, --backend <type>", "Force backend type (local/remote)")
   .option("-s, --session <id>", "Resume existing session by ID")
-  .option("--api-url <url>", "Delia API URL", "http://localhost:8201")
+  .option("--api-url <url>", "Delia API URL (required)", process.env.DELIA_API_URL)
+  .option("--simple", "Disable orchestration (simple single-model chat)")
+  .option("--file-tools", "Include file/web tools (read_file, search_code)")
+  .option("-w, --workspace <path>", "Workspace path for file operations")
   .action(async (options) => {
+    const orchestrated = !options.simple;  // Orchestrated by DEFAULT
+    
+    if (orchestrated) {
+      console.log("\x1b[35m✨ Delia - Multi-Model Orchestration\x1b[0m");
+      console.log("   Tools: delegate, compare, vote, think, health, models");
+      console.log("   ↳ compare works on single GPU (sequential model loading)");
+      if (options.fileTools) {
+        console.log("   + File tools: read_file, search_code, web_fetch");
+      }
+      console.log("   (Use --simple for basic chat)");
+      console.log("");
+    }
     await runChat({
       model: options.model,
       backend: options.backend,
       session: options.session,
       api: options.apiUrl,
+      orchestrated,
+      fileTools: options.fileTools ?? false,
+      workspace: options.workspace,
     });
   });
 
@@ -77,7 +99,7 @@ program
 program
   .command("health")
   .description("Check backend health")
-  .option("--api-url <url>", "Delia API URL", "http://localhost:8201")
+  .option("--api-url <url>", "Delia API URL (required)", process.env.DELIA_API_URL)
   .action(async (options) => {
     const { DeliaClient } = await import("./lib/api.js");
     const client = new DeliaClient(options.apiUrl);

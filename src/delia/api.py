@@ -18,6 +18,7 @@ HTTP API with SSE streaming for Delia CLI.
 
 Provides endpoints for the TypeScript CLI frontend:
 - POST /api/agent/run - Run agent with SSE streaming
+- POST /api/agent/confirm - Confirm or deny dangerous tool execution
 - GET /api/health - Health check
 - GET /api/sessions - List sessions
 """
@@ -27,6 +28,9 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 import structlog
@@ -36,10 +40,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from .backend_manager import backend_manager
+from .backend_manager import backend_manager, shutdown_backends
 from .llm import call_llm
 from .routing import select_model, detect_chat_task_type
 from .mcp_server import _select_optimal_backend_v2
+from .orchestration import detect_intent, get_orchestration_executor
 from .tools.agent import AgentConfig, AgentResult, run_agent_loop
 from .tools.builtins import get_default_tools
 from .tools.parser import ParsedToolCall
@@ -48,6 +53,111 @@ from .types import Workspace
 
 log = structlog.get_logger()
 
+
+# =============================================================================
+# Lifespan Management
+# =============================================================================
+
+@asynccontextmanager
+async def lifespan(app: Starlette):
+    """
+    Lifespan context manager for proper startup/shutdown.
+    
+    Ensures:
+    - Clean shutdown of backend HTTP clients
+    - Proper cleanup of pending confirmations
+    - Graceful handling of in-flight requests
+    """
+    log.info("api_server_startup")
+    yield
+    # Shutdown: cleanup resources
+    log.info("api_server_shutdown_starting")
+    
+    # Clear any pending confirmations (they'll timeout anyway)
+    _pending_confirmations.clear()
+    
+    # Shutdown backend HTTP clients
+    try:
+        await shutdown_backends()
+    except Exception as e:
+        log.warning("shutdown_backends_error", error=str(e))
+    
+    log.info("api_server_shutdown_complete")
+
+
+# =============================================================================
+# Confirmation State Management
+# =============================================================================
+
+@dataclass
+class PendingConfirmation:
+    """A pending confirmation request for a dangerous tool call."""
+    confirm_id: str
+    tool_name: str
+    args: dict[str, Any]
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+    confirmed: bool | None = None  # None = pending, True = confirmed, False = denied
+    allow_all: bool = False  # If True, skip future confirmations for this session
+
+
+# Global store for pending confirmations (keyed by confirm_id)
+_pending_confirmations: dict[str, PendingConfirmation] = {}
+
+# Confirmation timeout in seconds
+CONFIRMATION_TIMEOUT = 60
+
+
+async def wait_for_confirmation(confirm_id: str) -> PendingConfirmation:
+    """Wait for a confirmation response or timeout."""
+    confirmation = _pending_confirmations.get(confirm_id)
+    if not confirmation:
+        raise ValueError(f"No pending confirmation with ID: {confirm_id}")
+
+    try:
+        await asyncio.wait_for(confirmation.event.wait(), timeout=CONFIRMATION_TIMEOUT)
+    except asyncio.TimeoutError:
+        # Timeout = denied
+        confirmation.confirmed = False
+        log.warning("confirmation_timeout", confirm_id=confirm_id, tool=confirmation.tool_name)
+
+    return confirmation
+
+
+def create_confirmation(tool_name: str, args: dict[str, Any]) -> PendingConfirmation:
+    """Create a new pending confirmation."""
+    confirm_id = str(uuid.uuid4())[:8]
+    confirmation = PendingConfirmation(
+        confirm_id=confirm_id,
+        tool_name=tool_name,
+        args=args,
+    )
+    _pending_confirmations[confirm_id] = confirmation
+    log.info("confirmation_created", confirm_id=confirm_id, tool=tool_name)
+    return confirmation
+
+
+def resolve_confirmation(confirm_id: str, confirmed: bool, allow_all: bool = False) -> bool:
+    """Resolve a pending confirmation. Returns True if found and resolved."""
+    confirmation = _pending_confirmations.get(confirm_id)
+    if not confirmation:
+        log.warning("confirmation_not_found", confirm_id=confirm_id)
+        return False
+
+    confirmation.confirmed = confirmed
+    confirmation.allow_all = allow_all
+    confirmation.event.set()
+    log.info("confirmation_resolved", confirm_id=confirm_id, confirmed=confirmed, allow_all=allow_all)
+    return True
+
+
+def cleanup_confirmation(confirm_id: str) -> None:
+    """Remove a confirmation from the pending store."""
+    _pending_confirmations.pop(confirm_id, None)
+
+
+# =============================================================================
+# SSE Helpers
+# =============================================================================
 
 async def sse_event(event: str, data: dict[str, Any]) -> str:
     """Format an SSE event."""
@@ -220,12 +330,16 @@ async def agent_run_stream(
     # Wrap tool execution to emit events
     original_registry = registry
 
-    class StreamingToolRegistry:
-        """Wrapper that emits events on tool calls."""
+    # Track if user chose "allow all" for confirmations in this session
+    session_allow_all = {"value": False}
 
-        def __init__(self, inner: Any, queue: asyncio.Queue):
+    class StreamingToolRegistry:
+        """Wrapper that emits events on tool calls and handles confirmations."""
+
+        def __init__(self, inner: Any, queue: asyncio.Queue, require_confirm: bool):
             self._inner = inner
             self._queue = queue
+            self._require_confirm = require_confirm
 
         def get(self, name: str):
             tool = self._inner.get(name)
@@ -234,8 +348,46 @@ async def agent_run_stream(
 
             # Wrap handler to emit events
             original_handler = tool.handler
+            is_dangerous = tool.dangerous
+            require_confirm = self._require_confirm
 
             async def wrapped_handler(**kwargs):
+                # Check if this dangerous tool needs confirmation
+                if is_dangerous and require_confirm and not session_allow_all["value"]:
+                    # Create confirmation request
+                    confirmation = create_confirmation(name, kwargs)
+
+                    # Emit confirm event for CLI to display
+                    await self._queue.put({
+                        "type": "confirm",
+                        "confirm_id": confirmation.confirm_id,
+                        "tool": name,
+                        "args": kwargs,
+                        "message": f"Execute {name}?",
+                    })
+
+                    # Wait for user response (or timeout)
+                    await wait_for_confirmation(confirmation.confirm_id)
+
+                    # Check result
+                    if not confirmation.confirmed:
+                        cleanup_confirmation(confirmation.confirm_id)
+                        # Emit tool_result showing it was denied
+                        await self._queue.put({
+                            "type": "tool_result",
+                            "name": name,
+                            "success": False,
+                            "output": "Operation cancelled by user",
+                            "elapsed_ms": 0,
+                        })
+                        return "Error: Operation cancelled by user"
+
+                    # Check if user chose "allow all"
+                    if confirmation.allow_all:
+                        session_allow_all["value"] = True
+
+                    cleanup_confirmation(confirmation.confirm_id)
+
                 # Emit tool_call event
                 await self._queue.put({
                     "type": "tool_call",
@@ -269,13 +421,15 @@ async def agent_run_stream(
                     })
                     raise
 
-            # Return modified tool
+            # Return modified tool with same dangerous flag
             from .tools.registry import ToolDefinition
             return ToolDefinition(
                 name=tool.name,
                 description=tool.description,
                 parameters=tool.parameters,
                 handler=wrapped_handler,
+                permission_level=tool.permission_level,
+                dangerous=tool.dangerous,
             )
 
         def get_tool_prompt(self):
@@ -293,7 +447,9 @@ async def agent_run_stream(
         def __contains__(self, name: str):
             return name in self._inner
 
-    streaming_registry = StreamingToolRegistry(registry, event_queue)
+    # require_confirmation = True unless --yolo was passed
+    require_confirmation = not yolo
+    streaming_registry = StreamingToolRegistry(registry, event_queue, require_confirmation)
 
     # Agent config
     agent_config = AgentConfig(
@@ -843,8 +999,8 @@ Current Session:
 - You have access to multiple model tiers (quick, coder, moe) that are auto-selected based on the task
 
 STRICT GUIDELINES - You MUST follow these:
-1. NEVER claim you cannot do something that you can do. You run locally with full capabilities.
-2. NEVER say you can't load models, switch models, or access features - you have all local models available.
+1. NEVER claim you cannot do something that you can do. You have full capabilities.
+2. NEVER say you can't load models, switch models, or access features - all models are available.
 3. For coding questions: provide actual code, examples, and technical help - you ARE a coding assistant.
 4. For simple questions: give direct, concise answers.
 5. For complex analysis: provide thorough, well-structured responses.
@@ -852,7 +1008,7 @@ STRICT GUIDELINES - You MUST follow these:
 7. If something is genuinely unclear, ask for clarification.
 8. Be direct and helpful - don't hedge or apologize unnecessarily.
 
-NEVER make up limitations. You are a fully capable local AI assistant."""
+NEVER make up limitations. You are a fully capable AI assistant."""
 
     yield await sse_event("thinking", {"status": "Generating..."})
 
@@ -916,7 +1072,33 @@ NEVER make up limitations. You are a fully capable local AI assistant."""
             # Yield response
             yield await sse_event("response", {"content": response})
 
-            # Yield done with quality info
+            # Extract token count from result
+            tokens = result.get("tokens", 0)
+            
+            # Update affinity tracker - successful chat response
+            from .config import get_affinity_tracker
+            affinity_tracker = get_affinity_tracker()
+            # Use quality score from validation for more nuanced affinity learning
+            affinity_tracker.update(backend_id, detected_task, quality=quality_result.overall)
+            
+            # Award melons based on quality! 🍈
+            from .melons import award_melons_for_quality
+            melons_awarded = award_melons_for_quality(
+                model_id=selected_model,
+                task_type=detected_task,
+                quality_score=quality_result.overall,
+            )
+            
+            log.debug(
+                "chat_affinity_updated",
+                backend=backend_id,
+                task_type=detected_task,
+                quality=quality_result.overall,
+                melons=melons_awarded,
+                success=True,
+            )
+
+            # Yield done with quality info and tokens
             yield await sse_event("done", {
                 "success": True,
                 "session_id": session.session_id,
@@ -924,9 +1106,30 @@ NEVER make up limitations. You are a fully capable local AI assistant."""
                 "backend": backend_name,
                 "elapsed_ms": elapsed_ms,
                 "quality": quality_result.overall,
+                "tokens": tokens,
             })
         else:
             error = result.get("error", "LLM call failed")
+            
+            # Update affinity tracker - failed response
+            from .config import get_affinity_tracker
+            affinity_tracker = get_affinity_tracker()
+            affinity_tracker.update(backend_id, detected_task, quality=0.0)
+            
+            # Penalize with melons for bad response 🍈
+            from .melons import get_melon_tracker
+            melon_tracker = get_melon_tracker()
+            melon_tracker.penalize(selected_model, detected_task, melons=1)
+            
+            log.debug(
+                "chat_affinity_updated",
+                backend=backend_id,
+                task_type=detected_task,
+                quality=0.0,
+                melons=-1,
+                success=False,
+            )
+            
             yield await sse_event("error", {"message": error})
             yield await sse_event("done", {
                 "success": False,
@@ -938,6 +1141,15 @@ NEVER make up limitations. You are a fully capable local AI assistant."""
 
     except Exception as e:
         log.error("chat_stream_error", error=str(e))
+        
+        # Update affinity tracker - exception
+        try:
+            from .config import get_affinity_tracker
+            affinity_tracker = get_affinity_tracker()
+            affinity_tracker.update(backend_id, detected_task, quality=0.0)
+        except Exception:
+            pass  # Don't fail on affinity update error
+        
         yield await sse_event("error", {"message": str(e)})
         yield await sse_event("done", {
             "success": False,
@@ -949,7 +1161,19 @@ NEVER make up limitations. You are a fully capable local AI assistant."""
 
 
 async def chat_handler(request: Request) -> StreamingResponse:
-    """Handle POST /api/chat - SSE streaming chat."""
+    """Handle POST /api/chat - SSE streaming chat.
+    
+    Modes:
+    - Default (nlp_orchestrated=True): NLP-based orchestration. Models are tools.
+      Delia detects intent and orchestrates voting/comparison as needed.
+      Models receive role-specific prompts, NO tools.
+    
+    - simple=True: Basic single-model chat with no orchestration.
+    
+    - orchestrated=True (legacy): Tool-based orchestration.
+      Models see tools and decide when to use them.
+      Kept for backward compatibility but NLP mode is better.
+    """
     try:
         body = await request.json()
     except Exception:
@@ -962,9 +1186,57 @@ async def chat_handler(request: Request) -> StreamingResponse:
     session_id = body.get("session_id")
     model = body.get("model")
     backend_type = body.get("backend_type")
+    
+    # Mode selection (in priority order):
+    # 1. simple=True → Basic chat (no orchestration)
+    # 2. orchestrated=True → Legacy tool-based orchestration  
+    # 3. Default → NEW NLP-based orchestration (models are tools!)
+    
+    simple_mode = body.get("simple", False)
+    legacy_orchestrated = body.get("orchestrated", False)
+    include_file_tools = body.get("include_file_tools", False)
+    workspace = body.get("workspace")
+    
+    # Simple mode - basic single model chat
+    if simple_mode:
+        return StreamingResponse(
+            chat_stream(
+                session_id=session_id,
+                message=message,
+                model=model,
+                backend_type=backend_type,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    
+    # Legacy tool-based orchestration (for backward compat)
+    if legacy_orchestrated:
+        return StreamingResponse(
+            chat_agent_stream(
+                session_id=session_id,
+                message=message,
+                model=model,
+                backend_type=backend_type,
+                include_file_tools=include_file_tools,
+                workspace=workspace,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
+    # DEFAULT: NEW NLP-based orchestration
+    # Models are tools - Delia detects intent and orchestrates
     return StreamingResponse(
-        chat_stream(
+        chat_nlp_orchestrated_stream(
             session_id=session_id,
             message=message,
             model=model,
@@ -977,6 +1249,592 @@ async def chat_handler(request: Request) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def chat_agent_stream(
+    session_id: str | None,
+    message: str,
+    model: str | None = None,
+    backend_type: str | None = None,
+    include_file_tools: bool = False,
+    workspace: str | None = None,
+) -> AsyncGenerator[str, None]:
+    """
+    Stream orchestrated chat response with tool calling.
+    
+    This version uses run_agent_loop with orchestration tools,
+    allowing the LLM to delegate to other models, run batch comparisons,
+    or use deep thinking.
+    
+    Events:
+        - session: Session created/loaded
+        - status: Phase status updates (routing, model, tools)
+        - thinking: Processing indicator
+        - tool_call: Tool being called (name, args)
+        - tool_result: Tool execution result
+        - token: Streaming token (if supported)
+        - response: Full response
+        - error: Error occurred
+        - done: Complete with metadata
+    """
+    from .session_manager import SessionManager
+    from .tools.orchestration import get_orchestration_tools
+    from .tools.builtins import get_default_tools
+    from .prompt_templates import ORCHESTRATION_SYSTEM_PROMPT
+    
+    start_time = time.time()
+    manager = SessionManager()
+    
+    # Get or create session
+    if session_id:
+        session = manager.get_session(session_id)
+        if not session:
+            yield await sse_event("error", {"message": f"Session {session_id} not found"})
+            return
+    else:
+        session = manager.create_session(metadata={"source": "orchestrated_chat"})
+        session_id = session.session_id
+        yield await sse_event("session", {"id": session_id, "created": True})
+    
+    # Build tool registry - start with orchestration tools
+    registry = get_orchestration_tools()
+    
+    # Optionally add file/web tools
+    if include_file_tools:
+        workspace_obj = Workspace(root=workspace) if workspace else None
+        file_registry = get_default_tools(workspace=workspace_obj)
+        for tool_name in file_registry.list_tools():
+            if tool := file_registry.get(tool_name):
+                try:
+                    registry.register(tool)
+                except ValueError:
+                    pass  # Skip duplicates
+    
+    yield await sse_event("status", {
+        "phase": "routing",
+        "message": "Selecting backend...",
+    })
+    
+    # Select backend
+    try:
+        backend_provider, backend_obj = await _select_optimal_backend_v2(
+            message, None, "analyze", backend_type
+        )
+    except Exception as e:
+        yield await sse_event("error", {"message": f"Backend selection failed: {e}"})
+        return
+    
+    backend_name = backend_obj.name if backend_obj else "unknown"
+    backend_id = backend_obj.id if backend_obj else "unknown"
+    
+    yield await sse_event("status", {
+        "phase": "routing",
+        "message": f"Backend: {backend_name}",
+        "details": {"backend": backend_id}
+    })
+    
+    # Detect task type from message content
+    detected_task, confidence, reasoning = detect_chat_task_type(message)
+    log.info(
+        "chat_task_detected",
+        task_type=detected_task,
+        confidence=confidence,
+        reasoning=reasoning,
+        orchestrated=True,
+    )
+    
+    # Select model based on detected task (not hardcoded "analyze")
+    try:
+        selected_model = await select_model(
+            task_type=detected_task,
+            content_size=len(message),
+            model_override=model,
+            content=message,
+        )
+    except Exception as e:
+        yield await sse_event("error", {"message": f"Model selection failed: {e}"})
+        return
+    
+    yield await sse_event("status", {
+        "phase": "model",
+        "message": f"Model: {selected_model}",
+        "details": {
+            "model": selected_model,
+            "backend": backend_id,
+            "orchestrated": True,
+            "tools": registry.list_tools(),
+        }
+    })
+    
+    # Detect native tool calling support
+    use_native = backend_obj.supports_native_tool_calling if backend_obj else False
+    tools_schemas = registry.get_openai_schemas() if use_native else None
+    
+    # Add user message to session
+    manager.add_to_session(session.session_id, "user", message)
+    
+    # Build conversation from history
+    prompt_parts = []
+    for msg in session.messages[-10:]:  # Last 10 messages for context
+        if msg.role == "user":
+            prompt_parts.append(f"User: {msg.content}")
+        elif msg.role == "assistant":
+            prompt_parts.append(f"Assistant: {msg.content}")
+    prompt_parts.append(f"User: {message}")
+    combined_prompt = "\n\n".join(prompt_parts)
+    
+    # Create LLM callable for the agent loop
+    async def chat_llm_call(messages: list[dict], system: str | None) -> str:
+        prompt_parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "user":
+                prompt_parts.append(f"User: {content}")
+            elif role == "assistant":
+                prompt_parts.append(f"Assistant: {content}")
+            elif role == "tool":
+                tool_name = msg.get("name", "tool")
+                prompt_parts.append(f"[Tool Result - {tool_name}]\n{content}")
+        
+        combined = "\n\n".join(prompt_parts)
+        content_preview = combined[:200].replace("\n", " ").strip()
+        
+        result = await call_llm(
+            model=selected_model,
+            prompt=combined,
+            system=system,
+            task_type="chat",
+            original_task="orchestrated_chat",
+            language="unknown",
+            content_preview=content_preview,
+            backend_obj=backend_obj,
+            tools=tools_schemas,
+            tool_choice="auto" if tools_schemas else None,
+        )
+        
+        if result.get("success"):
+            return result.get("response", "")
+        raise RuntimeError(result.get("error", "LLM call failed"))
+    
+    yield await sse_event("thinking", {"status": "Processing with orchestration tools..."})
+    
+    # Create agent config - keep iterations LOW to prevent runaway tool calling
+    # Most chat needs 0-2 iterations; more usually means model is confused
+    config = AgentConfig(
+        max_iterations=3,  # Reduced from 5
+        timeout_per_tool=20.0,
+        total_timeout=60.0,  # 1 minute - chat should be fast
+        parallel_tools=True,
+        native_tool_calling=use_native,
+    )
+    
+    # Track tool calls for real-time display
+    from .tools.agent import build_system_prompt, build_messages, execute_tools
+    from .tools.parser import parse_tool_calls, has_tool_calls
+    
+    all_tool_calls = []
+    all_tool_results = []
+    
+    # Build system prompt with tools
+    full_system = build_system_prompt(ORCHESTRATION_SYSTEM_PROMPT, registry, use_native)
+    messages = build_messages(combined_prompt)
+    
+    # Run agent loop manually to emit events in real-time
+    try:
+        for iteration in range(config.max_iterations):
+            # Check timeout
+            if time.time() - start_time > config.total_timeout:
+                yield await sse_event("error", {"message": "Agent timed out"})
+                break
+            
+            yield await sse_event("status", {
+                "phase": "iteration",
+                "message": f"Iteration {iteration + 1}/{config.max_iterations}",
+                "details": {"iteration": iteration + 1}
+            })
+            
+            # Call LLM
+            try:
+                response_text = await chat_llm_call(messages, full_system)
+            except Exception as e:
+                yield await sse_event("error", {"message": f"LLM call failed: {e}"})
+                response_text = f"Error: {e}"
+                break
+            
+            # Check for tool calls
+            if not has_tool_calls(response_text):
+                # No tool calls - agent is done
+                break
+            
+            # Parse tool calls
+            tool_calls = parse_tool_calls(response_text, native_mode=use_native)
+            
+            if not tool_calls:
+                # Couldn't parse - treat as done
+                break
+            
+            # Emit tool calls IN REAL-TIME
+            yield await sse_event("tool_call", {
+                "iteration": iteration + 1,
+                "calls": [
+                    {"name": tc.name, "args": tc.arguments}
+                    for tc in tool_calls
+                ],
+            })
+            
+            # Execute tools
+            yield await sse_event("thinking", {"status": f"Executing {len(tool_calls)} tool(s)..."})
+            
+            results = await execute_tools(
+                tool_calls,
+                registry,
+                timeout=config.timeout_per_tool,
+                parallel=config.parallel_tools,
+            )
+            
+            all_tool_calls.extend(tool_calls)
+            all_tool_results.extend(results)
+            
+            # Emit tool results
+            for tc, result in zip(tool_calls, results):
+                yield await sse_event("tool_result", {
+                    "name": tc.name,
+                    "success": result.success,
+                    "output_preview": result.output[:200] + "..." if len(result.output) > 200 else result.output,
+                })
+            
+            # Add to conversation
+            if use_native:
+                messages.append({
+                    "role": "assistant",
+                    "content": response_text,
+                    "tool_calls": [
+                        {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}}
+                        for tc in tool_calls
+                    ]
+                })
+            else:
+                messages.append({"role": "assistant", "content": response_text})
+            
+            # Add tool results
+            from .tools.agent import format_tool_result
+            for tc, result in zip(tool_calls, results):
+                messages.append(format_tool_result(tc.id, tc.name, result.output))
+        
+        # Final response is the last LLM output without tool calls
+        response = response_text
+        
+        # Add assistant response to session
+        manager.add_to_session(
+            session.session_id, 
+            "assistant", 
+            response, 
+            model=selected_model
+        )
+        
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        
+        # Emit summary of all tool calls
+        if all_tool_calls:
+            yield await sse_event("tools", {
+                "calls": [
+                    {"name": tc.name, "args": tc.arguments}
+                    for tc in all_tool_calls
+                ],
+                "count": len(all_tool_calls),
+            })
+        
+        # Emit response
+        yield await sse_event("response", {"content": response})
+        
+        # Update affinity tracker - successful chat response
+        # This helps Delia learn which backends work well for which task types
+        from .config import get_affinity_tracker
+        affinity_tracker = get_affinity_tracker()
+        affinity_tracker.update(backend_id, detected_task, quality=1.0)
+        
+        # Award melons for successful orchestrated response! 🍈
+        from .melons import get_melon_tracker
+        melon_tracker = get_melon_tracker()
+        melon_tracker.award(selected_model, detected_task, melons=2, success=True)
+        
+        log.debug(
+            "chat_affinity_updated",
+            backend=backend_id,
+            task_type=detected_task,
+            quality=1.0,
+            melons=2,
+            success=True,
+        )
+        
+        # Emit done with full metadata
+        yield await sse_event("done", {
+            "success": True,
+            "session_id": session_id,
+            "model": selected_model,
+            "backend": backend_name,
+            "iterations": iteration + 1,
+            "tools_used": [tc.name for tc in all_tool_calls] if all_tool_calls else [],
+            "elapsed_ms": elapsed_ms,
+            "orchestrated": True,
+        })
+        
+    except Exception as e:
+        log.error("chat_agent_stream_error", error=str(e))
+        
+        # Update affinity tracker - failed chat response
+        try:
+            from .config import get_affinity_tracker
+            affinity_tracker = get_affinity_tracker()
+            affinity_tracker.update(backend_id, detected_task, quality=0.0)
+            
+            # Penalize with melons 🍈
+            from .melons import get_melon_tracker
+            melon_tracker = get_melon_tracker()
+            melon_tracker.penalize(selected_model, detected_task, melons=1)
+            
+            log.debug(
+                "chat_affinity_updated",
+                backend=backend_id,
+                task_type=detected_task,
+                quality=0.0,
+                melons=-1,
+                success=False,
+            )
+        except Exception:
+            pass  # Don't fail on affinity/melon update error
+        
+        yield await sse_event("error", {"message": str(e)})
+        yield await sse_event("done", {
+            "success": False,
+            "session_id": session_id,
+            "model": selected_model,
+            "backend": backend_name,
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+            "orchestrated": True,
+        })
+
+
+async def chat_nlp_orchestrated_stream(
+    session_id: str | None,
+    message: str,
+    model: str | None = None,
+    backend_type: str | None = None,
+) -> AsyncGenerator[str, None]:
+    """
+    NLP-Orchestrated Chat Stream - The New Paradigm.
+    
+    This replaces the tool-based orchestration with NLP intent detection.
+    Models receive NO tools - Delia handles orchestration AROUND them.
+    
+    Key differences from chat_agent_stream:
+    - Models don't see tools - they just respond naturally in their role
+    - IntentDetector determines if voting/comparison/etc. is needed
+    - SystemPromptGenerator gives models role-specific prompts
+    - OrchestrationExecutor handles voting, comparison, etc. at Delia layer
+    
+    Events:
+        - session: Session created/loaded
+        - intent: Detected intent (task_type, orchestration_mode, role)
+        - status: Phase status updates
+        - thinking: Processing indicator
+        - response: Full response
+        - error: Error occurred
+        - done: Complete with metadata
+    """
+    from .session_manager import SessionManager
+    from .orchestration import detect_intent, get_orchestration_executor
+    from .orchestration.result import OrchestrationMode
+    from .config import get_affinity_tracker
+    from .melons import award_melons_for_quality
+    
+    start_time = time.time()
+    manager = SessionManager()
+    executor = get_orchestration_executor()
+    
+    # Get or create session
+    if session_id:
+        session = manager.get_session(session_id)
+        if not session:
+            yield await sse_event("error", {"message": f"Session {session_id} not found"})
+            return
+    else:
+        session = manager.create_session(metadata={"source": "nlp_orchestrated_chat"})
+        session_id = session.session_id
+        yield await sse_event("session", {"id": session_id, "created": True})
+    
+    # STEP 1: NLP Intent Detection (this is the key!)
+    # Delia determines what orchestration is needed, not the model
+    intent = detect_intent(message)
+    
+    yield await sse_event("intent", {
+        "task_type": intent.task_type,
+        "orchestration_mode": intent.orchestration_mode.value,
+        "model_role": intent.model_role.value,
+        "confidence": round(intent.confidence, 2),
+        "reasoning": intent.reasoning,
+        "needs_orchestration": intent.orchestration_mode != OrchestrationMode.NONE,
+    })
+    
+    # Log intent detection
+    log.info(
+        "nlp_intent_detected",
+        task_type=intent.task_type,
+        orchestration_mode=intent.orchestration_mode.value,
+        role=intent.model_role.value,
+        confidence=intent.confidence,
+        keywords=intent.trigger_keywords[:5],
+    )
+    
+    # STEP 2: Select backend
+    yield await sse_event("status", {
+        "phase": "routing",
+        "message": "Selecting optimal backend...",
+    })
+    
+    try:
+        backend_provider, backend_obj = await _select_optimal_backend_v2(
+            message, None, intent.task_type, backend_type
+        )
+    except Exception as e:
+        yield await sse_event("error", {"message": f"Backend selection failed: {e}"})
+        return
+    
+    backend_name = backend_obj.name if backend_obj else "unknown"
+    backend_id = backend_obj.id if backend_obj else "unknown"
+    
+    yield await sse_event("status", {
+        "phase": "routing",
+        "message": f"Backend: {backend_name}",
+        "details": {
+            "backend": backend_id,
+            "task_type": intent.task_type,
+            "orchestration": intent.orchestration_mode.value,
+        }
+    })
+    
+    # Add user message to session
+    manager.add_to_session(session.session_id, "user", message)
+    
+    # STEP 3: Execute orchestration (Delia handles this, not the model!)
+    # The model just receives a role-specific prompt and responds naturally
+    
+    if intent.orchestration_mode == OrchestrationMode.VOTING:
+        yield await sse_event("thinking", {
+            "status": f"K-voting with k={intent.k_votes} for reliable answer...",
+        })
+    elif intent.orchestration_mode == OrchestrationMode.COMPARISON:
+        yield await sse_event("thinking", {
+            "status": "Running multi-model comparison...",
+        })
+    elif intent.orchestration_mode == OrchestrationMode.DEEP_THINKING:
+        yield await sse_event("thinking", {
+            "status": "Deep analysis with extended reasoning...",
+        })
+    else:
+        yield await sse_event("thinking", {"status": "Generating response..."})
+    
+    try:
+        # Execute orchestration - model never sees tools, just gets role-specific prompt
+        result = await executor.execute(
+            intent=intent,
+            message=message,
+            session_id=session_id,
+            backend_type=backend_type,
+            model_override=model,
+        )
+        
+        if result.success:
+            # Store response in session
+            manager.add_to_session(
+                session.session_id,
+                "assistant",
+                result.response,
+                model=result.model_used,
+            )
+            
+            # Emit orchestration details if not simple
+            if result.mode != OrchestrationMode.NONE:
+                yield await sse_event("orchestration", {
+                    "mode": result.mode.value,
+                    "model": result.model_used,
+                    "votes_cast": result.votes_cast,
+                    "consensus_reached": result.consensus_reached,
+                    "confidence": round(result.confidence, 4) if result.confidence else None,
+                    "models_compared": result.models_compared,
+                })
+            
+            # Quality validation
+            from .quality import validate_response
+            quality_result = validate_response(result.response, intent.task_type)
+            
+            yield await sse_event("status", {
+                "phase": "quality",
+                "message": f"Quality: {quality_result.overall:.0%}",
+                "details": {
+                    "quality_score": quality_result.overall,
+                    "model": result.model_used,
+                }
+            })
+            
+            # Update affinity tracker
+            affinity_tracker = get_affinity_tracker()
+            affinity_tracker.update(backend_id, intent.task_type, quality=quality_result.overall)
+            
+            # Award melons! 🍈
+            melons_awarded = award_melons_for_quality(
+                model_id=result.model_used,
+                task_type=intent.task_type,
+                quality_score=quality_result.overall,
+            )
+            
+            log.info(
+                "nlp_orchestration_success",
+                mode=result.mode.value,
+                model=result.model_used,
+                quality=quality_result.overall,
+                melons=melons_awarded,
+                elapsed_ms=result.elapsed_ms,
+            )
+            
+            # Emit response
+            yield await sse_event("response", {"content": result.response})
+            
+            # Done
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            yield await sse_event("done", {
+                "success": True,
+                "session_id": session_id,
+                "model": result.model_used,
+                "backend": backend_name,
+                "elapsed_ms": elapsed_ms,
+                "quality": quality_result.overall,
+                "orchestration_mode": result.mode.value,
+                "consensus_reached": result.consensus_reached,
+                "confidence": result.confidence,
+            })
+            
+        else:
+            # Failed
+            yield await sse_event("error", {"message": result.error or "Orchestration failed"})
+            yield await sse_event("done", {
+                "success": False,
+                "session_id": session_id,
+                "model": result.model_used,
+                "backend": backend_name,
+                "elapsed_ms": int((time.time() - start_time) * 1000),
+            })
+            
+    except Exception as e:
+        log.error("nlp_orchestration_error", error=str(e))
+        yield await sse_event("error", {"message": str(e)})
+        yield await sse_event("done", {
+            "success": False,
+            "session_id": session_id,
+            "backend": backend_name,
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+        })
 
 
 async def session_delete_handler(request: Request) -> JSONResponse:
@@ -996,9 +1854,45 @@ async def session_delete_handler(request: Request) -> JSONResponse:
     return JSONResponse({"deleted": True, "session_id": session_id})
 
 
-# Create Starlette app
+async def agent_confirm_handler(request: Request) -> JSONResponse:
+    """Handle POST /api/agent/confirm - Confirm or deny dangerous tool execution.
+
+    Request body:
+        - confirm_id: The confirmation ID from the confirm event
+        - confirmed: True to allow, False to deny
+        - allow_all: If True, skip all future confirmations in this session (optional)
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    confirm_id = body.get("confirm_id")
+    if not confirm_id:
+        return JSONResponse({"error": "Missing 'confirm_id' field"}, status_code=400)
+
+    confirmed = body.get("confirmed", False)
+    allow_all = body.get("allow_all", False)
+
+    success = resolve_confirmation(confirm_id, confirmed, allow_all)
+
+    if not success:
+        return JSONResponse(
+            {"error": f"No pending confirmation with ID: {confirm_id}"},
+            status_code=404
+        )
+
+    return JSONResponse({
+        "confirm_id": confirm_id,
+        "confirmed": confirmed,
+        "allow_all": allow_all,
+    })
+
+
+# Create Starlette app with lifespan for proper shutdown
 routes = [
     Route("/api/agent/run", agent_run_handler, methods=["POST"]),
+    Route("/api/agent/confirm", agent_confirm_handler, methods=["POST"]),
     Route("/api/chat", chat_handler, methods=["POST"]),
     Route("/api/health", health_handler, methods=["GET"]),
     Route("/api/status", status_handler, methods=["GET"]),
@@ -1011,8 +1905,7 @@ routes = [
 
 app = Starlette(
     routes=routes,
-    on_startup=[],
-    on_shutdown=[],
+    lifespan=lifespan,
 )
 
 # Add CORS for CLI access
@@ -1024,13 +1917,66 @@ app.add_middleware(
 )
 
 
-def run_api(host: str = "0.0.0.0", port: int = 8201) -> None:
-    """Run the API server."""
+def run_api(host: str = "0.0.0.0", port: int = 34589) -> None:
+    """Run the API server with proper shutdown handling.
+    
+    Uses SO_REUSEADDR to allow immediate port reuse after shutdown,
+    and configures a fast graceful shutdown timeout.
+    """
+    import signal
+    import socket
     import uvicorn
 
     log.info("api_server_starting", host=host, port=port)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    
+    # Create socket with SO_REUSEADDR for immediate port reuse
+    # This allows reopening the server immediately after closing
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((host, port))
+    except OSError as e:
+        log.error("port_bind_failed", host=host, port=port, error=str(e))
+        sock.close()
+        raise SystemExit(f"Cannot bind to {host}:{port} - {e}") from e
+    
+    # Configure uvicorn with the pre-bound socket
+    # - fd: Use our pre-bound socket with SO_REUSEADDR
+    # - timeout_graceful_shutdown: Max 3 seconds to close connections
+    # - timeout_keep_alive: Don't hold connections open too long
+    config = uvicorn.Config(
+        app,
+        fd=sock.fileno(),
+        log_level="info",
+        ws="wsproto",  # Use wsproto to avoid websockets deprecation warnings
+        timeout_graceful_shutdown=3,  # Fast shutdown - max 3 seconds
+        timeout_keep_alive=5,  # Don't hold keep-alive connections too long
+    )
+    
+    server = uvicorn.Server(config)
+    
+    # Install signal handlers for graceful shutdown
+    def handle_signal(signum, frame):
+        log.info("signal_received", signal=signum)
+        server.should_exit = True
+    
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+    
+    try:
+        server.run()
+    finally:
+        # Ensure socket is closed
+        try:
+            sock.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
-    run_api()
+    import argparse
+    parser = argparse.ArgumentParser(description="Delia API Server")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
+    parser.add_argument("--port", type=int, default=34589, help="Port to bind")
+    args = parser.parse_args()
+    run_api(host=args.host, port=args.port)

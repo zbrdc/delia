@@ -17,6 +17,7 @@ export interface StreamingResponseProps {
   task: string;
   thinking: string | null;
   statusInfo?: StatusInfo | null;
+  statusHistory?: StatusInfo[];
   response: string;
   toolCalls: ToolCall[];
   done: boolean;
@@ -60,6 +61,7 @@ export const StreamingResponse: React.FC<StreamingResponseProps> = ({
   task,
   thinking,
   statusInfo,
+  statusHistory = [],
   response,
   toolCalls,
   done,
@@ -85,8 +87,16 @@ export const StreamingResponse: React.FC<StreamingResponseProps> = ({
         <Text>{task}</Text>
       </Box>
 
-      {/* Status indicator for advanced logic (routing, voting, quality) */}
-      {statusInfo && <StatusIndicator status={statusInfo} />}
+      {/* Status indicators for advanced logic (routing, voting, quality) */}
+      {/* Show history when done, or current status when processing */}
+      {done && statusHistory.length > 0 && (
+        <Box flexDirection="column">
+          {statusHistory.map((status, i) => (
+            <StatusIndicator key={i} status={status} />
+          ))}
+        </Box>
+      )}
+      {!done && statusInfo && <StatusIndicator status={statusInfo} />}
 
       {/* Thinking indicator */}
       {thinking && !done && (
@@ -122,7 +132,7 @@ export const StreamingResponse: React.FC<StreamingResponseProps> = ({
       {done && (
         <Box marginTop={1}>
           <Text color={success ? "green" : "yellow"}>
-            {success ? "✓" : "⚠"} Agent{" "}
+            {success ? "[OK]" : "[WARN]"} Agent{" "}
             {success ? "completed" : "completed with warnings"}
           </Text>
         </Box>

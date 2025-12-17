@@ -135,6 +135,143 @@ Style: PEP8, type hints, docstrings
 Version: Python 3.10+
 Output: Clean, production-ready code""",
     },
+    "bash": {
+        "extensions": [".sh", ".bash", ".zsh"],
+        "keywords": ["#!/bin/bash", "#!/bin/sh", "#!/usr/bin/env bash", "if [", "elif [", "fi\n", "esac", "done\n"],
+        "system_prompt": """Role: Expert shell/bash developer
+Style: POSIX-compatible, shellcheck-clean
+Patterns: Proper quoting, error handling, pipelines
+Output: Safe, portable shell scripts""",
+    },
+    # TIOBE Top 20 additions
+    "c": {
+        "extensions": [".c", ".h"],
+        "keywords": ["#include <stdio.h>", "#include <stdlib.h>", "int main(", "malloc(", "free(", "printf(", "sizeof("],
+        "system_prompt": """Role: Expert C developer
+Style: Clean C99/C11, proper memory management
+Patterns: Manual memory, pointers, structs
+Output: Efficient, portable systems code""",
+    },
+    "sql": {
+        "extensions": [".sql"],
+        "keywords": ["SELECT ", "FROM ", "WHERE ", "INSERT INTO", "UPDATE ", "DELETE FROM", "CREATE TABLE", "JOIN ", "GROUP BY"],
+        "system_prompt": """Role: Expert SQL developer
+Style: ANSI SQL, optimized queries
+Patterns: Indexes, joins, CTEs, window functions
+Output: Performant, readable queries""",
+    },
+    "visualbasic": {
+        "extensions": [".vb", ".bas", ".vbs"],
+        "keywords": ["Sub ", "End Sub", "Function ", "End Function", "Dim ", "Public ", "Private ", "Module"],
+        "system_prompt": """Role: Expert Visual Basic developer
+Style: Clean VB.NET, proper error handling
+Patterns: OOP, event-driven, Windows Forms
+Output: Maintainable VB applications""",
+    },
+    "perl": {
+        "extensions": [".pl", ".pm", ".t"],
+        "keywords": ["#!/usr/bin/perl", "use strict", "use warnings", "my $", "sub ", "foreach ", "=~ ", "qw("],
+        "system_prompt": """Role: Expert Perl developer
+Style: Modern Perl, strict/warnings enabled
+Patterns: Regex, text processing, CPAN modules
+Output: Robust, maintainable scripts""",
+    },
+    "r": {
+        "extensions": [".r", ".R", ".Rmd"],
+        "keywords": ["<- ", "library(", "function(", "data.frame", "ggplot", "dplyr", "tidyverse", "summarize("],
+        "system_prompt": """Role: Expert R developer
+Style: Tidyverse conventions, vectorized ops
+Patterns: Data analysis, visualization, statistics
+Output: Reproducible, well-documented analysis""",
+    },
+    "delphi": {
+        "extensions": [".pas", ".dpr", ".dpk"],
+        "keywords": ["program ", "unit ", "interface", "implementation", "TForm", "TButton", "uses ", "WriteLn"],
+        "system_prompt": """Role: Expert Delphi/Object Pascal developer
+Style: Clean Pascal, component-based
+Patterns: VCL/FMX, OOP, RAD
+Output: Maintainable, cross-platform applications""",
+    },
+    "fortran": {
+        "extensions": [".f", ".f90", ".f95", ".f03", ".for"],
+        "keywords": ["program ", "subroutine ", "function ", "implicit none", "integer ", "real ", "do ", "end do"],
+        "system_prompt": """Role: Expert Fortran developer
+Style: Modern Fortran 90/95/2003+
+Patterns: Array operations, numerical computing
+Output: High-performance scientific code""",
+    },
+    "matlab": {
+        "extensions": [".m", ".mat"],
+        "keywords": ["function ", "end", "for ", "if ", "plot(", "figure(", "zeros(", "ones(", "linspace("],
+        "system_prompt": """Role: Expert MATLAB developer
+Style: Vectorized operations, clean scripts
+Patterns: Matrix ops, signal processing, visualization
+Output: Efficient numerical computing code""",
+    },
+    "ada": {
+        "extensions": [".adb", ".ads"],
+        "keywords": ["Ada.Text_IO", "Put_Line", "Get_Line", "pragma ", "procedure ", "package body", "with Ada.", "end loop;"],
+        "system_prompt": """Role: Expert Ada developer
+Style: Strong typing, safety-critical
+Patterns: Contracts, tasking, real-time
+Output: Reliable, verifiable systems code""",
+    },
+    "php": {
+        "extensions": [".php", ".phtml"],
+        "keywords": ["<?php", "<?=", "$_GET", "$_POST", "$_SESSION", "->", "namespace ", "public function"],
+        "system_prompt": """Role: Expert PHP developer
+Style: Modern PHP 8+, PSR standards
+Patterns: OOP, Composer, Laravel/Symfony
+Output: Clean, secure web applications""",
+    },
+    "kotlin": {
+        "extensions": [".kt", ".kts"],
+        "keywords": ["fun ", "val ", "var ", "class ", "object ", "companion object", "suspend ", "data class"],
+        "system_prompt": """Role: Expert Kotlin developer
+Style: Idiomatic Kotlin, null safety
+Patterns: Coroutines, extension functions, DSLs
+Output: Concise, safe JVM/Android code""",
+    },
+    "assembly": {
+        "extensions": [".asm", ".s", ".S"],
+        "keywords": ["mov ", "push ", "pop ", "call ", "ret", "jmp ", "section ", ".text", ".data", "eax", "rax"],
+        "system_prompt": """Role: Expert Assembly developer
+Style: Clean, well-commented assembly
+Patterns: x86/x64, ARM, optimization
+Output: Efficient, low-level code""",
+    },
+    "scratch": {
+        "extensions": [".sb", ".sb2", ".sb3"],
+        "keywords": ["when green flag clicked", "forever", "repeat", "if ", "broadcast", "say ", "move ", "turn "],
+        "system_prompt": """Role: Expert Scratch educator
+Style: Visual blocks, educational
+Patterns: Event-driven, animation, games
+Output: Clear, educational programs""",
+    },
+    "swift": {
+        "extensions": [".swift"],
+        "keywords": ["func ", "var ", "let ", "struct ", "class ", "import Foundation", "guard ", "@State", "SwiftUI"],
+        "system_prompt": """Role: Expert Swift developer
+Style: Modern Swift, protocol-oriented
+Patterns: SwiftUI, Combine, async/await
+Output: Safe, performant Apple platform code""",
+    },
+    "scala": {
+        "extensions": [".scala", ".sc"],
+        "keywords": ["def ", "val ", "var ", "object ", "trait ", "case class", "implicit ", "import scala"],
+        "system_prompt": """Role: Expert Scala developer
+Style: Functional/OOP hybrid, type-safe
+Patterns: Akka, Spark, cats/ZIO
+Output: Scalable, type-safe JVM code""",
+    },
+    "ruby": {
+        "extensions": [".rb", ".rake", ".gemspec"],
+        "keywords": ["def ", "end", "class ", "module ", "require ", "attr_accessor", "do |", "puts "],
+        "system_prompt": """Role: Expert Ruby developer
+Style: Idiomatic Ruby, Rails conventions
+Patterns: Metaprogramming, blocks, gems
+Output: Elegant, maintainable code""",
+    },
 }
 
 # Pygments lexer name -> our language key mapping
@@ -164,6 +301,23 @@ PYGMENTS_LANGUAGE_MAP = {
     "json": "json",
     "html": "html",
     "css": "css",
+    # TIOBE additions
+    "vb.net": "visualbasic",
+    "vbscript": "visualbasic",
+    "perl": "perl",
+    "r": "r",
+    "s": "r",
+    "delphi": "delphi",
+    "pascal": "delphi",
+    "objectpascal": "delphi",
+    "fortran": "fortran",
+    "matlab": "matlab",
+    "octave": "matlab",
+    "ada": "ada",
+    "ada95": "ada",
+    "gas": "assembly",
+    "nasm": "assembly",
+    "masm": "assembly",
 }
 
 
@@ -210,6 +364,33 @@ def detect_language(content: str, file_path: str = "", hint: str | None = None) 
             "dotnet": "csharp",
             "golang": "go",
             "next": "nextjs",
+            "sh": "bash",
+            "shell": "bash",
+            "zsh": "bash",
+            # TIOBE additions
+            "vb": "visualbasic",
+            "vb.net": "visualbasic",
+            "vbnet": "visualbasic",
+            "vbs": "visualbasic",
+            "vbscript": "visualbasic",
+            "visual basic": "visualbasic",
+            "pascal": "delphi",
+            "object pascal": "delphi",
+            "objectpascal": "delphi",
+            "asm": "assembly",
+            "x86": "assembly",
+            "x64": "assembly",
+            "arm": "assembly",
+            "nasm": "assembly",
+            "masm": "assembly",
+            "gas": "assembly",
+            "octave": "matlab",
+            "f90": "fortran",
+            "f95": "fortran",
+            "f03": "fortran",
+            "kt": "kotlin",
+            "rb": "ruby",
+            "pl": "perl",
         }
         if hint_lower in hint_map:
             detected = hint_map[hint_lower]
@@ -252,6 +433,11 @@ def detect_language(content: str, file_path: str = "", hint: str | None = None) 
                     "swift",
                     "kotlin",
                     "scala",
+                    "perl",
+                    "fortran",
+                    "ada",
+                    "matlab",
+                    "delphi",
                 ]:
                     if our_lang in pygments_name:
                         log.debug("lang_pygments_name", pygments_name=pygments_name, our_lang=our_lang)
@@ -268,16 +454,86 @@ def detect_language(content: str, file_path: str = "", hint: str | None = None) 
     # Priority 3: Simple keyword fallback for content-only detection
     if "fn " in content or "impl " in content or "use std::" in content:
         return "rust"
-    if "func " in content or "package " in content:
+    if "func " in content and "package " in content:
         return "go"
     if "public class" in content or "import java" in content:
         return "java"
+    # C detection (before C++ - look for C-specific patterns without C++ features)
+    if "#include <stdio.h>" in content or "#include <stdlib.h>" in content:
+        if "class " not in content and "std::" not in content and "template" not in content:
+            return "c"
     if "#include" in content or "std::" in content:
         return "cpp"
     if "using System" in content or "Console.Write" in content:
         return "csharp"
     if "require(" in content or "module.exports" in content:
         return "nodejs"
+    # Bash/shell detection (before Python since both can have "if")
+    if "#!/bin/bash" in content or "#!/bin/sh" in content:
+        return "bash"
+    if "if [" in content and ("then" in content or "fi" in content):
+        return "bash"
+    if "esac" in content or ("done" in content and "do" in content):
+        return "bash"
+    # SQL detection
+    if "SELECT " in content.upper() and "FROM " in content.upper():
+        return "sql"
+    if "CREATE TABLE" in content.upper() or "INSERT INTO" in content.upper():
+        return "sql"
+    # Visual Basic detection
+    if "Sub " in content and "End Sub" in content:
+        return "visualbasic"
+    if "Dim " in content and ("As String" in content or "As Integer" in content):
+        return "visualbasic"
+    # Perl detection
+    if "#!/usr/bin/perl" in content or ("use strict" in content and "my $" in content):
+        return "perl"
+    if "=~ " in content and ("$_" in content or "my $" in content):
+        return "perl"
+    # R detection
+    if "<- " in content and ("library(" in content or "function(" in content):
+        return "r"
+    if "data.frame" in content or "ggplot" in content:
+        return "r"
+    # Delphi/Pascal detection
+    if "procedure " in content.lower() and "begin" in content.lower() and "end;" in content.lower():
+        return "delphi"
+    if "unit " in content.lower() and "interface" in content.lower():
+        return "delphi"
+    # Fortran detection
+    if "program " in content.lower() and "implicit none" in content.lower():
+        return "fortran"
+    if "subroutine " in content.lower() and "end subroutine" in content.lower():
+        return "fortran"
+    # MATLAB detection
+    if "function " in content and "end" in content and ("zeros(" in content or "ones(" in content or "plot(" in content):
+        return "matlab"
+    # Ada detection
+    if "procedure " in content and "is" in content and "begin" in content and "end " in content:
+        if "with " in content and "use " in content:
+            return "ada"
+    # PHP detection
+    if "<?php" in content or ("function " in content and "$this->" in content):
+        return "php"
+    # Kotlin detection
+    if "fun " in content and ("val " in content or "var " in content):
+        if "suspend " in content or "data class" in content or "companion object" in content:
+            return "kotlin"
+    # Assembly detection
+    if "section .text" in content.lower() or "section .data" in content.lower():
+        return "assembly"
+    if ("mov " in content.lower() or "push " in content.lower()) and ("eax" in content.lower() or "rax" in content.lower()):
+        return "assembly"
+    # Swift detection
+    if "func " in content and ("guard " in content or "@State" in content or "import Foundation" in content):
+        return "swift"
+    # Scala detection
+    if "def " in content and ("object " in content or "trait " in content or "case class" in content):
+        return "scala"
+    # Ruby detection
+    if "def " in content and "end" in content and ("require " in content or "attr_accessor" in content or "do |" in content):
+        return "ruby"
+    # Python (after more specific languages)
     if "def " in content or "import " in content or "class " in content:
         return "python"
     if "function " in content or "const " in content or "let " in content:
