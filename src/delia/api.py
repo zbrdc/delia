@@ -774,11 +774,25 @@ async def models_handler(request: Request) -> JSONResponse:
 
     models = {}
     for tier in ["quick", "coder", "moe", "thinking"]:
-        model_name = active_backend.models.get(tier)
+        model_val = active_backend.models.get(tier)
+        
+        # Handle list of models
+        primary_model = None
+        all_models = []
+        if isinstance(model_val, list):
+            all_models = model_val
+            if model_val:
+                primary_model = model_val[0]
+        else:
+            primary_model = model_val
+            if model_val:
+                all_models = [model_val]
+
         tier_info = tier_stats.get(tier, {})
 
         models[tier] = {
-            "model": model_name,
+            "model": primary_model,
+            "all_models": all_models,
             "backend": active_backend.id,
             "quality_ema": tier_info.get("quality_ema", 0.5),
             "avg_quality": tier_info.get("avg_quality", 0.0),

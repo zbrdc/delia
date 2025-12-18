@@ -82,7 +82,7 @@ def classify_model(model_name: str) -> str:
     return "quick"
 
 
-def assign_models_to_tiers(models: list[str]) -> dict[str, str]:
+def assign_models_to_tiers(models: list[str]) -> dict[str, list[str]]:
     """Assign detected models to tiers based on naming patterns.
 
     This is the canonical implementation used by both CLI and backend_manager.
@@ -91,7 +91,7 @@ def assign_models_to_tiers(models: list[str]) -> dict[str, str]:
         models: List of available model names
 
     Returns:
-        Dict mapping tier names to model names. All tiers will have a value
+        Dict mapping tier names to lists of model names. All tiers will have a value
         (using the first available model as fallback).
     """
     filtered = filter_models(models)
@@ -103,30 +103,29 @@ def assign_models_to_tiers(models: list[str]) -> dict[str, str]:
     if len(filtered) == 1:
         model = filtered[0]
         return {
-            "quick": model,
-            "coder": model,
-            "moe": model,
-            "thinking": model,
+            "quick": [model],
+            "coder": [model],
+            "moe": [model],
+            "thinking": [model],
         }
 
     # Multiple models - classify each and assign to tiers
-    tiers: dict[str, str | None] = {
-        "quick": None,
-        "coder": None,
-        "moe": None,
-        "thinking": None,
+    tiers: dict[str, list[str]] = {
+        "quick": [],
+        "coder": [],
+        "moe": [],
+        "thinking": [],
     }
 
     # First pass: assign based on keywords
     for model in filtered:
         tier = classify_model(model)
-        if tiers[tier] is None:
-            tiers[tier] = model
+        tiers[tier].append(model)
 
     # Second pass: fill gaps with first available model
     first_model = filtered[0]
     for tier in tiers:
-        if tiers[tier] is None:
-            tiers[tier] = first_model
+        if not tiers[tier]:
+            tiers[tier] = [first_model]
 
-    return {k: v for k, v in tiers.items() if v is not None}
+    return tiers

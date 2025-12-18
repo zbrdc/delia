@@ -405,7 +405,15 @@ class BackendScorer:
             # Apply melon boost - models earn trust through helpful responses 🍈
             # Look up the model for this task type on this backend
             tier = _task_to_tier(task_type)
-            model_id = backend.models.get(tier) or backend.models.get("quick")
+            models = backend.models.get(tier) or backend.models.get("quick")
+            
+            # Handle list of models (pick first for scoring)
+            model_id = None
+            if isinstance(models, list) and models:
+                model_id = models[0]
+            elif isinstance(models, str):
+                model_id = models
+
             if model_id:
                 from .melons import get_melon_tracker
                 melon_tracker = get_melon_tracker()
@@ -705,10 +713,23 @@ class ModelRouter:
             log.error("no_backend_configured", hint="Run 'delia serve' to auto-detect backends")
             raise RuntimeError("No backend configured. Check ~/.delia/settings.json or run 'delia init' to setup.")
 
-        model_quick = backend.models.get("quick", "current")
-        model_coder = backend.models.get("coder", "current")
-        model_moe = backend.models.get("moe", "current")
-        model_thinking = backend.models.get("thinking", "current")
+        def get_model(tier: str) -> str:
+            """Get a model for a tier, handling lists and defaults."""
+            val = backend.models.get(tier)
+            if not val:
+                # Fallback to current if tier not found
+                return "current"
+            if isinstance(val, list):
+                if not val:
+                    return "current"
+                # Pick random model from tier for load balancing
+                return random.choice(val)
+            return val
+
+        model_quick = get_model("quick")
+        model_coder = get_model("coder")
+        model_moe = get_model("moe")
+        model_thinking = get_model("thinking")
 
         # Helper to resolve tier name to model name
         def resolve_tier(tier_name):

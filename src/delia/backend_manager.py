@@ -70,7 +70,7 @@ class BackendConfig:
     url: str
     enabled: bool = True
     priority: int = 0
-    models: dict[str, str] = field(default_factory=dict)
+    models: dict[str, list[str]] = field(default_factory=dict)
     health_endpoint: str = "/health"
     models_endpoint: str = "/v1/models"
     chat_endpoint: str = "/v1/chat/completions"
@@ -106,6 +106,17 @@ class BackendConfig:
         }
         default_url = default_urls.get(provider, "http://localhost:11434")  # Ollama default
 
+        # Handle models migration (str -> list[str])
+        raw_models = data.get("models", {})
+        models = {}
+        for tier, model_val in raw_models.items():
+            if isinstance(model_val, str):
+                models[tier] = [model_val]
+            elif isinstance(model_val, list):
+                models[tier] = model_val
+            else:
+                models[tier] = []
+
         return cls(
             id=data.get("id", "unknown"),
             name=data.get("name", "Unknown Backend"),
@@ -114,7 +125,7 @@ class BackendConfig:
             url=data.get("url", default_url),
             enabled=data.get("enabled", True),
             priority=data.get("priority", 0),
-            models=data.get("models", {}),
+            models=models,
             health_endpoint=data.get("health_endpoint", "/health"),
             models_endpoint=data.get("models_endpoint", "/v1/models"),
             chat_endpoint=data.get("chat_endpoint", "/v1/chat/completions"),
@@ -524,7 +535,7 @@ class BackendManager:
 
         return models
 
-    def _assign_models_to_tiers(self, available_models: list[str]) -> dict[str, str]:
+    def _assign_models_to_tiers(self, available_models: list[str]) -> dict[str, list[str]]:
         """Assign available models to tiers using shared logic."""
         from .model_detection import assign_models_to_tiers
         return assign_models_to_tiers(available_models)
