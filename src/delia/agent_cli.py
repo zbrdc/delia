@@ -27,7 +27,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import structlog
 
@@ -35,23 +35,14 @@ from .tools.agent import AgentConfig, AgentResult, run_agent_loop
 from .tools.builtins import get_default_tools
 from .tools.registry import ToolRegistry
 from .types import Workspace
+from .delegation import DelegateContext, delegate_impl
+from .multi_user_tracking import tracker
+from .tui import RichAgentUI
 
 log = structlog.get_logger()
 
-# Try to import Rich for pretty output
-try:
-    from rich.console import Console
-    from rich.markdown import Markdown
-    from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, TextColumn
-    from rich.table import Table
-    from rich.text import Text
-
-    RICH_AVAILABLE = True
-    console = Console()
-except ImportError:
-    RICH_AVAILABLE = False
-    console = None
+# Initialize UI
+ui = RichAgentUI()
 
 
 @dataclass
@@ -68,6 +59,13 @@ class AgentCLIConfig:
     voting_k: int | None = None
     allow_write: bool = False
     allow_exec: bool = False
+    # Reflection settings
+    reflection_enabled: bool = False
+    max_reflections: int = 1
+    reflection_confidence: str = "normal"
+    # Planning settings
+    planning_enabled: bool = False
+    planning_model: str = "moe"  # Use MoE for planning by default
 
 
 @dataclass
@@ -85,104 +83,6 @@ class AgentCLIResult:
     voting_k: int | None = None
 
 
-def print_header(task: str) -> None:
-    """Print agent task header."""
-    if RICH_AVAILABLE and console:
-        console.print()
-        console.print(Panel(task, title="[bold blue]Task[/bold blue]", border_style="blue"))
-    else:
-        print(f"\n{'='*60}")
-        print(f"Task: {task}")
-        print(f"{'='*60}")
-
-
-def print_thinking() -> None:
-    """Print thinking indicator."""
-    if RICH_AVAILABLE and console:
-        console.print("[dim]Thinking...[/dim]")
-
-
-def print_tool_call(name: str, args: dict[str, Any]) -> None:
-    """Print tool call information."""
-    if RICH_AVAILABLE and console:
-        args_str = ", ".join(f"{k}={repr(v)[:50]}" for k, v in args.items())
-        console.print(Panel(
-            f"[cyan]{args_str}[/cyan]" if args_str else "[dim]no args[/dim]",
-            title=f"[bold yellow]:wrench: {name}[/bold yellow]",
-            border_style="yellow",
-            expand=False,
-        ))
-    else:
-        print(f"\n[Tool: {name}]")
-        for k, v in args.items():
-            print(f"  {k}: {repr(v)[:80]}")
-
-
-def print_tool_result(name: str, result: str, elapsed_ms: int, success: bool = True) -> None:
-    """Print tool result (truncated)."""
-    if RICH_AVAILABLE and console:
-        status = "[green]:heavy_check_mark:[/green]" if success else "[red]:x:[/red]"
-        # Truncate long results
-        preview = result[:500] + "..." if len(result) > 500 else result
-        console.print(Panel(
-            f"[dim]{preview}[/dim]",
-            title=f"{status} [bold]{name}[/bold] ({elapsed_ms}ms)",
-            border_style="green" if success else "red",
-            expand=False,
-        ))
-    else:
-        status = "OK" if success else "FAIL"
-        preview = result[:200] + "..." if len(result) > 200 else result
-        print(f"[{status}] {name} ({elapsed_ms}ms): {preview}")
-
-
-def print_response(response: str) -> None:
-    """Print agent response with markdown formatting."""
-    if RICH_AVAILABLE and console:
-        console.print()
-        console.print(Markdown(response))
-    else:
-        print(f"\n{response}")
-
-
-def print_footer(result: AgentCLIResult) -> None:
-    """Print execution summary footer."""
-    if RICH_AVAILABLE and console:
-        status = "[green]:heavy_check_mark:[/green]" if result.success else "[yellow]:warning:[/yellow]"
-
-        parts = [
-            f"Model: [cyan]{result.model}[/cyan]",
-            f"Backend: [cyan]{result.backend}[/cyan]",
-            f"Iterations: {result.iterations}",
-            f"Time: {result.elapsed_ms}ms",
-        ]
-
-        if result.tool_calls:
-            tools_summary = ", ".join(result.tool_calls)
-            parts.append(f"Tools: {tools_summary}")
-
-        if result.voting_used:
-            parts.append(f"Voting: k={result.voting_k} :heavy_check_mark:")
-
-        console.print()
-        console.print(Panel(
-            " | ".join(parts),
-            title=f"{status} Agent Completed",
-            border_style="dim",
-        ))
-    else:
-        status = "OK" if result.success else "WARNING"
-        print(f"\n{'='*60}")
-        print(f"[{status}] Agent Completed")
-        print(f"Model: {result.model} | Backend: {result.backend}")
-        print(f"Iterations: {result.iterations} | Time: {result.elapsed_ms}ms")
-        if result.tool_calls:
-            print(f"Tools: {', '.join(result.tool_calls)}")
-        if result.voting_used:
-            print(f"Voting: k={result.voting_k}")
-        print(f"{'='*60}")
-
-
 async def run_agent_cli(
     task: str,
     config: AgentCLIConfig,
@@ -198,16 +98,12 @@ async def run_agent_cli(
         AgentCLIResult with response and metadata
     """
     # Import here to avoid circular imports
-    from .mcp_server import call_llm, select_model, _select_optimal_backend_v2
+    from .mcp_server import call_llm, select_model, _select_optimal_backend_v2, get_active_backend
 
     start_time = time.time()
 
     # Print header
-    print_header(task)
-
-    # Select backend
-    if config.verbose:
-        print_thinking()
+    ui.print_header(task)
 
     try:
         backend_provider, backend_obj = await _select_optimal_backend_v2(
@@ -244,6 +140,59 @@ async def run_agent_cli(
             model="unknown",
             backend=backend_name,
         )
+
+    # Generate Plan (if enabled)
+    initial_plan = ""
+    if config.planning_enabled:
+        ui.print_planning_start()
+
+        # Construct planning context
+        plan_ctx = DelegateContext(
+            select_model=select_model,
+            get_active_backend=get_active_backend,
+            call_llm=call_llm,
+            get_client_id=lambda: None,
+            tracker=tracker,
+        )
+
+        plan_prompt = f"""You are a Senior Architect planning a task.
+
+Task:
+{task}
+
+Instructions:
+1. Break down the task into clear, sequential steps.
+2. Identify necessary information gathering steps first (e.g., read files, search).
+3. Outline the execution steps.
+4. Include verification steps at the end.
+5. Output ONLY the plan as a numbered list.
+"""
+
+        try:
+            initial_plan = await delegate_impl(
+                ctx=plan_ctx,
+                task="plan",
+                content=plan_prompt,
+                model=config.planning_model,
+                include_metadata=False,
+            )
+            
+            ui.print_plan(initial_plan)
+                
+            # Append plan to the task for the agent
+            task = f"""{task}
+
+---
+### Execution Plan
+Please follow this plan:
+{initial_plan}
+"""
+        except Exception as e:
+            log.warning("planning_failed", error=str(e))
+            if RICH_AVAILABLE and console:
+                console.print(f"[yellow]Warning: Planning failed: {e}. Proceeding without plan.[/yellow]")
+            else:
+                print(f"Warning: Planning failed: {e}")
 
     # Set up workspace
     workspace_obj = Workspace(root=config.workspace) if config.workspace else None
@@ -296,6 +245,76 @@ async def run_agent_cli(
         else:
             raise RuntimeError(result.get("error", "LLM call failed"))
 
+    # Critique callback for reflection loop
+    async def critique_callback(response: str, original_prompt: str) -> tuple[bool, str]:
+        if RICH_AVAILABLE and console:
+            console.print(Panel(
+                "[dim]Critiquing response...[/dim]",
+                title="[bold magenta]Reflection[/bold magenta]",
+                border_style="magenta",
+            ))
+        else:
+            print("\n[Reflection] Critiquing response...")
+
+        # Construct delegate context
+        ctx = DelegateContext(
+            select_model=select_model,
+            get_active_backend=get_active_backend,
+            call_llm=call_llm,
+            get_client_id=lambda: None,
+            tracker=tracker,
+        )
+
+        critique_prompt = f"""You are a QA Lead reviewing a response to a task.
+
+Original Task:
+{original_prompt}
+
+Response to Review:
+{response}
+
+Instructions:
+1. Verify if the response fully addresses the Original Task.
+2. Check for any logical errors, safety issues, or hallucinations.
+3. If the response is satisfactory, simply output "VERIFIED" (without quotes).
+4. If there are issues, provide concise, actionable feedback for the agent to fix them. Do not rewrite the response yourself.
+"""
+        
+        # Use high confidence (voting) if requested, otherwise normal delegation
+        # Note: We rely on the delegation system's internal voting logic if configured in settings.json
+        # or we could force it here. For now, we trust the delegate() tool's routing.
+        
+        # Use thinking model for critique if available/configured
+        model_tier = "thinking" if config.reflection_confidence == "high" else "moe"
+
+        result = await delegate_impl(
+            ctx=ctx,
+            task="critique",
+            content=critique_prompt,
+            model=model_tier,
+            include_metadata=False,
+        )
+        
+        # Check if verified
+        # Loose matching to handle "VERIFIED." or "Status: VERIFIED"
+        is_verified = "VERIFIED" in result or "verified" in result.lower() and len(result) < 50
+        
+        if is_verified:
+            ui.print_reflection_success()
+            return True, ""
+        else:
+            ui.print_reflection_feedback(result)
+            return False, result
+
+    # UI Callbacks
+    def on_tool_call(tc: Any):
+        # Unwrap ParsedToolCall
+        ui.print_tool_call(tc.name, tc.arguments)
+
+    def on_tool_result(res: Any):
+        # Unwrap ToolResult
+        ui.print_tool_result(res.name, res.output, res.success)
+
     # Create agent config
     agent_config = AgentConfig(
         max_iterations=config.max_iterations,
@@ -303,36 +322,27 @@ async def run_agent_cli(
         total_timeout=300.0,
         parallel_tools=True,
         native_tool_calling=use_native,
+        reflection_enabled=config.reflection_enabled,
+        max_reflections=config.max_reflections,
+        reflection_confidence=config.reflection_confidence,
     )
 
     # Run the agent loop
     try:
-        if RICH_AVAILABLE and console:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-                transient=True,
-            ) as progress:
-                progress.add_task("Running agent...", total=None)
-                result = await run_agent_loop(
-                    call_llm=agent_llm_call,
-                    prompt=task,
-                    system_prompt=None,
-                    registry=registry,
-                    model=selected_model,
-                    config=agent_config,
-                )
-        else:
-            print("Running agent...")
-            result = await run_agent_loop(
-                call_llm=agent_llm_call,
-                prompt=task,
-                system_prompt=None,
-                registry=registry,
-                model=selected_model,
-                config=agent_config,
-            )
+        # Note: We don't use the Progress spinner here because the UI updates live 
+        # via callbacks, and nested live displays can conflict.
+        print("Running agent...")
+        result = await run_agent_loop(
+            call_llm=agent_llm_call,
+            prompt=task,
+            system_prompt=None,
+            registry=registry,
+            model=selected_model,
+            config=agent_config,
+            critique_callback=critique_callback,
+            on_tool_call=on_tool_call,
+            on_tool_result=on_tool_result,
+        )
     except Exception as e:
         log.error("agent_cli_error", error=str(e))
         return AgentCLIResult(
@@ -352,7 +362,7 @@ async def run_agent_cli(
         tool_calls_made = [tc.name for tc in result.tool_calls]
 
     # Print response
-    print_response(result.response)
+    ui.print_final_response(result.response)
 
     # Build result
     cli_result = AgentCLIResult(
@@ -368,7 +378,12 @@ async def run_agent_cli(
     )
 
     # Print footer
-    print_footer(cli_result)
+    ui.print_footer(
+        cli_result.model,
+        cli_result.backend,
+        cli_result.iterations,
+        cli_result.elapsed_ms
+    )
 
     return cli_result
 

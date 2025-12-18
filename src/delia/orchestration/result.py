@@ -97,6 +97,9 @@ class OrchestrationResult:
     # Timing
     elapsed_ms: int = 0
     
+    # Token usage
+    tokens: int = 0
+    
     # Quality score (for melon rewards)
     quality_score: float = 0.5
     

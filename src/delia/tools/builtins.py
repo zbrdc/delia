@@ -40,6 +40,8 @@ from ..types import Workspace
 from .executor import validate_path
 from .registry import ToolDefinition, ToolRegistry
 from .web_search import web_search, web_news
+from .editing import replace_in_file, insert_into_file
+from .interaction import ask_user
 
 log = structlog.get_logger()
 
@@ -740,6 +742,22 @@ def get_default_tools(
         handler=web_news,
     ))
 
+    registry.register(ToolDefinition(
+        name="ask_user",
+        description="Ask the user a question. Use this for clarification, confirmation, or missing info.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to ask"
+                }
+            },
+            "required": ["question"]
+        },
+        handler=ask_user,
+    ))
+
     # ============================================================
     # DANGEROUS TOOLS - Always registered, require confirmation
     # unless auto-approved via --allow-write / --allow-exec flags
@@ -793,6 +811,70 @@ def get_default_tools(
         handler=delete_handler,
         permission_level="write",
         dangerous=not allow_write,  # Grouped with write operations
+    ))
+
+    # Create workspace-bound handlers for editing tools
+    if workspace:
+        replace_handler = partial(replace_in_file, workspace=workspace)
+        insert_handler = partial(insert_into_file, workspace=workspace)
+    else:
+        replace_handler = replace_in_file
+        insert_handler = insert_into_file
+
+    registry.register(ToolDefinition(
+        name="replace_in_file",
+        description="Replace text in a file. Fails if search string is not found. surgical editing safer than overwrite.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": write_path_desc
+                },
+                "search": {
+                    "type": "string",
+                    "description": "Exact text to replace"
+                },
+                "replace": {
+                    "type": "string",
+                    "description": "New text to insert"
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Max replacements (default: all)"
+                }
+            },
+            "required": ["path", "search", "replace"]
+        },
+        handler=replace_handler,
+        permission_level="write",
+        dangerous=not allow_write,
+    ))
+
+    registry.register(ToolDefinition(
+        name="insert_into_file",
+        description="Insert content into a file after a specific line number.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": write_path_desc
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content to insert"
+                },
+                "line": {
+                    "type": "integer",
+                    "description": "Line number to insert after (0 for start)"
+                }
+            },
+            "required": ["path", "content", "line"]
+        },
+        handler=insert_handler,
+        permission_level="write",
+        dangerous=not allow_write,
     ))
 
     # Create workspace-bound handler if workspace is provided

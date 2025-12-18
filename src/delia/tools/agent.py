@@ -64,6 +64,11 @@ class AgentConfig:
     allow_exec: bool = False
     require_confirmation: bool = True  # Set to False via --yolo
 
+    # Agentic Feedback Loop settings
+    reflection_enabled: bool = False
+    max_reflections: int = 1
+    reflection_confidence: str = "normal"  # "normal" or "high" (triggers voting)
+
 
 @dataclass
 class AgentResult:
@@ -84,6 +89,7 @@ class AgentResult:
     tool_calls: list[ParsedToolCall] = field(default_factory=list)
     tool_results: list[ToolResult] = field(default_factory=list)
     elapsed_ms: int = 0
+    tokens: int = 0
     stopped_reason: str = "completed"
 
 
@@ -151,6 +157,9 @@ async def run_agent_loop(
     registry: ToolRegistry,
     model: str,
     config: AgentConfig | None = None,
+    critique_callback: Callable[[str, str], Awaitable[tuple[bool, str]]] | None = None,
+    on_tool_call: Callable[[ParsedToolCall], None] | None = None,
+    on_tool_result: Callable[[ToolResult], None] | None = None,
 ) -> AgentResult:
     """Run an agentic loop with tool calling.
 
@@ -158,7 +167,7 @@ async def run_agent_loop(
     1. Calls the LLM with the current conversation
     2. Checks if response contains tool calls
     3. If yes: executes tools, appends results, loops
-    4. If no: returns the final response
+    4. If no: optionally reflects/critiques, then returns
 
     Args:
         call_llm: Async function to call the LLM. Signature:
@@ -168,6 +177,9 @@ async def run_agent_loop(
         registry: Tool registry with available tools
         model: Model name (for logging)
         config: Agent configuration (uses defaults if None)
+        critique_callback: Optional async function (response, original_prompt) -> (is_valid, feedback)
+        on_tool_call: Optional callback when a tool is called
+        on_tool_result: Optional callback when a tool execution completes
 
     Returns:
         AgentResult with final response and execution details
@@ -195,6 +207,8 @@ async def run_agent_loop(
 
     all_tool_calls: list[ParsedToolCall] = []
     all_tool_results: list[ToolResult] = []
+    total_tokens: int = 0
+    reflection_count = 0
 
     log.info(
         "agent_loop_starting",
@@ -216,6 +230,7 @@ async def run_agent_loop(
                 tool_calls=all_tool_calls,
                 tool_results=all_tool_results,
                 elapsed_ms=int(elapsed * 1000),
+                tokens=total_tokens,
                 stopped_reason="timeout",
             )
 
@@ -223,7 +238,7 @@ async def run_agent_loop(
         log.debug("agent_iteration", iteration=iteration, messages_count=len(messages))
 
         try:
-            response = await call_llm(messages, full_system)
+            response_data = await call_llm(messages, full_system)
         except Exception as e:
             log.error("agent_llm_error", iteration=iteration, error=str(e))
             return AgentResult(
@@ -233,42 +248,84 @@ async def run_agent_loop(
                 tool_calls=all_tool_calls,
                 tool_results=all_tool_results,
                 elapsed_ms=int((time.time() - start_time) * 1000),
+                tokens=total_tokens,
                 stopped_reason="error",
             )
 
-        # Extract text content
-        if isinstance(response, dict):
+        # Extract text content and tokens
+        if isinstance(response_data, dict):
             content = ""
+            total_tokens += response_data.get("tokens", 0)
+            
             # Delia LLMResponse format - response field
-            if "response" in response:
-                content = response.get("response", "") or ""
+            if "response" in response_data:
+                content = response_data.get("response", "") or ""
             # OpenAI format - message.content
-            elif "message" in response:
-                content = response["message"].get("content", "") or ""
-            elif "choices" in response:
-                choices = response.get("choices", [])
+            elif "message" in response_data:
+                content = response_data["message"].get("content", "") or ""
+            elif "choices" in response_data:
+                choices = response_data.get("choices", [])
                 if choices:
                     content = choices[0].get("message", {}).get("content", "") or ""
             else:
-                content = response.get("content", "") or ""
+                content = response_data.get("content", "") or ""
+            
+            response = content # Normalize variable name for consistency
         else:
-            content = str(response)
+            response = str(response_data)
 
         # Check for tool calls
         if not has_tool_calls(response):
-            # No tool calls - agent is done
+            # No tool calls - check if we should reflect/critique
+            if (
+                config.reflection_enabled
+                and critique_callback
+                and reflection_count < config.max_reflections
+            ):
+                log.info("agent_reflecting", reflection_count=reflection_count + 1)
+                
+                # Execute critique
+                # Note: critique callback tokens are not currently tracked in total_tokens
+                # unless the callback returns them. For now we track agent loop tokens only.
+                is_valid, feedback = await critique_callback(response, prompt)
+                
+                if not is_valid:
+                    # Critique failed - add feedback and loop again
+                    reflection_count += 1
+                    
+                    # Add agent's provisional response
+                    messages.append({
+                        "role": "assistant",
+                        "content": response,
+                    })
+                    
+                    # Add critique feedback
+                    feedback_msg = f"Review Feedback: {feedback}\n\nPlease update your response based on this feedback."
+                    messages.append({
+                        "role": "user",
+                        "content": feedback_msg,
+                    })
+                    
+                    log.info("agent_reflection_feedback", feedback_len=len(feedback))
+                    continue
+                else:
+                    log.info("agent_reflection_passed")
+
+            # Agent is done and verified (or no reflection enabled)
             log.info(
                 "agent_loop_completed",
                 iterations=iteration + 1,
                 total_tool_calls=len(all_tool_calls),
+                reflections=reflection_count,
             )
             return AgentResult(
                 success=True,
-                response=content,
+                response=response,
                 iterations=iteration + 1,
                 tool_calls=all_tool_calls,
                 tool_results=all_tool_results,
                 elapsed_ms=int((time.time() - start_time) * 1000),
+                tokens=total_tokens,
                 stopped_reason="completed",
             )
 
@@ -280,11 +337,12 @@ async def run_agent_loop(
             log.warning("agent_tool_parse_failed", iteration=iteration)
             return AgentResult(
                 success=True,
-                response=content,
+                response=response,
                 iterations=iteration + 1,
                 tool_calls=all_tool_calls,
                 tool_results=all_tool_results,
                 elapsed_ms=int((time.time() - start_time) * 1000),
+                tokens=total_tokens,
                 stopped_reason="completed",
             )
 
@@ -294,6 +352,14 @@ async def run_agent_loop(
             tool_count=len(tool_calls),
             tools=[tc.name for tc in tool_calls],
         )
+        
+        # Trigger tool call callbacks
+        if on_tool_call:
+            for tc in tool_calls:
+                try:
+                    on_tool_call(tc)
+                except Exception as e:
+                    log.warning("tool_callback_failed", error=str(e))
 
         # Execute tools
         results = await execute_tools(
@@ -302,6 +368,14 @@ async def run_agent_loop(
             timeout=config.timeout_per_tool,
             parallel=config.parallel_tools,
         )
+        
+        # Trigger tool result callbacks
+        if on_tool_result:
+            for result in results:
+                try:
+                    on_tool_result(result)
+                except Exception as e:
+                    log.warning("result_callback_failed", error=str(e))
 
         all_tool_calls.extend(tool_calls)
         all_tool_results.extend(results)
@@ -348,5 +422,6 @@ async def run_agent_loop(
         tool_calls=all_tool_calls,
         tool_results=all_tool_results,
         elapsed_ms=int((time.time() - start_time) * 1000),
+        tokens=total_tokens,
         stopped_reason="max_iterations",
     )

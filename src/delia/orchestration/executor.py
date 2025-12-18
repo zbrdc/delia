@@ -370,6 +370,7 @@ making trusted models more likely to be selected.
             )
         
         response = strip_thinking_tags(result.get("response", ""))
+        tokens = result.get("tokens", 0)
         
         # Validate quality
         quality_result = validate_response(response, intent.task_type)
@@ -380,6 +381,7 @@ making trusted models more likely to be selected.
             model_used=selected_model,
             mode=OrchestrationMode.NONE,
             quality_score=quality_result.overall,
+            tokens=tokens,
         )
     
     async def _execute_agentic(
@@ -525,7 +527,7 @@ making trusted models more likely to be selected.
                 message_count=len(messages),
             )
             
-            return await call_llm(
+            result = await call_llm(
                 model=selected_model,
                 prompt=prompt,  # Fallback for non-chat providers
                 system=system or system_prompt,
@@ -537,6 +539,31 @@ making trusted models more likely to be selected.
                 tools=tools,
                 messages=messages,  # Pass full conversation history
             )
+
+            # Instrument melon economy for intermediate steps 🍈
+            if result.get("success") and result.get("response"):
+                from ..quality import validate_response
+                from ..melons import award_melons_for_quality
+                from ..tools.parser import has_tool_calls
+                
+                resp_text = result.get("response", "")
+                # Intermediate quality check
+                step_quality = validate_response(resp_text, "agent")
+                
+                # If the model is successfully using tools, give it a tiny boost
+                # but only if the quality is high.
+                if step_quality.overall >= 0.9:
+                    # Award 1 melon for a high-quality intermediate step (rare!)
+                    # We use a lower award than final response to keep melons scarce.
+                    if has_tool_calls(resp_text):
+                        log.debug("agent_step_award", model=selected_model, quality=step_quality.overall)
+                        award_melons_for_quality(selected_model, "agent", step_quality.overall)
+                elif step_quality.overall < 0.3:
+                    # Penalize poor quality even in intermediate steps
+                    log.warning("agent_step_penalty", model=selected_model, quality=step_quality.overall)
+                    award_melons_for_quality(selected_model, "agent", step_quality.overall)
+
+            return result
         
         log.info(
             "agentic_execution_started",
@@ -575,6 +602,7 @@ making trusted models more likely to be selected.
                 model_used=selected_model,
                 mode=OrchestrationMode.AGENTIC,
                 quality_score=quality_result.overall,
+                tokens=agent_result.tokens,
                 debug_info={
                     "iterations": agent_result.iterations,
                     "tool_calls": [tc.name for tc in agent_result.tool_calls],
@@ -650,6 +678,7 @@ making trusted models more likely to be selected.
         
         max_attempts = k * 3
         attempts = 0
+        total_tokens = 0
         
         log.info("voting_started", k=k, model=selected_model, max_attempts=max_attempts)
         
@@ -672,6 +701,7 @@ making trusted models more likely to be selected.
             if not result.get("success"):
                 continue
             
+            total_tokens += result.get("tokens", 0)
             response = strip_thinking_tags(result.get("response", ""))
             vote_result = consensus.add_vote(response)
             
@@ -701,6 +731,7 @@ making trusted models more likely to be selected.
                     votes_cast=vote_result.total_votes,
                     consensus_reached=True,
                     confidence=prob,
+                    tokens=total_tokens,
                     debug_info={
                         "k": k,
                         "votes_for_winner": vote_result.votes_for_winner,
@@ -728,6 +759,7 @@ making trusted models more likely to be selected.
                 votes_cast=metadata.total_votes,
                 consensus_reached=False,
                 confidence=0.5,  # Lower confidence without full consensus
+                tokens=total_tokens,
             )
         else:
             return OrchestrationResult(
@@ -735,6 +767,7 @@ making trusted models more likely to be selected.
                 success=False,
                 error="voting_failed",
                 model_used=selected_model,
+                tokens=total_tokens,
             )
     
     async def _execute_voting_stream(
@@ -808,6 +841,7 @@ making trusted models more likely to be selected.
         
         # Collect responses from different models
         responses: list[tuple[str, str, int]] = []  # (model, response, time_ms)
+        total_tokens = 0
         
         # Use models from intent or default to available tiers
         models_to_compare = intent.comparison_models
@@ -839,6 +873,7 @@ making trusted models more likely to be selected.
             elapsed = int((time.time() - start) * 1000)
             
             if result.get("success"):
+                total_tokens += result.get("tokens", 0)
                 responses.append((model, strip_thinking_tags(result.get("response", "")), elapsed))
             else:
                 responses.append((model, f"Error: {result.get('error')}", elapsed))
@@ -856,6 +891,7 @@ making trusted models more likely to be selected.
             success=True,
             models_compared=[m for m, _, _ in responses],
             mode=OrchestrationMode.COMPARISON,
+            tokens=total_tokens,
         )
     
     async def _execute_comparison_stream(
@@ -949,6 +985,7 @@ making trusted models more likely to be selected.
                 success=False,
                 error=result.get("error"),
                 model_used=selected_model,
+                tokens=result.get("tokens", 0),
             )
         
         return OrchestrationResult(
@@ -956,6 +993,7 @@ making trusted models more likely to be selected.
             success=True,
             model_used=selected_model,
             mode=OrchestrationMode.DEEP_THINKING,
+            tokens=result.get("tokens", 0),
         )
     
     async def _execute_chain(
@@ -984,6 +1022,7 @@ making trusted models more likely to be selected.
         with trace("chain_execution", steps=len(intent.chain_steps)) as span:
             step_outputs: list[str] = []
             models_used: list[str] = []
+            total_tokens: int = 0
             current_context = message
             
             for i, step_desc in enumerate(intent.chain_steps):
@@ -1009,6 +1048,7 @@ making trusted models more likely to be selected.
                         response=f"Error: No backend available for step {i+1}",
                         success=False,
                         error="no_backend",
+                        tokens=total_tokens,
                     )
                 
                 selected_model = model_override or await select_model(
@@ -1056,8 +1096,10 @@ making trusted models more likely to be selected.
                         error=f"chain_step_{i+1}_failed",
                         model_used=selected_model,
                         mode=OrchestrationMode.CHAIN,
+                        tokens=total_tokens + result.get("tokens", 0),
                     )
                 
+                total_tokens += result.get("tokens", 0)
                 step_output = strip_thinking_tags(result.get("response", ""))
                 step_outputs.append(step_output)
                 models_used.append(selected_model)
@@ -1075,6 +1117,7 @@ making trusted models more likely to be selected.
                 success=True,
                 model_used=models_used[-1] if models_used else None,
                 mode=OrchestrationMode.CHAIN,
+                tokens=total_tokens,
                 voting_stats={
                     "chain_steps": len(intent.chain_steps),
                     "models_used": models_used,

@@ -955,6 +955,10 @@ def chat(
             api_process.terminate()
         raise typer.Exit(1)
 
+    print()
+    print_info("💡 Tip: Delia is agentic! Ask her to 'read files', 'run tests', or 'search the web'.")
+    print()
+
     # Run the chat CLI
     try:
         result = subprocess.run(cli_cmd, check=False)
@@ -974,6 +978,11 @@ def agent(
     backend: str = typer.Option(None, "--backend", "-b", help="Force backend type (local/remote)"),
     voting: bool = typer.Option(False, "--voting", help="Enable k-voting for reliability"),
     voting_k: int = typer.Option(None, "--voting-k", help="Override k value for voting"),
+    # New features
+    plan: bool = typer.Option(True, "--plan/--no-plan", help="Enable planning phase (default: True)"),
+    reflect: bool = typer.Option(True, "--reflect/--no-reflect", help="Enable agentic reflection (default: True)"),
+    reflection_confidence: str = typer.Option("normal", "--confidence", help="Reflection confidence (normal/high)"),
+    tui: bool = typer.Option(True, "--tui/--no-tui", help="Use Rich TUI (default: True)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
 ) -> None:
     """
@@ -982,13 +991,21 @@ def agent(
     The agent can read files, search code, list directories, and fetch web content
     to accomplish the given task. It runs a loop of: think -> use tools -> respond.
 
+    New in v3.2:
+    - Planning: Generates a step-by-step plan before execution (--plan)
+    - Reflection: Critiques its own work before finishing (--reflect)
+    - TUI: Live dashboard of agent activity (--tui)
+
     Examples:
-        delia agent "What files are in the src directory?"
-        delia agent "Find all TODO comments in the codebase"
-        delia agent "Summarize the main.py file" --workspace ./myproject
-        delia agent "Analyze the error handling patterns" --model moe --voting
+        delia agent "Refactor this file" --plan --reflect
+        delia agent "Quick fix" --no-plan --no-reflect
     """
     from .agent_cli import AgentCLIConfig, run_agent_sync
+    
+    # Disable TUI if requested
+    if not tui:
+        import sys
+        sys.modules["delia.agent_cli"].RICH_AVAILABLE = False
 
     # Parse tools
     tools_list = None
@@ -1004,6 +1021,9 @@ def agent(
         verbose=verbose,
         voting_enabled=voting,
         voting_k=voting_k,
+        planning_enabled=plan,
+        reflection_enabled=reflect,
+        reflection_confidence=reflection_confidence,
     )
 
     result = run_agent_sync(task, config)
