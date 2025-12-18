@@ -1,20 +1,21 @@
 /**
  * ChatView component for interactive chat sessions.
  *
- * Provides a REPL-style interface for multi-turn conversations.
- * Supports orchestrated mode with multi-model tool calling.
+ * Provides a high-end dashboard-style interface.
+ * Left: Clean Chat History (Markdown)
+ * Right: System Dashboard (Model, Backend, Tokens, Tool Log)
  */
 
 import React, { useState, useCallback, useEffect } from "react";
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp, useStdout } from "ink";
 import Spinner from "ink-spinner";
-import { DeliaClient, type ChatEvent } from "../lib/api.js";
+import { DeliaClient, type ChatEvent } from "../services/api.js";
 import { MarkdownText } from "./MarkdownText.js";
 import { InputPrompt } from "./InputPrompt.js";
 import { StatusIndicator, VotingProgress, type StatusInfo } from "./StatusIndicator.js";
 import { Header, WelcomeScreen } from "./Header.js";
 import { MessageBubble, StreamingBubble, type Message } from "./MessageBubble.js";
-import { Panel, Divider } from "./Panel.js";
+import { Panel, Divider, Chip } from "./Panel.js";
 import { ThinkingIndicator } from "./ProgressBar.js";
 import { ConfirmPrompt } from "./ConfirmPrompt.js";
 
@@ -49,49 +50,96 @@ export interface ChatViewProps {
 }
 
 /**
- * Help panel content.
+ * Dashboard Sidebar component.
  */
-const HelpPanel: React.FC<{ simple: boolean }> = ({ simple }) => (
-  <Panel title="Help" icon="❓" titleColor="cyan" borderColor="cyan">
-    <Box flexDirection="column">
-      <Text color="dim" bold>Commands:</Text>
-      <Box marginLeft={2} flexDirection="column">
-        <Text><Text color="cyan">/clear</Text> - Clear messages</Text>
-        <Text><Text color="cyan">/new</Text> - Start new session</Text>
-        <Text><Text color="cyan">/simple</Text> - Toggle simple/NLP mode</Text>
-        <Text><Text color="cyan">/help</Text> - Show this help</Text>
-        <Text><Text color="cyan">/exit</Text> - Exit chat</Text>
-      </Box>
-
-      {!simple && (
-        <>
+const DashboardSidebar: React.FC<{
+  model?: string;
+  backend?: string;
+  tokens: number;
+  totalTokens: number;
+  elapsedMs?: number;
+  tools: string[];
+  quality?: number;
+  height: number;
+}> = ({ model, backend, tokens, totalTokens, elapsedMs, tools, quality, height }) => (
+  <Box flexDirection="column" width={35} marginLeft={2} height={height}>
+    <Panel title="INTELLIGENCE" titleColor="magenta" borderStyle="round" borderColor="magenta">
+      <Box flexDirection="column">
+        <Chip label="Model" value={model || "auto"} color="cyan" />
+        <Chip label="Backend" value={backend || "local"} color="yellow" />
+        <Box marginTop={1}>
+          <Text color="dim" bold>Performance:</Text>
+        </Box>
+        <Chip label="Latency" value={elapsedMs ? `${elapsedMs}ms` : "-"} color="green" />
+        <Chip label="Current" value={`${tokens} tok`} color="blue" />
+        <Chip label="Session" value={`${totalTokens} tok`} color="blue" />
+        
+        {quality !== undefined && (
           <Box marginTop={1}>
-            <Text color="magenta" bold>✨ NLP Orchestration (DEFAULT):</Text>
+            <Text color="dim" bold>Quality Score:</Text>
+            <Box marginTop={0}>
+              <Text color={quality > 0.8 ? "green" : "yellow"}>
+                {"█".repeat(Math.round(quality * 10))}
+                <Text color="dim">{"░".repeat(10 - Math.round(quality * 10))}</Text>
+                {` ${Math.round(quality * 100)}%`}
+              </Text>
+            </Box>
           </Box>
-          <Box marginLeft={2} flexDirection="column">
-            <Text color="dim">Delia detects your intent and orchestrates automatically:</Text>
-            <Text>• "verify this" / "make sure" → K-voting for reliability</Text>
-            <Text>• "compare models" / "what do different models think" → Multi-model</Text>
-            <Text>• "think carefully" / "analyze thoroughly" → Deep reasoning</Text>
-          </Box>
-        </>
-      )}
+        )}
+      </Box>
+    </Panel>
+
+    {/* TOOL LOG with fixed height to prevent pushing other elements */}
+    <Box height={12}>
+      <Panel title="TOOL LOG" titleColor="cyan" borderStyle="single" borderColor="dim" padding={0}>
+        <Box flexDirection="column" paddingX={1}>
+          {tools.length === 0 ? (
+            <Text color="dim" italic>No tools used yet</Text>
+          ) : (
+            tools.slice(-8).map((tool, i) => (
+              <Text key={i} color="cyan" wrap="truncate-end">
+                <Text color="dim">› </Text>{tool}
+              </Text>
+            ))
+          )}
+        </Box>
+      </Panel>
     </Box>
-  </Panel>
+    
+    <Box marginTop="auto" borderStyle="round" borderColor="dim" paddingX={1}>
+      <Text color="magenta" bold> 🍈 DELIA </Text>
+      <Text color="dim">v1.0.0</Text>
+    </Box>
+  </Box>
 );
 
 export const ChatView: React.FC<ChatViewProps> = ({
   apiUrl,
-  model,
+  model: initialModel,
   backendType,
   sessionId: initialSessionId,
-  simple: initialSimple = false,  // NLP orchestration by DEFAULT!
-  legacyOrchestrated = false,
-  includeFileTools = true,  // Web search and file tools enabled by default
+  simple: initialSimple = false,
+  legacyOrchestrated: initialLegacyOrchestrated = false,
+  includeFileTools = true,
   workspace,
   onExit,
 }) => {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  
+  // Terminal size detection
+  const [termWidth, setTermWidth] = useState(stdout?.columns || 100);
+  const [termHeight, setTermHeight] = useState(stdout?.rows || 30);
+  
+  useEffect(() => {
+    const handleResize = () => {
+      setTermWidth(stdout?.columns || 100);
+      setTermHeight(stdout?.rows || 30);
+    };
+    stdout?.on("resize", handleResize);
+    return () => { stdout?.off("resize", handleResize); };
+  }, [stdout]);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [history, setHistory] = useState<string[]>([]);
   const [sessionId, setSessionId] = useState<string | undefined>(initialSessionId);
@@ -101,15 +149,17 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [currentResponse, setCurrentResponse] = useState<string>("");
   const [simple, setSimple] = useState(initialSimple);
+  const [legacyOrchestrated, setLegacyOrchestrated] = useState(initialLegacyOrchestrated);
   const [connectionStatus, setConnectionStatus] = useState<"connected" | "connecting" | "disconnected" | "error">("connecting");
-  const [showHelp, setShowHelp] = useState(false);
-  const [pendingConfirmation, setPendingConfirmation] = useState<{
-    confirmId: string;
-    tool: string;
-    args: Record<string, unknown>;
-    message: string;
-  } | null>(null);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+
+  // Dashboard State
+  const [activeModel, setActiveModel] = useState<string | undefined>(initialModel);
+  const [activeBackend, setActiveBackend] = useState<string | undefined>();
+  const [lastTokens, setLastTokens] = useState(0);
+  const [totalTokens, setTotalTokens] = useState(0);
+  const [lastElapsedMs, setLastElapsedMs] = useState<number | undefined>();
+  const [toolLog, setToolLog] = useState<string[]>([]);
+  const [qualityScore, setQualityScore] = useState<number | undefined>();
 
   const client = new DeliaClient(apiUrl);
 
@@ -128,29 +178,61 @@ export const ChatView: React.FC<ChatViewProps> = ({
   }, [apiUrl]);
 
   const handleSubmit = useCallback(async (input: string) => {
+    if (!input.trim()) return;
+
     // Handle commands
     if (input.startsWith("/")) {
       const cmd = input.toLowerCase();
       if (cmd === "/clear") {
         setMessages([]);
+        setToolLog([]);
         setError(null);
         return;
       }
       if (cmd === "/new") {
         setMessages([]);
         setSessionId(undefined);
+        setToolLog([]);
+        setTotalTokens(0);
         setError(null);
         return;
       }
-      if (cmd === "/simple" || cmd === "/orchestrate" || cmd === "/orch") {
+      if (cmd === "/simple") {
         setSimple((prev) => !prev);
+        setLegacyOrchestrated(false);
         setMessages((prev) => [
           ...prev,
           {
             role: "system",
-            content: simple 
-              ? "✨ NLP Orchestration enabled - Delia auto-detects voting/comparison needs"
-              : "📝 Simple mode - Single model, no orchestration",
+            content: !simple 
+              ? "📝 Simple mode enabled - No orchestration"
+              : "✨ NLP Orchestration enabled (Default)",
+            timestamp: new Date(),
+          },
+        ]);
+        return;
+      }
+      if (cmd === "/agent" || cmd === "/tool") {
+        setLegacyOrchestrated(true);
+        setSimple(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "system",
+            content: "🔧 Tool Orchestration Mode enabled - Model drives tools directly",
+            timestamp: new Date(),
+          },
+        ]);
+        return;
+      }
+      if (cmd === "/nlp") {
+        setLegacyOrchestrated(false);
+        setSimple(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "system",
+            content: "✨ NLP Orchestration Mode enabled - Delia drives intent",
             timestamp: new Date(),
           },
         ]);
@@ -162,7 +244,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
       }
     }
 
-    // Add user message
     const userMessage: Message = {
       role: "user",
       content: input,
@@ -174,15 +255,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
     setError(null);
     setCurrentResponse("");
     setStatusInfo(null);
-    setShowHelp(false);
 
-    // Track response in local variable to avoid closure issues
     let responseContent = "";
     let assistantModel: string | undefined;
     let elapsedMs: number | undefined;
     let tokens: number | undefined;
-    let toolsUsed: string[] = [];
-    let wasOrchestrated = false;
+    let currentTools: string[] = [];
     let hasError = false;
 
     try {
@@ -190,19 +268,17 @@ export const ChatView: React.FC<ChatViewProps> = ({
         {
           message: input,
           sessionId,
-          model,
+          model: initialModel,
           backendType,
-          simple,  // NLP orchestration by default (when simple=false)
-          orchestrated: legacyOrchestrated,  // Legacy tool-based mode
+          simple,
+          orchestrated: legacyOrchestrated,
           includeFileTools,
           workspace,
         },
         (event: ChatEvent) => {
           switch (event.type) {
             case "session":
-              if (event.created) {
-                setSessionId(event.id);
-              }
+              if (event.created) setSessionId(event.id);
               break;
 
             case "thinking":
@@ -210,35 +286,20 @@ export const ChatView: React.FC<ChatViewProps> = ({
               break;
 
             case "status":
-              // Transient status (routing, voting, quality) - disappears when done
               setStatusInfo({
                 phase: event.phase as StatusInfo["phase"],
                 message: event.message,
                 details: event.details,
               });
-              break;
-
-            case "confirm":
-              // File operation confirmation prompt
-              setPendingConfirmation({
-                confirmId: event.confirm_id,
-                tool: event.tool,
-                args: event.args,
-                message: event.message,
-              });
-              setThinkingStatus(null); // Clear thinking while waiting
-              break;
-
-            case "tools":
-              // Tool calls completed - we just track for the message
+              if (event.details?.model) setActiveModel(event.details.model);
+              if (event.details?.backend) setActiveBackend(event.details.backend);
+              if (event.details?.quality_score !== undefined) setQualityScore(event.details.quality_score);
               break;
 
             case "tool_call":
-              // Tool execution in progress
-              break;
-
-            case "tool_result":
-              // Real-time tool result - handled by status updates
+              const toolName = (event as any).name || "tool";
+              setToolLog(prev => [...prev, toolName]);
+              currentTools.push(toolName);
               break;
 
             case "token":
@@ -260,14 +321,18 @@ export const ChatView: React.FC<ChatViewProps> = ({
               assistantModel = event.model;
               elapsedMs = event.elapsed_ms;
               tokens = event.tokens;
-              toolsUsed = event.tools_used || [];
-              wasOrchestrated = event.orchestrated || false;
+              
+              if (assistantModel) setActiveModel(assistantModel);
+              if (elapsedMs) setLastElapsedMs(elapsedMs);
+              if (tokens) {
+                setLastTokens(tokens);
+                setTotalTokens(prev => prev + tokens);
+              }
               break;
           }
         }
       );
 
-      // Add assistant message using local variable
       if (responseContent && !hasError) {
         setMessages((prev) => [
           ...prev,
@@ -278,8 +343,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             model: assistantModel,
             elapsed_ms: elapsedMs,
             tokens: tokens,
-            toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined,
-            orchestrated: wasOrchestrated,
+            toolsUsed: currentTools.length > 0 ? currentTools : undefined,
           },
         ]);
       }
@@ -291,158 +355,125 @@ export const ChatView: React.FC<ChatViewProps> = ({
       setStatusInfo(null);
       setCurrentResponse("");
     }
-  }, [client, sessionId, model, backendType, simple, legacyOrchestrated, includeFileTools, workspace]);
+  }, [client, sessionId, initialModel, backendType, simple, legacyOrchestrated, includeFileTools, workspace]);
 
   const handleExit = useCallback(() => {
     onExit?.();
     exit();
   }, [exit, onExit]);
 
-  // Handle interrupt (Escape key during processing)
   const handleInterrupt = useCallback(() => {
-    if (abortController) {
-      abortController.abort();
-      setAbortController(null);
-    }
     setIsProcessing(false);
     setThinkingStatus(null);
     setStatusInfo(null);
-    setPendingConfirmation(null);
-    if (currentResponse) {
-      // Keep partial response as message
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: currentResponse + "\n\n*[interrupted]*",
-          timestamp: new Date(),
-        },
-      ]);
-    }
     setCurrentResponse("");
-  }, [abortController, currentResponse]);
+  }, []);
 
-  // Handle confirmation prompt responses
-  const handleConfirm = useCallback(
-    async (confirmId: string, confirmed: boolean, allowAll: boolean) => {
-      setPendingConfirmation(null);
-      try {
-        await client.confirmTool({ confirmId, confirmed, allowAll });
-      } catch (err) {
-        setError(`Confirmation failed: ${err instanceof Error ? err.message : "Unknown error"}`);
-      }
-    },
-    [client]
-  );
-
-  // Get last few messages to display (keep view manageable)
-  const displayMessages = messages.slice(-20);
-
-  // Determine current mode
-  const currentMode = simple ? "simple" : legacyOrchestrated ? "orchestrated" : "nlp";
+  // Limit history items strictly to keep UI stable and avoid scrolling issues
+  // We only show the last 4 messages + current streaming response
+  const displayMessages = messages.slice(-4);
+  const currentMode = simple ? "simple" : "nlp";
+  
+  // Calculate message area height
+  const messageAreaHeight = termHeight - 10;
 
   return (
-    <Box flexDirection="column" padding={1}>
-      {/* Header - always visible */}
+    <Box flexDirection="column" height={termHeight - 2} padding={1}>
+      {/* Top Header */}
       <Header
-        variant={messages.length === 0 ? "compact" : "minimal"}
+        variant="minimal"
         sessionId={sessionId}
         status={connectionStatus}
         mode={currentMode}
+        model={activeModel}
+        backend={activeBackend}
       />
 
-      {/* Welcome screen - only when no messages */}
-      {messages.length === 0 && !showHelp && (
-        <WelcomeScreen
-          sessionId={sessionId}
-          mode={currentMode}
-          showHelp={true}
-        />
-      )}
+      <Box flexGrow={1} flexDirection="row">
+        {/* Main Content Area */}
+        <Box flexDirection="column" flexGrow={1}>
+          <Box flexDirection="column" height={messageAreaHeight} overflow="hidden" paddingRight={1}>
+            <Box flexDirection="column" justifyContent="flex-start">
+              {messages.length === 0 && !currentResponse && (
+                <WelcomeScreen sessionId={sessionId} mode={currentMode} showHelp={false} />
+              )}
 
-      {/* Help panel - toggle with /help */}
-      {showHelp && <HelpPanel simple={simple} />}
+              {displayMessages.map((msg, i) => (
+                <MessageBubble
+                  key={i}
+                  message={msg}
+                  isLast={i === displayMessages.length - 1}
+                />
+              ))}
 
-      {/* Messages */}
-      {displayMessages.map((msg, i) => (
-        <MessageBubble
-          key={i}
-          message={msg}
-          isLast={i === displayMessages.length - 1}
-        />
-      ))}
+              {currentResponse && (
+                <Box borderStyle="single" borderColor="magenta" paddingX={1} marginY={1}>
+                  <StreamingBubble content={currentResponse} orchestrated={!simple} />
+                </Box>
+              )}
 
-      {/* Current streaming response */}
-      {currentResponse && (
-        <StreamingBubble
-          content={currentResponse}
-          orchestrated={!simple}
-        />
-      )}
+              {isProcessing && statusInfo && (
+                <Box marginLeft={2}>
+                  <StatusIndicator status={statusInfo} />
+                </Box>
+              )}
+              
+              {thinkingStatus && (
+                <Box marginLeft={2}>
+                  <ThinkingIndicator status={thinkingStatus} variant="melon" />
+                </Box>
+              )}
 
-      {/* Status indicator - transient, only while processing */}
-      {isProcessing && statusInfo && <StatusIndicator status={statusInfo} />}
+              {error && (
+                <Panel status="error" padding={1}>
+                  <Text color="red">{error}</Text>
+                </Panel>
+              )}
+            </Box>
+          </Box>
 
-      {/* Voting progress bar - only during k-voting */}
-      {isProcessing && statusInfo?.phase === "voting" && statusInfo.details?.voting_k && (
-        <VotingProgress
-          totalVotes={statusInfo.details.voting_k}
-          votesCast={statusInfo.details.votes_cast || 0}
-          consensus={statusInfo.details.votes_cast ? statusInfo.details.votes_cast - (statusInfo.details.red_flagged || 0) : 0}
-          flagged={statusInfo.details.red_flagged || 0}
-        />
-      )}
+          <Divider />
 
-      {/* Thinking indicator */}
-      {thinkingStatus && (
-        <ThinkingIndicator status={thinkingStatus} variant="melon" />
-      )}
+          {/* Input Area */}
+          <Box height={3} flexShrink={0}>
+            <InputPrompt
+              prompt={simple ? "  > " : " ✨ >> "}
+              onSubmit={handleSubmit}
+              onExit={handleExit}
+              onInterrupt={handleInterrupt}
+              processing={isProcessing}
+              history={history}
+              promptColor="cyan"
+              showBorder={false}
+              mode={currentMode}
+            />
+          </Box>
+        </Box>
 
-      {/* Error display */}
-      {error && (
-        <Panel status="error" padding={1}>
-          <Text color="red">{error}</Text>
-        </Panel>
-      )}
+        {/* System Dashboard Sidebar */}
+        {termWidth > 80 && (
+          <DashboardSidebar
+            model={activeModel}
+            backend={activeBackend}
+            tokens={lastTokens}
+            totalTokens={totalTokens}
+            elapsedMs={lastElapsedMs}
+            tools={toolLog}
+            quality={qualityScore}
+            height={messageAreaHeight + 4}
+          />
+        )}
+      </Box>
 
-      {/* Separator */}
-      <Divider />
-
-      {/* Confirmation prompt */}
-      {pendingConfirmation && (
-        <ConfirmPrompt
-          confirmId={pendingConfirmation.confirmId}
-          tool={pendingConfirmation.tool}
-          args={pendingConfirmation.args}
-          message={pendingConfirmation.message}
-          onConfirm={handleConfirm}
-        />
-      )}
-
-      {/* Input prompt */}
-      <InputPrompt
-        prompt={simple ? "> " : ">> "}
-        onSubmit={handleSubmit}
-        onExit={handleExit}
-        onInterrupt={handleInterrupt}
-        processing={isProcessing}
-        history={history}
-        promptColor={simple ? "dim" : "cyan"}
-        showBorder={true}
-        mode={currentMode}
-      />
-
-      {/* Footer hints */}
-      <Box marginTop={1}>
+      {/* Shortcut hints */}
+      <Box height={1} marginTop={0}>
         <Text color="dim">
-          {isProcessing ? "Esc to interrupt · " : ""}/help · /clear · /new · /simple · Ctrl+C to exit
+          {isProcessing ? "Esc interrupt · " : ""}/help · /clear · /new · /nlp · /simple · Ctrl+C quit
         </Text>
       </Box>
     </Box>
   );
 };
 
-// Re-export Message type for external use
 export type { Message };
-
 export default ChatView;

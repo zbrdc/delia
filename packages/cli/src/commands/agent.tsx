@@ -12,7 +12,7 @@ import {
   type AgentRunOptions,
   type StatusEvent,
   type ConfirmEvent,
-} from "../lib/api.js";
+} from "../services/api.js";
 import {
   StreamingResponse,
   type ToolCall,

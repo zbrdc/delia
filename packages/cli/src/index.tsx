@@ -104,7 +104,7 @@ program
   .description("Check backend health")
   .option("--api-url <url>", "Delia API URL (required)", process.env.DELIA_API_URL)
   .action(async (options) => {
-    const { DeliaClient } = await import("./lib/api.js");
+    const { DeliaClient } = await import("./services/api.js");
     const client = new DeliaClient(options.apiUrl);
     try {
       const health = await client.health();

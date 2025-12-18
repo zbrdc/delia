@@ -164,6 +164,7 @@ class TestBackendManager:
     async def test_backend_health_check(self, tmp_path):
         """Backend manager should check backend health."""
         from delia.backend_manager import BackendManager
+        from unittest.mock import AsyncMock, patch
 
         settings = {
             "version": "1.0",
@@ -188,8 +189,13 @@ class TestBackendManager:
 
         manager = BackendManager(settings_file=settings_file)
 
-        # Check health of all backends
-        await manager.check_all_health()
+        # Mock the HTTP call to return 200 OK
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.json.return_value = {"status": "ok"}
+            
+            # Check health of all backends
+            await manager.check_all_health()
 
         # Backend should be marked as available
         backend = manager.get_backend("llamacpp-test")

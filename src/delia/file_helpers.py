@@ -79,6 +79,20 @@ def read_serena_memory(name: str) -> str | None:
     return None
 
 
+def list_serena_memories() -> list[str]:
+    """
+    List all available Serena memories.
+
+    Returns:
+        List of memory names (without extension) sorted alphabetically.
+    """
+    if not MEMORY_DIR.exists():
+        return []
+    
+    memories = [f.stem for f in MEMORY_DIR.glob("*.md")]
+    return sorted(memories)
+
+
 def read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[str, str]]:
     """
     Read multiple files from disk efficiently.

@@ -742,21 +742,23 @@ def get_default_tools(
         handler=web_news,
     ))
 
-    registry.register(ToolDefinition(
-        name="ask_user",
-        description="Ask the user a question. Use this for clarification, confirmation, or missing info.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "question": {
-                    "type": "string",
-                    "description": "The question to ask"
-                }
-            },
-            "required": ["question"]
-        },
-        handler=ask_user,
-    ))
+    # ask_user is currently disabled by default to prevent blocking in tests/CI
+    # It requires interactive TTY which isn't always available
+    # registry.register(ToolDefinition(
+    #     name="ask_user",
+    #     description="Ask the user a question. Use this for clarification, confirmation, or missing info.",
+    #     parameters={
+    #         "type": "object",
+    #         "properties": {
+    #             "question": {
+    #                 "type": "string",
+    #                 "description": "The question to ask"
+    #             }
+    #         },
+    #         "required": ["question"]
+    #     },
+    #     handler=ask_user,
+    # ))
 
     # ============================================================
     # DANGEROUS TOOLS - Always registered, require confirmation

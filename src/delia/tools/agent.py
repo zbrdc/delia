@@ -270,12 +270,21 @@ async def run_agent_loop(
             else:
                 content = response_data.get("content", "") or ""
             
-            response = content # Normalize variable name for consistency
+            # For text analysis (reflection/logging), use the content string
+            response_text = content
+            
+            # For tool parsing, we need the original data if in native mode
+            if config.native_tool_calling:
+                response_for_parsing = response_data
+            else:
+                response_for_parsing = response_text
         else:
-            response = str(response_data)
+            response_text = str(response_data)
+            content = response_text
+            response_for_parsing = response_text
 
         # Check for tool calls
-        if not has_tool_calls(response):
+        if not has_tool_calls(response_for_parsing):
             # No tool calls - check if we should reflect/critique
             if (
                 config.reflection_enabled
@@ -287,7 +296,7 @@ async def run_agent_loop(
                 # Execute critique
                 # Note: critique callback tokens are not currently tracked in total_tokens
                 # unless the callback returns them. For now we track agent loop tokens only.
-                is_valid, feedback = await critique_callback(response, prompt)
+                is_valid, feedback = await critique_callback(response_text, prompt)
                 
                 if not is_valid:
                     # Critique failed - add feedback and loop again
@@ -296,7 +305,7 @@ async def run_agent_loop(
                     # Add agent's provisional response
                     messages.append({
                         "role": "assistant",
-                        "content": response,
+                        "content": response_text,
                     })
                     
                     # Add critique feedback
@@ -320,7 +329,7 @@ async def run_agent_loop(
             )
             return AgentResult(
                 success=True,
-                response=response,
+                response=response_text,
                 iterations=iteration + 1,
                 tool_calls=all_tool_calls,
                 tool_results=all_tool_results,
@@ -330,14 +339,14 @@ async def run_agent_loop(
             )
 
         # Parse tool calls
-        tool_calls = parse_tool_calls(response, native_mode=config.native_tool_calling)
+        tool_calls = parse_tool_calls(response_for_parsing, native_mode=config.native_tool_calling)
 
         if not tool_calls:
             # Has tool call markers but couldn't parse - treat as done
             log.warning("agent_tool_parse_failed", iteration=iteration)
             return AgentResult(
                 success=True,
-                response=response,
+                response=response_text,
                 iterations=iteration + 1,
                 tool_calls=all_tool_calls,
                 tool_results=all_tool_results,

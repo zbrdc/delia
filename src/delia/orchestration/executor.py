@@ -38,6 +38,9 @@ from .prompts import get_prompt_generator
 from .result import OrchestrationMode, OrchestrationResult, StreamEvent
 from .outputs import get_json_schema_prompt, parse_structured_output
 from ..text_utils import strip_thinking_tags
+from ..file_helpers import list_serena_memories, read_serena_memory
+from ..rag import get_rag
+from ..code_rag import get_code_rag
 
 if TYPE_CHECKING:
     from ..backend_manager import BackendConfig
@@ -103,7 +106,8 @@ class OrchestrationExecutor:
         )
         
         # Handle status queries directly (melons, health, etc.)
-        if intent.task_type == "status":
+        # ONLY if no other orchestration mode (like AGENTIC) was triggered
+        if intent.task_type == "status" and intent.orchestration_mode == OrchestrationMode.NONE:
             return await self._execute_status_query(intent, message)
         
         # If structured output requested, modify the message to request JSON
@@ -128,6 +132,10 @@ class OrchestrationExecutor:
                 )
             elif intent.orchestration_mode == OrchestrationMode.DEEP_THINKING:
                 result = await self._execute_deep_thinking(
+                    intent, message, backend_type, model_override
+                )
+            elif intent.orchestration_mode == OrchestrationMode.TREE_OF_THOUGHTS:
+                result = await self._execute_tree_of_thoughts(
                     intent, message, backend_type, model_override
                 )
             elif intent.orchestration_mode == OrchestrationMode.CHAIN:
@@ -349,6 +357,11 @@ making trusted models more likely to be selected.
             backend_name=backend_obj.name,
         )
         
+        # Inject Serena memory context if available
+        memory_context = await self._retrieve_context(message)
+        if memory_context:
+            system_prompt += f"\n\n## Project Documentation (Serena Memories)\n{memory_context}"
+        
         # Call LLM with role-specific prompt
         result = await call_llm(
             model=selected_model,
@@ -440,6 +453,11 @@ making trusted models more likely to be selected.
             backend_name=backend_obj.name,
         )
         
+        # Inject Serena memory context if available
+        memory_context = await self._retrieve_context(message)
+        if memory_context:
+            system_prompt += f"\n\n## Project Documentation (Serena Memories)\n{memory_context}"
+        
         # Get tools registry - enable all tools
         registry = get_default_tools(
             workspace=None,  # No confinement - full access
@@ -503,7 +521,9 @@ making trusted models more likely to be selected.
             native_tool_calling=model_supports_tools, 
             allow_write=True,
             allow_exec=True,
-            require_confirmation=False, 
+            require_confirmation=False,
+            reflection_enabled=True,
+            max_reflections=1,
         )
 
         async def agent_llm_call(
@@ -564,6 +584,47 @@ making trusted models more likely to be selected.
                     award_melons_for_quality(selected_model, "agent", step_quality.overall)
 
             return result
+
+        async def critique_callback(response: str, original_prompt: str) -> tuple[bool, str]:
+            """Review the agent's work and provide feedback."""
+            from ..mcp_server import _get_delegate_context, delegate_impl
+            
+            log.info("agentic_reflection_starting", model=selected_model)
+            
+            critique_prompt = f"""You are a QA Lead reviewing an AI agent's work.
+
+Original Task:
+{original_prompt}
+
+Agent's Final Response:
+{response}
+
+CRITICAL CHECKLIST:
+1. Did the agent actually perform the task using its tools?
+2. If tools (like web search) returned data, is that data ACTUALLY PRINTED in the response?
+3. Reject if the response says "I found the news" or "Here is the news" but doesn't list at least 3-5 specific items.
+4. Reject if the agent just provided a script instead of the requested info.
+5. NO lazy responses allowed. The user wants the DATA, not a confirmation that you found it.
+
+If perfect, output "VERIFIED".
+If lazy or missing data, provide specific instructions to include the tool results in the final text.
+"""
+            # Run critique using a high-quality model
+            ctx = _get_delegate_context()
+            critique_result = await delegate_impl(
+                ctx=ctx,
+                task="critique",
+                content=critique_prompt,
+                model="moe", # Use high-reasoning for critique
+                include_metadata=False,
+            )
+            
+            is_verified = "VERIFIED" in critique_result or "verified" in critique_result.lower()
+            
+            if not is_verified:
+                log.info("agentic_reflection_failed", feedback_len=len(critique_result))
+            
+            return is_verified, critique_result
         
         log.info(
             "agentic_execution_started",
@@ -581,6 +642,7 @@ making trusted models more likely to be selected.
                 registry=registry,
                 model=selected_model,
                 config=agent_config,
+                critique_callback=critique_callback,
             )
             
             response = strip_thinking_tags(agent_result.response or "No response")
@@ -666,6 +728,11 @@ making trusted models more likely to be selected.
             user_message=message,
             model_name=selected_model,
         )
+        
+        # Inject Serena memory context if available
+        memory_context = await self._retrieve_context(message)
+        if memory_context:
+            system_prompt += f"\n\n## Project Documentation (Serena Memories)\n{memory_context}"
         
         # Initialize voting
         validator = ResponseQualityValidator()
@@ -996,6 +1063,158 @@ making trusted models more likely to be selected.
             tokens=result.get("tokens", 0),
         )
     
+    async def _execute_tree_of_thoughts(
+        self,
+        intent: DetectedIntent,
+        message: str,
+        backend_type: str | None,
+        model_override: str | None,
+    ) -> OrchestrationResult:
+        """
+        Execute Tree of Thoughts search.
+        
+        1. Expand: Generate 3 possible next steps/solutions
+        2. Score: Evaluate each step (0-10)
+        3. Select: Pick best path
+        4. Refine: Generate final response
+        """
+        from ..backend_manager import backend_manager
+        from ..llm import call_llm
+        from ..routing import select_model
+        from ..mcp_server import _select_optimal_backend_v2
+        
+        # Select backend
+        _, backend_obj = await _select_optimal_backend_v2(
+            message, None, "moe", backend_type
+        )
+        
+        if not backend_obj:
+            return OrchestrationResult(
+                response="Error: No backend available for ToT",
+                success=False,
+                error="no_backend",
+            )
+        
+        # Prefer thinking/moe model
+        selected_model = model_override or await select_model(
+            task_type="moe",
+            content_size=len(message),
+            model_override="thinking", 
+            content=message,
+        )
+        
+        # Inject Serena memory context if available (ToT needs good context!)
+        memory_context = await self._retrieve_context(message)
+        context_str = f"\n\n## Context (Serena Memories)\n{memory_context}" if memory_context else ""
+        
+        total_tokens = 0
+        
+        # Step 1: Generate candidates
+        gen_prompt = f"""You are an expert problem solver.
+User Request: {message}{context_str}
+
+Generate 3 distinct, valid approaches to solve this problem.
+Format each approach clearly as "Option 1:", "Option 2:", "Option 3:".
+Do not evaluate them yet, just generate them.
+"""
+        result_gen = await call_llm(
+            model=selected_model,
+            prompt=gen_prompt,
+            system="You are a creative generator. Generate distinct options.",
+            task_type="moe",
+            original_task="tot_generate",
+            language="unknown",
+            content_preview=message[:100],
+            backend_obj=backend_obj,
+        )
+        
+        if not result_gen.get("success"):
+            return OrchestrationResult(response="Failed to generate thoughts.", success=False, error=result_gen.get("error"))
+            
+        total_tokens += result_gen.get("tokens", 0)
+        candidates_text = strip_thinking_tags(result_gen.get("response", ""))
+        
+        # Step 2: Evaluate candidates
+        eval_prompt = f"""You are a critical evaluator.
+User Request: {message}
+
+Proposed Options:
+{candidates_text}
+
+Evaluate each option on a scale of 0 to 10 based on:
+- Feasibility
+- Effectiveness
+- Safety
+- Efficiency
+
+Select the BEST option and explain why.
+Format:
+BEST: Option X
+REASON: ...
+"""
+        result_eval = await call_llm(
+            model=selected_model, # Use same model or switch to critic? Same is usually fine for self-correction if prompt changes.
+            prompt=eval_prompt,
+            system="You are a critical judge. Pick the winner.",
+            task_type="moe",
+            original_task="tot_evaluate",
+            language="unknown",
+            content_preview="evaluating options",
+            backend_obj=backend_obj,
+        )
+        
+        if not result_eval.get("success"):
+             return OrchestrationResult(response="Failed to evaluate thoughts.", success=False, error=result_eval.get("error"))
+
+        total_tokens += result_eval.get("tokens", 0)
+        eval_text = strip_thinking_tags(result_eval.get("response", ""))
+        
+        # Step 3: Final refinement of best path
+        final_prompt = f"""You are an expert executor.
+User Request: {message}
+
+Selected Approach:
+{eval_text}
+
+Now, execute this best approach fully. Provide the complete solution/answer based on this path.
+"""
+        result_final = await call_llm(
+            model=selected_model,
+            prompt=final_prompt,
+            system="You are a solver. Provide the final detailed solution.",
+            task_type="moe",
+            original_task="tot_final",
+            language="unknown",
+            content_preview="generating final",
+            backend_obj=backend_obj,
+        )
+        
+        if not result_final.get("success"):
+             return OrchestrationResult(response="Failed to generate final solution.", success=False, error=result_final.get("error"))
+
+        total_tokens += result_final.get("tokens", 0)
+        final_response = strip_thinking_tags(result_final.get("response", ""))
+        
+        # Combine for transparency
+        full_response = f"""## Tree of Thoughts Exploration
+
+### 1. Generated Options
+{candidates_text}
+
+### 2. Evaluation
+{eval_text}
+
+### 3. Final Solution
+{final_response}
+"""
+        return OrchestrationResult(
+            response=full_response,
+            success=True,
+            model_used=selected_model,
+            mode=OrchestrationMode.TREE_OF_THOUGHTS,
+            tokens=total_tokens,
+        )
+
     async def _execute_chain(
         self,
         intent: DetectedIntent,
@@ -1212,6 +1431,69 @@ making trusted models more likely to be selected.
                 melons=1,  # Bonus melon for consensus
                 success=True,
             )
+
+    async def _retrieve_context(self, message: str) -> str:
+        """
+        Retrieve relevant context from Serena memories AND Codebase.
+        
+        Uses semantic RAG for both docs and code.
+        """
+        context_parts = []
+        
+        try:
+            # Run Memory and Code RAG in parallel
+            rag = get_rag()
+            code_rag = get_code_rag()
+            
+            # Initialize both (fast if cached)
+            await asyncio.gather(rag.initialize(), code_rag.initialize())
+            
+            # Search both
+            # Code RAG uses a slightly higher threshold to reduce noise
+            mem_task = rag.search(message, top_k=2, threshold=0.45)
+            code_task = code_rag.search(message, top_k=3, threshold=0.50)
+            
+            mem_results, code_results = await asyncio.gather(mem_task, code_task)
+            
+            # Add Memory Context
+            if mem_results:
+                context_parts.append("## Project Documentation (Serena Memories)")
+                for content, score in mem_results:
+                    context_parts.append(content)
+            
+            # Add Code Context
+            if code_results:
+                context_parts.append("## Relevant Codebase Snippets")
+                for content, score in code_results:
+                    context_parts.append(content)
+                
+        except Exception as e:
+            log.warning("rag_retrieval_failed", error=str(e))
+            
+        # Fallback to Keyword Matching for Memories only (Code keyword search is too noisy)
+        if not context_parts:
+            available = list_serena_memories()
+            if not available:
+                return ""
+                
+            found_content = []
+            message_lower = message.lower()
+            
+            for mem_name in available:
+                # Normalize name (replace _ with space) for matching
+                name_keywords = mem_name.replace("_", " ").split()
+                
+                # Simple heuristic
+                if any(kw in message_lower for kw in name_keywords if len(kw) > 3):
+                    content = read_serena_memory(mem_name)
+                    if content:
+                        found_content.append(f"### Context from '{mem_name}':\n{content}")
+                        log.info("memory_retrieved_keyword", memory=mem_name)
+            
+            if found_content:
+                return "## Project Documentation (Keyword Fallback)\n" + "\n\n".join(found_content)
+
+        return "\n\n".join(context_parts)
 
 
 # Module-level convenience

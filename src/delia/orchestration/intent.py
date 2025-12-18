@@ -129,12 +129,37 @@ class IntentDetector:
             reasoning="architecture/design task",
         ),
     ]
+
+    # Tree of Thoughts signals → Advanced search
+    TOT_PATTERNS = [
+        IntentPattern(
+            re.compile(r"\b(explore|brainstorm|find)\s+(multiple|all|different|possible)\s+(solutions|options|paths|approaches)\b", re.I),
+            orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
+            task_type="moe",
+            model_role=ModelRole.ARCHITECT,
+            confidence_boost=0.45,
+            reasoning="exploration of alternatives requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(tree\s+of\s+thoughts?|tot|branching|search\s+tree)\b", re.I),
+            orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
+            task_type="thinking",
+            confidence_boost=0.6,
+            reasoning="explicit ToT requested",
+        ),
+        IntentPattern(
+            re.compile(r"\b(best|optimal)\s+(path|way|approach)\b.*\b(consider|evaluate)\b", re.I),
+            orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
+            confidence_boost=0.35,
+            reasoning="optimal path selection requested",
+        ),
+    ]
     
     # Agentic signals → Agent mode with tools
     AGENTIC_PATTERNS = [
         # Web search - explicit requests for web/internet search
         IntentPattern(
-            re.compile(r"\b(web\s+)?search\s+(the\s+)?(web|internet|online|google|duckduckgo)\b", re.I),
+            re.compile(r"^(web\s+)?search\s+(the\s+)?(web|internet|online|google|duckduckgo)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
             confidence_boost=0.5,
             reasoning="web search requested",
@@ -152,55 +177,49 @@ class IntentDetector:
             reasoning="current information requested - may need web search",
         ),
         IntentPattern(
-            re.compile(r"\b(read|open|show|cat|view)\s+(the\s+)?(file|contents?|code)\b", re.I),
+            re.compile(r"\b(read|open|cat|view)\s+(the\s+)?(file|contents?|code)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
             confidence_boost=0.4,
             reasoning="file read requested",
         ),
         IntentPattern(
-            re.compile(r"\b(list|ls|show)\s+(the\s+)?(files?|directory|directories|folder)\b", re.I),
+            re.compile(r"\b(list|ls)\s+(the\s+)?(files?|directory|folder)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
             confidence_boost=0.4,
             reasoning="directory listing requested",
         ),
         IntentPattern(
-            re.compile(r"\b(run|execute|exec)\s+(this\s+)?(command|script|shell)\b", re.I),
+            re.compile(r"^(run|execute|exec)\s+(this\s+)?(command|script|shell)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
             confidence_boost=0.45,
             reasoning="shell execution requested",
         ),
         IntentPattern(
-            re.compile(r"\b(run|execute|exec)\s+[`'\"]?[a-zA-Z]", re.I),
+            re.compile(r"\b(write|create|save|update|modify|edit)\s+.*(to\s+)?\w+\.(py|js|ts|rs|go|sh|yaml|json|toml|txt|md|css|html)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
-            confidence_boost=0.4,
-            reasoning="command execution requested",
+            confidence_boost=0.7, # Higher confidence
+            reasoning="file write with extension requested",
         ),
         IntentPattern(
-            re.compile(r"\b(run|execute)\s+(ls|pwd|cd|cat|echo|mkdir|rm|cp|mv|chmod|chown|ps|top|df|du|grep|find|curl|wget)\b", re.I),
+            re.compile(r"\b(create|write|generate|save)\s+(a\s+)?(text|python|script|code|data|new)\s+file\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
-            confidence_boost=0.5,
-            reasoning="shell command requested",
+            confidence_boost=0.7,
+            reasoning="general file creation requested",
         ),
         IntentPattern(
-            re.compile(r"\b(search|find|grep|look\s+for)\s+.*(in\s+)?(the\s+)?(code|files?|codebase|project|src|directory)\b", re.I),
+            re.compile(r"\b(save|write|create|store|dump)\s+.*(to|on)\s+(the\s+)?(disk|file|filesystem)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
-            confidence_boost=0.4,
-            reasoning="code search requested",
+            confidence_boost=0.7,
+            reasoning="explicit disk write requested",
         ),
         IntentPattern(
-            re.compile(r"\b(search|find|grep)\s+(for\s+)?\w+", re.I),
+            re.compile(r"\b(create|write|generate|give\s+me)\s+(a\s+)?(script|code)\s+and\s+(save|write|store|put)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
-            confidence_boost=0.35,
-            reasoning="search operation",
+            confidence_boost=0.8,
+            reasoning="create-and-save request",
         ),
         IntentPattern(
-            re.compile(r"\b(write|create|save|update|modify|edit)\s+.*(to\s+)?\w+\.(py|js|ts|rs|go|sh|yaml|json|toml|txt|md)\b", re.I),
-            orchestration_mode=OrchestrationMode.AGENTIC,
-            confidence_boost=0.45,
-            reasoning="file write requested",
-        ),
-        IntentPattern(
-            re.compile(r"\b(write|create|save)\s+(a\s+)?(file|code|test|script)\b", re.I),
+            re.compile(r"^(write|create|save)\s+(a\s+)?(file|code|test|script)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
             confidence_boost=0.4,
             reasoning="file creation requested",
@@ -275,25 +294,18 @@ class IntentDetector:
     # Melon/status queries → Direct response
     STATUS_PATTERNS = [
         IntentPattern(
-            re.compile(r"\b(show|display|what|get|view|have)\b.*(melon|melons|leaderboard|rankings?|scores?|stats)\b", re.I),
+            re.compile(r"\b(show|display|get|view|list)\b.*\b(leader.?board|melon\s+rankings?|melon\s+stats)\b", re.I),
             orchestration_mode=OrchestrationMode.NONE,
             task_type="status",
-            confidence_boost=0.5,
-            reasoning="melon leaderboard requested",
+            confidence_boost=0.7,
+            reasoning="explicit status/leaderboard request",
         ),
         IntentPattern(
-            re.compile(r"\b(leaderboard|rankings?|melons?)\s*(stats|status|scores?)?\b", re.I),
+            re.compile(r"^\s*(/leaderboard|/stats|/melons)\s*$", re.I),
             orchestration_mode=OrchestrationMode.NONE,
             task_type="status",
-            confidence_boost=0.4,
-            reasoning="melon status requested",
-        ),
-        IntentPattern(
-            re.compile(r"\bhow.*(models?|backends?).*(doing|performing|ranked)\b", re.I),
-            orchestration_mode=OrchestrationMode.NONE,
-            task_type="status",
-            confidence_boost=0.3,
-            reasoning="model performance requested",
+            confidence_boost=0.8,
+            reasoning="status command detected",
         ),
     ]
     
@@ -386,10 +398,12 @@ class IntentDetector:
         """Initialize the intent detector with all patterns."""
         # Combine all patterns in priority order
         # AGENTIC first - file/shell ops take precedence
-        # CHAIN second - multi-step pipelines
+        # TOT second - complex reasoning strategy
+        # CHAIN third - multi-step pipelines
         # STATUS early - melon/leaderboard queries should be fast
         self.all_patterns = (
             self.AGENTIC_PATTERNS +
+            self.TOT_PATTERNS +
             self.CHAIN_PATTERNS +
             self.STATUS_PATTERNS +
             self.VERIFICATION_PATTERNS +
@@ -507,15 +521,13 @@ class IntentDetector:
     def _detect_regex(self, message: str) -> DetectedIntent:
         """
         Layer 1: Fast regex pattern matching.
-        
-        This is the original detection logic, now as an internal method.
         """
-        # Start with defaults
+        # Start with lower base confidence
         intent = DetectedIntent(
             task_type="quick",
             orchestration_mode=OrchestrationMode.NONE,
             model_role=ModelRole.ASSISTANT,
-            confidence=0.5,
+            confidence=0.3, # Reduced from 0.5
             reasoning="default",
         )
         
@@ -529,7 +541,8 @@ class IntentDetector:
             match = pat.pattern.search(message)
             if match:
                 matched_keywords.append(match.group(0))
-                confidence_adjustments.append(pat.confidence_boost)
+                # Halve the boosts to require more specific/multiple matches
+                confidence_adjustments.append(pat.confidence_boost * 0.7) 
                 if pat.reasoning:
                     reasons.append(pat.reasoning)
                 

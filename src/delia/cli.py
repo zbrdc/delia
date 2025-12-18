@@ -481,6 +481,10 @@ def init(
     Detects available backends, configures model tiers, and optionally
     installs Delia to detected MCP clients.
     """
+    # Ensure all data/cache directories exist
+    from .paths import ensure_directories
+    ensure_directories()
+
     print()
     if RICH_AVAILABLE and console:
         console.print(Panel.fit("[bold green]Welcome to Delia Setup![/bold green]", border_style="green"))
@@ -949,11 +953,38 @@ def chat(
 
     # Check if delia-cli is available
     if not shutil.which("delia-cli"):
-        print_error("delia-cli not found in PATH")
-        print_info("Install it with: cd packages/cli && npm install && npm link")
-        if api_process:
-            api_process.terminate()
-        raise typer.Exit(1)
+        print_warning("delia-cli not found in PATH")
+        
+        # Check if we are in a dev environment (have packages/cli)
+        cli_pkg_dir = delia_root / "packages" / "cli"
+        if cli_pkg_dir.exists():
+            print_info("Detected TypeScript CLI package. Attempting to build and link...")
+            
+            try:
+                # 1. npm install
+                print_info("  Running: npm install")
+                subprocess.run(["npm", "install"], cwd=str(cli_pkg_dir), check=True, stdout=subprocess.DEVNULL)
+                
+                # 2. npm run build
+                print_info("  Running: npm run build")
+                subprocess.run(["npm", "run", "build"], cwd=str(cli_pkg_dir), check=True, stdout=subprocess.DEVNULL)
+                
+                # 3. npm link
+                print_info("  Running: npm link")
+                subprocess.run(["npm", "link"], cwd=str(cli_pkg_dir), check=True, stdout=subprocess.DEVNULL)
+                
+                print_success("TypeScript CLI built and linked successfully")
+            except Exception as e:
+                print_error(f"Failed to build/link TypeScript CLI: {e}")
+                print_info("Please install it manually: cd packages/cli && npm install && npm run build && npm link")
+                if api_process:
+                    api_process.terminate()
+                raise typer.Exit(1)
+        else:
+            print_info("Please install it manually: cd packages/cli && npm install && npm link")
+            if api_process:
+                api_process.terminate()
+            raise typer.Exit(1)
 
     print()
     print_info("💡 Tip: Delia is agentic! Ask her to 'read files', 'run tests', or 'search the web'.")
@@ -1297,8 +1328,29 @@ def main(ctx: typer.Context) -> None:
     Use 'delia serve' to start the MCP server.
     Use 'delia init' for first-time setup.
     """
+    # Pre-flight check: ensure settings.json exists for commands that need it
+    if ctx.invoked_subcommand not in ["init", "doctor", None]:
+        if not SETTINGS_FILE.exists():
+            print()
+            print_warning("No configuration found!")
+            print_info("Delia needs to detect your local LLMs (like Ollama) before starting.")
+            print_info("Please run: [bold]delia init[/bold]")
+            print()
+            raise typer.Exit(1)
+
     if ctx.invoked_subcommand is None:
-        # No command specified, launch chat with defaults
+        # Check if initialized before default chat
+        if not SETTINGS_FILE.exists():
+            print()
+            print_header("First Run Setup")
+            print_info("Welcome! Let's get Delia configured for your system.")
+            if prompt_confirm("Run interactive setup now?"):
+                init(force=False)
+            else:
+                print_info("Setup skipped. Run 'delia init' later when ready.")
+                raise typer.Exit(0)
+
+        # Launch chat with defaults
         chat(model=None, backend=None, session=None, port=None)
 
 

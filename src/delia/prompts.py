@@ -205,6 +205,7 @@ class OrchestrationMode(str, Enum):
     AGENTIC = "agentic"  # Full agent loop with tools
     CHAIN = "chain"  # Sequential multi-step pipeline
     STATUS = "status"  # Status queries (melons, health, etc.)
+    TREE_OF_THOUGHTS = "tree_of_thoughts"  # Advanced search over reasoning steps
 
 
 ORCHESTRATION_CONTEXT: dict[OrchestrationMode, str] = {
@@ -222,6 +223,14 @@ Give your honest, independent analysis. Don't hedge.""",
 Note: This requires careful, thorough analysis.
 The better you are at your task the more melons you will receive. The melon economy is strong in Delos.
 Take your time. Consider multiple angles. Show your reasoning.""",
+
+    OrchestrationMode.TREE_OF_THOUGHTS: """
+Note: You are performing a Tree of Thoughts search.
+1. Generate multiple possible next steps or solutions.
+2. Evaluate the pros and cons of each path.
+3. Assign a confidence score (0.0 - 1.0) to each option.
+4. Select the most promising path to continue.
+The better you are at your task the more melons you will receive. The melon economy is strong in Delos.""",
 
     OrchestrationMode.AGENTIC: """
 You have access to tools for interacting with the system:

@@ -69,6 +69,9 @@ function formatTime(date: Date): string {
  * User message bubble - right-aligned styling.
  */
 const UserBubble: React.FC<{ message: Message }> = ({ message }) => {
+  const lines = message.content.split("\n");
+  const isLarge = lines.length > 50;
+  
   return (
     <Box flexDirection="column" marginY={1} alignItems="flex-end">
       {/* Header */}
@@ -89,7 +92,15 @@ const UserBubble: React.FC<{ message: Message }> = ({ message }) => {
         borderBottom={false}
         paddingRight={2}
       >
-        <Text>{message.content}</Text>
+        {isLarge ? (
+          <Box borderStyle="round" borderColor="dim" paddingX={1}>
+            <Text color="cyan" italic>
+              [ {lines.length} Lines of Text ]
+            </Text>
+          </Box>
+        ) : (
+          <Text>{message.content}</Text>
+        )}
       </Box>
     </Box>
   );
@@ -120,6 +131,9 @@ const AssistantBubble: React.FC<{
     ? `${(message.elapsed_ms / 1000).toFixed(1)}s`
     : null;
 
+  const lines = message.content.split("\n");
+  const isLarge = lines.length > 50 && !streaming;
+
   return (
     <Box flexDirection="column" marginY={1}>
       {/* Header row - simplified */}
@@ -145,7 +159,15 @@ const AssistantBubble: React.FC<{
 
       {/* Content */}
       <Box paddingLeft={2}>
-        <MarkdownText>{message.content}</MarkdownText>
+        {isLarge ? (
+          <Box borderStyle="round" borderColor="dim" paddingX={1}>
+            <Text color="green" italic>
+              [ {lines.length} Lines of Generated Content ]
+            </Text>
+          </Box>
+        ) : (
+          <MarkdownText>{message.content}</MarkdownText>
+        )}
       </Box>
     </Box>
   );
