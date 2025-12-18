@@ -420,6 +420,13 @@ class BackendScorer:
                 melon_boost = melon_tracker.get_melon_boost(model_id, task_type)
                 total += melon_boost
 
+        # Exploration Bonus (Curiosity) 🧪
+        # Give unproven models a chance to earn melons.
+        # Starts at +0.25 for fresh models, decays as we gather data.
+        # After ~50 requests, the model must stand on its own merits (Performance + Melons).
+        exploration_bonus = 0.25 / (1.0 + (metrics.total_requests * 0.1))
+        total += exploration_bonus
+
         log.debug(
             "backend_scored",
             backend=backend.id,
@@ -431,6 +438,7 @@ class BackendScorer:
             cost=round(cost_score, 3),
             affinity=round(affinity, 3) if affinity is not None else None,
             melon_boost=round(melon_boost, 3) if melon_boost else None,
+            exploration=round(exploration_bonus, 3),
             task_type=task_type,
         )
 
