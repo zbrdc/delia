@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import hashlib
 import time
+import re
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 import structlog
@@ -44,6 +46,30 @@ SIMILARITY_THRESHOLD = 0.85
 # Time window for considering repeats (5 minutes)
 REPEAT_WINDOW_SECONDS = 300
 
+# Angry/Frustrated Keywords (Sentiment Analysis)
+ANGRY_KEYWORDS = {
+    "stupid", "dumb", "idiot", "useless", "broken", "fail", "wrong", "bad",
+    "terrible", "horrible", "awful", "trash", "garbage", "waste", "clown",
+    "stop", "quit", "exit", "kill", "die", "hate", "shut up"
+}
+
+# Negative Feedback Patterns
+NEGATIVE_PATTERNS = [
+    r"\b(that'?s|is)\s+(wrong|incorrect|false|not right)\b",
+    r"\b(no|nope|nah)\b.{0,20}\b(wrong|incorrect)\b",
+    r"\b(you|it)\s+(missed|failed|didn'?t)\b",
+    r"\b(not|isn'?t)\s+(what|the answer)\b",
+    r"\b(stop|don'?t)\s+(doing|saying)\b",
+    r"\b(again|repeat)\b",
+]
+
+class FrustrationLevel(Enum):
+    """Level of user frustration."""
+    NONE = "none"
+    LOW = "low"       # Mild annoyance, single repeat
+    MEDIUM = "medium" # Explicit negative feedback, 2+ repeats
+    HIGH = "high"     # Angry keywords, 3+ repeats, rapid-fire
+
 
 @dataclass
 class RepeatInfo:
@@ -54,6 +80,12 @@ class RepeatInfo:
     previous_response: str | None = None
     time_since_last: float = 0.0  # seconds
     similarity: float = 0.0
+    
+    # Enhanced metrics
+    level: FrustrationLevel = FrustrationLevel.NONE
+    has_angry_keywords: bool = False
+    has_negative_feedback: bool = False
+    is_rapid_fire: bool = False  # < 5s since last message
 
 
 @dataclass
@@ -69,16 +101,17 @@ class QuestionRecord:
 
 class FrustrationTracker:
     """
-    Tracks repeated questions to detect user frustration.
-    
-    When a user asks the same/similar question multiple times,
-    it indicates the previous answer was wrong or unhelpful.
-    This provides implicit negative feedback for the melon system.
+    Tracks user frustration through multiple signals:
+    1. Repeated questions (the classic signal)
+    2. Sentiment analysis (angry keywords)
+    3. Negative feedback patterns ("that's wrong")
+    4. Rapid-fire interaction (mash frustration)
     """
     
     def __init__(self, max_records_per_session: int = 50):
         self._records: dict[str, list[QuestionRecord]] = {}  # session_id -> records
         self._max_records = max_records_per_session
+        self._negative_regexes = [re.compile(p, re.IGNORECASE) for p in NEGATIVE_PATTERNS]
         
     def _hash_message(self, message: str) -> str:
         """Create normalized hash for message comparison."""
@@ -86,6 +119,15 @@ class FrustrationTracker:
         normalized = " ".join(message.lower().strip().split())
         return hashlib.sha256(normalized.encode()).hexdigest()[:16]
     
+    def _check_sentiment(self, message: str) -> bool:
+        """Check for angry keywords."""
+        words = set(message.lower().split())
+        return bool(words & ANGRY_KEYWORDS)
+
+    def _check_negative_feedback(self, message: str) -> bool:
+        """Check for explicit negative feedback patterns."""
+        return any(p.search(message) for p in self._negative_regexes)
+
     def _calculate_similarity(self, msg1: str, msg2: str) -> float:
         """
         Calculate similarity between two messages.
@@ -145,7 +187,7 @@ class FrustrationTracker:
         current_model: str | None = None,
     ) -> RepeatInfo:
         """
-        Check if this message is a repeat of a recent question.
+        Check if this message indicates frustration via repeats or sentiment.
         
         Args:
             session_id: Current session
@@ -153,60 +195,91 @@ class FrustrationTracker:
             current_model: Model about to respond (optional)
             
         Returns:
-            RepeatInfo with details about the repeat
+            RepeatInfo with detailed frustration analysis
         """
         if session_id not in self._records:
-            return RepeatInfo()
+            self._records[session_id] = []
         
         records = self._records[session_id]
-        if not records:
-            return RepeatInfo()
-        
         current_time = time.time()
-        message_hash = self._hash_message(message)
         
-        # Look for similar recent questions
+        # 1. Check for rapid-fire (mash frustration)
+        is_rapid_fire = False
+        if records:
+            last_record = records[-1]
+            if (current_time - last_record.timestamp) < 5.0:
+                is_rapid_fire = True
+
+        # 2. Check for angry keywords
+        has_angry_keywords = self._check_sentiment(message)
+
+        # 3. Check for negative feedback
+        has_negative_feedback = self._check_negative_feedback(message)
+        
+        # 4. Check for repeats
         repeat_count = 0
         most_recent_match: QuestionRecord | None = None
         highest_similarity = 0.0
         
-        for record in reversed(records):  # Most recent first
-            # Skip if too old
-            age = current_time - record.timestamp
-            if age > REPEAT_WINDOW_SECONDS:
-                break
-            
-            # Check similarity
-            similarity = self._calculate_similarity(message, record.message)
-            
-            if similarity >= SIMILARITY_THRESHOLD:
-                repeat_count += 1
-                if similarity > highest_similarity:
-                    highest_similarity = similarity
-                    most_recent_match = record
+        if records:
+            for record in reversed(records):  # Most recent first
+                # Skip if too old
+                age = current_time - record.timestamp
+                if age > REPEAT_WINDOW_SECONDS:
+                    break
+                
+                # Check similarity
+                similarity = self._calculate_similarity(message, record.message)
+                
+                if similarity >= SIMILARITY_THRESHOLD:
+                    repeat_count += 1
+                    if similarity > highest_similarity:
+                        highest_similarity = similarity
+                        most_recent_match = record
+
+        # Determine Frustration Level
+        level = FrustrationLevel.NONE
         
-        if repeat_count > 0 and most_recent_match:
-            info = RepeatInfo(
-                is_repeat=True,
-                repeat_count=repeat_count,
-                previous_model=most_recent_match.model_used,
-                previous_response=most_recent_match.response[:200],  # Truncate
-                time_since_last=current_time - most_recent_match.timestamp,
-                similarity=highest_similarity,
-            )
+        # Scoring system
+        score = 0
+        if repeat_count > 0: score += repeat_count * 1.5  # Repeats are strong signal
+        if has_angry_keywords: score += 3.0              # Anger is very strong
+        if has_negative_feedback: score += 2.0           # Explicit feedback is strong
+        if is_rapid_fire: score += 1.0                   # Mash is moderate
+        
+        if score >= 4.0:
+            level = FrustrationLevel.HIGH
+        elif score >= 2.0:
+            level = FrustrationLevel.MEDIUM
+        elif score >= 1.0:
+            level = FrustrationLevel.LOW
             
+        info = RepeatInfo(
+            is_repeat=(repeat_count > 0),
+            repeat_count=repeat_count,
+            previous_model=most_recent_match.model_used if most_recent_match else None,
+            previous_response=most_recent_match.response[:200] if most_recent_match else None,
+            time_since_last=(current_time - most_recent_match.timestamp) if most_recent_match else 0.0,
+            similarity=highest_similarity,
+            level=level,
+            has_angry_keywords=has_angry_keywords,
+            has_negative_feedback=has_negative_feedback,
+            is_rapid_fire=is_rapid_fire,
+        )
+        
+        if level != FrustrationLevel.NONE:
             log.warning(
-                "frustration_repeat_detected",
+                "frustration_detected",
                 session=session_id[:8],
-                repeat_count=repeat_count,
-                previous_model=most_recent_match.model_used,
-                similarity=f"{highest_similarity:.2f}",
-                time_since=f"{info.time_since_last:.1f}s",
+                level=level.value,
+                score=score,
+                repeat=repeat_count,
+                angry=has_angry_keywords,
+                negative=has_negative_feedback,
+                rapid=is_rapid_fire,
             )
             
-            return info
-        
-        return RepeatInfo()
+        return info
     
     def record_response(
         self,

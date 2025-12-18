@@ -30,10 +30,11 @@ import structlog
 
 from pydantic import BaseModel
 
-from .intent import detect_intent
-from .executor import get_orchestration_executor, OrchestrationExecutor
-from .result import DetectedIntent, OrchestrationMode, OrchestrationResult
+from ..intent import detect_intent
+from ..executor import get_orchestration_executor, OrchestrationExecutor
+from ..result import DetectedIntent, OrchestrationMode, OrchestrationResult
 from ..tracing import trace, add_event
+from ..frustration import FrustrationLevel
 
 if TYPE_CHECKING:
     from ..config import AffinityTracker, PrewarmTracker
@@ -194,9 +195,19 @@ class OrchestrationService:
         if session_id:
             repeat_info = self.frustration.check_repeat(session_id, message)
             
-            if repeat_info.is_repeat and repeat_info.previous_model:
-                # Penalize the model that gave an unsatisfactory answer
-                frustration_penalty = 2 + repeat_info.repeat_count
+            # Penalize if frustration detected (even if not strictly a repeat)
+            if repeat_info.level != FrustrationLevel.NONE and repeat_info.previous_model:
+                # Escalating penalties
+                base_penalty = 0
+                if repeat_info.level == FrustrationLevel.LOW:
+                    base_penalty = 2
+                elif repeat_info.level == FrustrationLevel.MEDIUM:
+                    base_penalty = 3
+                elif repeat_info.level == FrustrationLevel.HIGH:
+                    base_penalty = 5
+                
+                frustration_penalty = base_penalty
+                
                 self.melons.penalize(
                     repeat_info.previous_model,
                     "quick",  # Use quick as default task type for penalty
@@ -205,20 +216,23 @@ class OrchestrationService:
                 
                 span.event(
                     "frustration_detected",
-                    repeat_count=repeat_info.repeat_count,
-                    previous_model=repeat_info.previous_model,
+                    level=repeat_info.level.value,
                     penalty=frustration_penalty,
+                    previous_model=repeat_info.previous_model,
                 )
                 
                 log.warning(
                     "frustration_penalty_applied",
+                    level=repeat_info.level.value,
                     model=repeat_info.previous_model,
                     penalty=frustration_penalty,
-                    repeat_count=repeat_info.repeat_count,
                 )
         
         # STEP 2: Intent detection (3-tier NLP)
-        intent = detect_intent(message)
+        # We use detect_async to allow Layer 3 (LLM classifier) to run if needed
+        from .intent import get_intent_detector
+        detector = get_intent_detector()
+        intent = await detector.detect_async(message)
         
         span.event(
             "intent_detected",
@@ -227,20 +241,34 @@ class OrchestrationService:
             confidence=round(intent.confidence, 2),
         )
         
-        # STEP 3: Auto-upgrade to VOTING on repeated frustration
-        if repeat_info and repeat_info.is_repeat and repeat_info.repeat_count >= 2:
-            if intent.orchestration_mode == OrchestrationMode.NONE:
-                log.info(
-                    "frustration_auto_voting",
-                    repeat_count=repeat_info.repeat_count,
-                )
-                intent.orchestration_mode = OrchestrationMode.VOTING
-                intent.k_votes = min(3 + repeat_info.repeat_count, 5)
-                intent.reasoning = (
-                    f"auto-voting due to {repeat_info.repeat_count}x repeat; "
-                    f"{intent.reasoning}"
-                )
-                span.event("auto_upgrade_voting", k_votes=intent.k_votes)
+        # STEP 3: Auto-upgrade orchestration based on frustration level
+        if repeat_info and repeat_info.level != FrustrationLevel.NONE:
+            # Only upgrade if current mode is weaker than what we want
+            current_mode_is_weak = intent.orchestration_mode == OrchestrationMode.NONE
+            
+            if repeat_info.level == FrustrationLevel.HIGH:
+                # High frustration -> Deep Thinking or Heavy Voting
+                # (Prefer deep thinking for detailed correction, voting for fact check)
+                if current_mode_is_weak:
+                    intent.orchestration_mode = OrchestrationMode.DEEP_THINKING
+                    intent.reasoning = f"auto-escalation to deep thinking due to HIGH frustration; {intent.reasoning}"
+                    log.warning("frustration_auto_escalate", mode="deep_thinking", level="high")
+            
+            elif repeat_info.level == FrustrationLevel.MEDIUM:
+                # Medium frustration -> Voting (k=3)
+                if current_mode_is_weak or (intent.orchestration_mode == OrchestrationMode.VOTING and intent.k_votes < 3):
+                    intent.orchestration_mode = OrchestrationMode.VOTING
+                    intent.k_votes = 3
+                    intent.reasoning = f"auto-escalation to voting (k=3) due to MEDIUM frustration; {intent.reasoning}"
+                    log.warning("frustration_auto_escalate", mode="voting_k3", level="medium")
+
+            elif repeat_info.level == FrustrationLevel.LOW:
+                # Low frustration -> Voting (k=2)
+                if current_mode_is_weak:
+                    intent.orchestration_mode = OrchestrationMode.VOTING
+                    intent.k_votes = 2
+                    intent.reasoning = f"auto-escalation to voting (k=2) due to LOW frustration; {intent.reasoning}"
+                    log.info("frustration_auto_escalate", mode="voting_k2", level="low")
         
         # STEP 4: Prewarm update - learn usage patterns
         self.prewarm.update(intent.task_type)
