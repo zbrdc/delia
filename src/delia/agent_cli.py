@@ -175,6 +175,7 @@ Instructions:
                 content=plan_prompt,
                 model=config.planning_model,
                 include_metadata=False,
+                backend=config.backend_type,
             )
             
             ui.print_plan(initial_plan)
@@ -329,9 +330,12 @@ Instructions:
 
     # Run the agent loop
     try:
-        # Note: We don't use the Progress spinner here because the UI updates live 
-        # via callbacks, and nested live displays can conflict.
-        print("Running agent...")
+        # Update metadata
+        ui.update_metadata(selected_model, backend_name)
+        
+        # Start Live Dashboard
+        ui.start()
+        
         result = await run_agent_loop(
             call_llm=agent_llm_call,
             prompt=task,
@@ -354,6 +358,9 @@ Instructions:
             model=selected_model,
             backend=backend_name,
         )
+    finally:
+        # Ensure UI is stopped cleanly
+        ui.stop()
 
     elapsed_ms = int((time.time() - start_time) * 1000)
 
