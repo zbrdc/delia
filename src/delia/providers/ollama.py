@@ -180,6 +180,32 @@ def log_thinking_and_response(response_text: str, model_tier: str, tokens: int) 
     )
 
 
+def _format_function_gemma_tools(tools: list[dict[str, Any]]) -> str:
+    """Format tools for FunctionGemma using strict XML-like tags.
+    
+    See: https://docs.unsloth.ai/models/functiongemma
+    """
+    declarations = []
+    for tool in tools:
+        if "function" not in tool:
+            continue
+        func = tool["function"]
+        name = func["name"]
+        desc = func.get("description", "").replace('"', '\\"')
+        params = json.dumps(func.get("parameters", {}))
+        
+        # FunctionGemma expects: <start_function_declaration>declaration:name{description:<escape>desc<escape>,parameters:params}<end_function_declaration>
+        decl = (
+            f"<start_function_declaration>declaration:{name}{{"
+            f"description:<escape>{desc}<escape>,"
+            f"parameters:{params}}}"
+            f"<end_function_declaration>"
+        )
+        declarations.append(decl)
+    
+    return "".join(declarations)
+
+
 # Type for stats callback
 StatsCallback = Callable[
     [str, str, str, int, int, str, bool, str],  # model_tier, task_type, original_task, tokens, elapsed_ms, preview, thinking, backend
@@ -299,31 +325,58 @@ class OllamaProvider:
         # Determine endpoint and payload format based on whether tools are provided
         # /api/chat supports tools, /api/generate does not
         use_chat_endpoint = tools is not None
+        is_function_gemma = "functiongemma" in model.lower()
 
         if use_chat_endpoint:
-            # Use chat endpoint for tool calling support
-            # Use provided messages if available, otherwise build from system+prompt
-            if messages:
-                chat_messages = messages.copy()
-                # Ensure system prompt is included if provided
-                if system and not any(m.get("role") == "system" for m in chat_messages):
-                    chat_messages.insert(0, {"role": "system", "content": system})
-            else:
-                chat_messages: list[dict[str, str]] = []
+            if is_function_gemma:
+                # FunctionGemma requires tools injected into the system prompt with special tags
+                tool_declarations = _format_function_gemma_tools(tools)
+                gemma_system = (
+                    f"You are a model that can do function calling with the following functions"
+                    f"{tool_declarations}"
+                )
                 if system:
-                    chat_messages.append({"role": "system", "content": system})
-                chat_messages.append({"role": "user", "content": prompt})
+                    gemma_system = f"{system}\n\n{gemma_system}"
+                
+                # For FunctionGemma, we use /api/chat but we don't pass 'tools' array 
+                # because we manually injected them into the system prompt for better reliability
+                chat_messages = []
+                chat_messages.append({"role": "system", "content": gemma_system})
+                if messages:
+                    # Filter out existing system messages to avoid duplication
+                    chat_messages.extend([m for m in messages if m.get("role") != "system"])
+                else:
+                    chat_messages.append({"role": "user", "content": prompt})
+                
+                payload: dict[str, Any] = {
+                    "model": model,
+                    "messages": chat_messages,
+                    "stream": False,
+                    "options": options,
+                }
+                endpoint = "/api/chat"
+            else:
+                # Standard OpenAI-compatible tool calling
+                if messages:
+                    chat_messages = messages.copy()
+                    if system and not any(m.get("role") == "system" for m in chat_messages):
+                        chat_messages.insert(0, {"role": "system", "content": system})
+                else:
+                    chat_messages = []
+                    if system:
+                        chat_messages.append({"role": "system", "content": system})
+                    chat_messages.append({"role": "user", "content": prompt})
 
-            payload: dict[str, Any] = {
-                "model": model,
-                "messages": chat_messages,
-                "stream": False,
-                "options": options,
-                "tools": tools,
-            }
-            if tool_choice:
-                payload["tool_choice"] = tool_choice
-            endpoint = "/api/chat"
+                payload: dict[str, Any] = {
+                    "model": model,
+                    "messages": chat_messages,
+                    "stream": False,
+                    "options": options,
+                    "tools": tools,
+                }
+                if tool_choice:
+                    payload["tool_choice"] = tool_choice
+                endpoint = "/api/chat"
         else:
             # Use generate endpoint for standard completions
             payload = {
@@ -375,6 +428,42 @@ class OllamaProvider:
                     message = data.get("message", {})
                     response_text = message.get("content", "")
                     tool_calls = message.get("tool_calls")
+                    
+                    # If it's FunctionGemma and we don't have tool_calls yet, parse them from text
+                    if is_function_gemma and not tool_calls and "<start_function_call>" in response_text:
+                        tool_calls = []
+                        # Regex for <start_function_call>call:name{args}<end_function_call>
+                        pattern = r"<start_function_call>call:(\w+)\{(.*?)\}<end_function_call>"
+                        for match in re.finditer(pattern, response_text, re.DOTALL):
+                            func_name = match.group(1)
+                            args_str = match.group(2)
+                            
+                            # Clean up args string - FunctionGemma sometimes outputs key=value instead of JSON
+                            # but unsloth usually outputs JSON. Let's try JSON first.
+                            try:
+                                # Ensure it's valid JSON by wrapping in {} if it looks like key/value pairs
+                                if ":" not in args_str and "=" in args_str:
+                                    # Handle key=value format if needed, but standard is JSON-like
+                                    pass
+                                
+                                # Most models output JSON-like structure inside the {}
+                                args = json.loads(f"{{{args_str}}}")
+                            except:
+                                # Fallback: simple split if JSON fails
+                                args = {"raw_args": args_str}
+                                
+                            tool_calls.append({
+                                "id": f"call_{int(time.time())}_{len(tool_calls)}",
+                                "type": "function",
+                                "function": {
+                                    "name": func_name,
+                                    "arguments": json.dumps(args)
+                                }
+                            })
+                        
+                        # Strip tool calls from the text for a cleaner response
+                        response_text = re.sub(pattern, "", response_text, flags=re.DOTALL).strip()
+
                     # Token counts in chat response
                     tokens = data.get("eval_count", 0)
                     if tokens == 0:

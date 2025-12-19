@@ -30,11 +30,11 @@ import structlog
 
 from pydantic import BaseModel
 
-from ..intent import detect_intent
-from ..executor import get_orchestration_executor, OrchestrationExecutor
-from ..result import DetectedIntent, OrchestrationMode, OrchestrationResult
+from .intent import detect_intent
+from .executor import get_orchestration_executor, OrchestrationExecutor
+from .result import DetectedIntent, OrchestrationMode, OrchestrationResult
+from .context import ContextEngine
 from ..tracing import trace, add_event
-from ..frustration import FrustrationLevel
 
 if TYPE_CHECKING:
     from ..config import AffinityTracker, PrewarmTracker
@@ -142,6 +142,10 @@ class OrchestrationService:
         backend_type: str | None = None,
         model_override: str | None = None,
         output_type: type[BaseModel] | None = None,
+        files: str | None = None,
+        context: str | None = None,
+        symbols: str | None = None,
+        include_references: bool = False,
     ) -> ProcessingResult:
         """
         Process a message through the full orchestration pipeline.
@@ -149,22 +153,14 @@ class OrchestrationService:
         This is the main entry point for all orchestration.
         
         Pipeline:
-        1. Frustration check - detect repeated questions, penalize bad models
-        2. Intent detection - NLP-based determination of orchestration mode
-        3. Auto-upgrade - promote to VOTING on repeated frustration
-        4. Prewarm update - learn usage patterns for this task type
-        5. Execute - run the orchestration (voting, comparison, etc.)
-        6. Quality validation - score the response
-        7. Rewards - update affinity, award melons
-        
-        Args:
-            message: User's message
-            session_id: Optional session for conversation tracking
-            backend_type: Optional backend preference (local/remote)
-            model_override: Optional model to force
-            
-        Returns:
-            ProcessingResult with orchestration result and metadata
+        1. Context Preparation - assemble files, memories, and history
+        2. Frustration check - detect repeated questions, penalize bad models
+        3. Intent detection - NLP-based determination of orchestration mode
+        4. Auto-upgrade - promote to VOTING on repeated frustration
+        5. Prewarm update - learn usage patterns for this task type
+        6. Execute - run the orchestration (voting, comparison, etc.)
+        7. Quality validation - score the response
+        8. Rewards - update affinity, award melons
         """
         # Wrap entire pipeline in a trace for observability
         with trace(
@@ -174,7 +170,8 @@ class OrchestrationService:
             structured=output_type.__name__ if output_type else None,
         ) as span:
             return await self._process_traced(
-                span, message, session_id, backend_type, model_override, output_type
+                span, message, session_id, backend_type, model_override, output_type,
+                files=files, context=context, symbols=symbols, include_references=include_references
             )
     
     async def _process_traced(
@@ -185,12 +182,41 @@ class OrchestrationService:
         backend_type: str | None,
         model_override: str | None,
         output_type: type[BaseModel] | None,
+        files: str | None = None,
+        context: str | None = None,
+        symbols: str | None = None,
+        include_references: bool = False,
     ) -> ProcessingResult:
         """Internal traced implementation of process()."""
         start_time = time.time()
         frustration_penalty = 0
         
-        # STEP 1: Frustration detection
+        # STEP 1: Context Preparation & Session Handling
+        session_context = None
+        if session_id:
+            from ..session_manager import get_session_manager
+            session_manager = get_session_manager()
+            session = session_manager.get_session(session_id)
+            if session:
+                session_context = session.get_context_window(max_tokens=6000)
+                # Record user's message to session history immediately
+                session_manager.add_to_session(
+                    session_id, "user", message, tokens=0, model="", task_type="orchestration"
+                )
+
+        # Assemble full content (Files + Memories + History + Task)
+        prepared_content = await ContextEngine.prepare_content(
+            content=message,
+            context=context,
+            symbols=symbols,
+            include_references=include_references,
+            files=files,
+            session_context=session_context,
+        )
+
+        span.event("context_prepared", length=len(prepared_content))
+
+        # STEP 2: Frustration detection
         repeat_info = None
         if session_id:
             repeat_info = self.frustration.check_repeat(session_id, message)
@@ -287,7 +313,7 @@ class OrchestrationService:
         
         result = await self.executor.execute(
             intent=intent,
-            message=message,
+            message=prepared_content,  # Use the fully assembled context
             session_id=session_id,
             backend_type=backend_type,
             model_override=model_override,

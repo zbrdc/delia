@@ -138,12 +138,24 @@ class Config:
         )
     )
 
+    # Dedicated dispatcher model (FunctionGemma) for tool selection
+    model_dispatcher: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            name="dispatcher",
+            default_model="functiongemma:270m",
+            vram_gb=0.5, # Tiny, can run on CPU
+            context_tokens=8192,
+            num_ctx=4096,
+            max_input_kb=16,
+        )
+    )
+
     # Dedicated thinking/reasoning model (uses chain-of-thought)
     model_thinking: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="thinking",
-            default_model=os.getenv("THINKING_MODEL", "olmo3:7b-think"),  # or "qwen3-coder:30b" for deeper reasoning
-            vram_gb=9.0,  # Adjust based on your chosen model
+            default_model=os.getenv("THINKING_MODEL", "nemotron:30b-nano"),
+            vram_gb=17.0,
             context_tokens=128_000,
             num_ctx=16384,
             max_input_kb=100,

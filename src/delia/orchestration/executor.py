@@ -37,6 +37,7 @@ from .intent import DetectedIntent
 from .prompts import get_prompt_generator
 from .result import OrchestrationMode, OrchestrationResult, StreamEvent
 from .outputs import get_json_schema_prompt, parse_structured_output
+from ..prompts import ModelRole, build_system_prompt
 from ..text_utils import strip_thinking_tags
 from ..file_helpers import list_serena_memories, read_serena_memory
 from ..rag import get_rag
@@ -68,6 +69,11 @@ class OrchestrationExecutor:
     
     def __init__(self) -> None:
         self.prompt_generator = get_prompt_generator()
+        from ..llm import call_llm
+        from .dispatcher import ModelDispatcher
+        from .planner import StrategicPlanner
+        self.dispatcher = ModelDispatcher(call_llm)
+        self.planner = StrategicPlanner(call_llm)
     
     async def execute(
         self,
@@ -342,20 +348,60 @@ making trusted models more likely to be selected.
                 error="no_backend",
             )
         
-        # Select model
-        selected_model = model_override or await select_model(
-            task_type=intent.task_type,
-            content_size=len(message),
-            content=message,
-        )
+        # Select model via Dispatcher tier
+        target_role_str = await self.dispatcher.dispatch(message, intent, backend_obj)
         
-        # Generate role-specific system prompt
-        system_prompt = self.prompt_generator.generate(
-            intent,
-            user_message=message,
-            model_name=selected_model,
-            backend_name=backend_obj.name,
-        )
+        if target_role_str == "planner":
+            log.info("planner_selected_for_task")
+            # 1. Generate Plan via Planner tier
+            plan = await self.planner.plan(message, intent, backend_obj)
+            
+            if plan:
+                log.info("executing_planner_chain", steps=len(plan.steps))
+                # 2. Convert Plan to ChainSteps
+                from ..task_chain import ChainStep, execute_chain
+                from ..mcp_server import _get_delegate_context
+                
+                steps = [
+                    ChainStep(id=s.id, task=s.task, content=s.content, pass_to_next=True)
+                    for s in plan.steps
+                ]
+                
+                # 3. Execute Chain via Executor tier
+                ctx = _get_delegate_context()
+                chain_result = await execute_chain(steps, ctx, session_id=session_id)
+                
+                # Format final response from chain
+                final_parts = [f"# {plan.title}\n"]
+                for res in chain_result.step_results:
+                    final_parts.append(f"### {res.step_id}\n{res.output}\n")
+                
+                return OrchestrationResult(
+                    response="\n".join(final_parts),
+                    success=chain_result.success,
+                    model_used=config.model_coder.default_model,
+                    mode=OrchestrationMode.CHAIN,
+                    tokens=sum(r.tokens for r in chain_result.step_results),
+                    debug_info={"plan_steps": len(plan.steps)}
+                )
+            else:
+                log.warning("planner_failed_falling_back_to_executor")
+                # Fall through to executor
+                target_role = ModelRole.EXECUTOR
+                tier = "coder"
+        else:
+            target_role = ModelRole.EXECUTOR
+            tier = "coder"
+
+        # Resolve actual model name from backend for the selected tier
+        from ..config import config
+        selected_model = model_override or backend_obj.models.get(tier) or backend_obj.models.get("quick")
+        
+        # Generate role-specific system prompt (Planner or Executor)
+        system_prompt = build_system_prompt(target_role)
+        
+        # Inject task-specific constraints
+        system_prompt += f"\n\nTask Type: {intent.task_type.upper()}"
         
         # Inject Serena memory context if available
         memory_context = await self._retrieve_context(message)
@@ -372,6 +418,7 @@ making trusted models more likely to be selected.
             language="unknown",
             content_preview=message[:100],
             backend_obj=backend_obj,
+            enable_thinking=(target_role == ModelRole.PLANNER), # Planner always thinks
         )
         
         if not result.get("success"):
