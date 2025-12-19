@@ -70,3 +70,4 @@ Thumbs.db
 
 # Fuzz test logs
 logs/
+outputs/

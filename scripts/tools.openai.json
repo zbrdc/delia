@@ -1,0 +1,862 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "delegate",
+      "description": "Execute a task with intelligent 3-tier model selection. Routes to optimal backend based on content size, task type, and availability.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "Task type determines model tier: 'quick'|'summarize' → quick tier, 'generate'|'review'|'analyze' → coder tier, 'plan'|'critique' → moe tier",
+            "enum": ["quick", "summarize", "generate", "review", "analyze", "plan", "critique"]
+          },
+          "content": {
+            "type": "string",
+            "description": "The prompt or content to process (required)"
+          },
+          "file": {
+            "type": "string",
+            "description": "Optional file path to include in context"
+          },
+          "model": {
+            "type": "string",
+            "description": "Force specific tier - 'quick'|'coder'|'moe'|'thinking' OR natural language: '7b', '14b', '30b', 'small', 'large', 'fast', 'complex'"
+          },
+          "language": {
+            "type": "string",
+            "description": "Language hint for better prompts",
+            "enum": ["python", "c", "cpp", "java", "csharp", "javascript", "sql", "go", "php", "rust", "kotlin", "bash", "typescript"]
+          },
+          "context": {
+            "type": "string",
+            "description": "Serena memory names to include (comma-separated: 'architecture,decisions')"
+          },
+          "symbols": {
+            "type": "string",
+            "description": "Code symbols to focus on (comma-separated: 'Foo,Bar/calculate')"
+          },
+          "include_references": {
+            "type": "boolean",
+            "description": "True if content includes symbol usages from elsewhere",
+            "default": false
+          },
+          "backend_type": {
+            "type": "string",
+            "description": "Force backend type",
+            "enum": ["local", "remote"]
+          },
+          "files": {
+            "type": "string",
+            "description": "Comma-separated file paths - Delia reads directly from disk"
+          },
+          "include_metadata": {
+            "type": "boolean",
+            "description": "If False, skip the metadata footer (saves ~30 tokens)",
+            "default": true
+          },
+          "max_tokens": {
+            "type": "integer",
+            "description": "Limit response length to N tokens",
+            "minimum": 1
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "If True, return estimation signals without executing LLM call",
+            "default": false
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Optional session ID for conversation continuity"
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "If True, use streaming mode internally (better for long responses)",
+            "default": false
+          }
+        },
+        "required": ["task", "content"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "think",
+      "description": "Deep reasoning for complex problems with extended thinking. Uses thinking-capable models for thorough analysis.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "problem": {
+            "type": "string",
+            "description": "The problem or question to think through (required)"
+          },
+          "context": {
+            "type": "string",
+            "description": "Supporting information - code, docs, constraints",
+            "default": ""
+          },
+          "depth": {
+            "type": "string",
+            "description": "Reasoning depth level",
+            "enum": ["quick", "normal", "deep"],
+            "default": "normal"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Optional session ID for conversation continuity"
+          }
+        },
+        "required": ["problem"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "batch",
+      "description": "Execute multiple tasks in PARALLEL across all available backends for maximum throughput. Distributes work across backends intelligently.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "string",
+            "description": "JSON string containing an array of task objects. Each object has: task, content, file?, files?, model?, language?, include_metadata?, max_tokens?"
+          },
+          "include_metadata": {
+            "type": "boolean",
+            "description": "If False, skip metadata footers on all tasks",
+            "default": true
+          },
+          "max_tokens": {
+            "type": "integer",
+            "description": "Limit response length per task"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Optional session ID shared across all tasks"
+          }
+        },
+        "required": ["tasks"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "batch_vote",
+      "description": "Run the SAME prompt across multiple backends and vote on the best result. Uses MDAP k-voting consensus for mathematically guaranteed accuracy.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "The prompt to send to all backends"
+          },
+          "task": {
+            "type": "string",
+            "description": "Task type (analyze, review, generate, etc.)",
+            "default": "analyze"
+          },
+          "k": {
+            "type": "integer",
+            "description": "Votes needed for consensus",
+            "default": 3,
+            "minimum": 1
+          },
+          "backends": {
+            "type": "string",
+            "description": "Comma-separated backend IDs (default: all enabled backends)"
+          },
+          "target_accuracy": {
+            "type": "number",
+            "description": "Target accuracy for auto-kmin calculation",
+            "default": 0.9999
+          }
+        },
+        "required": ["prompt"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "session_create",
+      "description": "Create a new conversation session for multi-turn interactions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "description": "Optional client identifier for session grouping"
+          },
+          "metadata": {
+            "type": "string",
+            "description": "Optional JSON string with session metadata"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "session_list",
+      "description": "List active conversation sessions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "description": "Optional filter by client ID"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "session_get",
+      "description": "Get full details of a conversation session including message history.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "The session ID to retrieve"
+          }
+        },
+        "required": ["session_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "session_delete",
+      "description": "Delete a conversation session and its history.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "The session ID to delete"
+          }
+        },
+        "required": ["session_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "chain",
+      "description": "Execute a chain of tasks sequentially with output piping. Steps run in order, each able to reference outputs from previous steps using ${var} variable substitution.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "string",
+            "description": "JSON array of step objects. Each step has: id (required), task (required), content (required), model?, language?, output_var?, pass_to_next?"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Optional session for conversation continuity"
+          },
+          "continue_on_error": {
+            "type": "boolean",
+            "description": "If true, continue after step failures",
+            "default": false
+          }
+        },
+        "required": ["steps"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "workflow",
+      "description": "Execute a DAG workflow with conditional branching and retry logic. Supports dependencies, on_success/on_failure paths, retry with backoff, and timeouts.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "definition": {
+            "type": "string",
+            "description": "JSON workflow definition with: name, entry, timeout_minutes?, nodes[]. Each node has: id, task, content, depends_on?, on_success?, on_failure?, retry_count?, output_var?, model?, language?"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Optional session for conversation continuity"
+          },
+          "max_retries": {
+            "type": "integer",
+            "description": "Global retry override for all nodes",
+            "default": 1
+          }
+        },
+        "required": ["definition"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "agent",
+      "description": "Run an autonomous agent that can use tools to complete tasks. The agent loops: understand task -> call tools -> process results -> respond.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "The task for the agent to complete (required)"
+          },
+          "system_prompt": {
+            "type": "string",
+            "description": "Optional system prompt to guide behavior"
+          },
+          "model": {
+            "type": "string",
+            "description": "Force specific tier - 'quick'|'coder'|'moe'|'thinking'"
+          },
+          "max_iterations": {
+            "type": "integer",
+            "description": "Maximum tool call iterations",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 50
+          },
+          "tools": {
+            "type": "string",
+            "description": "Comma-separated tool names to enable: read_file, list_directory, search_code, web_fetch"
+          },
+          "backend_type": {
+            "type": "string",
+            "description": "Force backend type",
+            "enum": ["local", "remote"]
+          },
+          "workspace": {
+            "type": "string",
+            "description": "Optional workspace directory to confine file operations"
+          }
+        },
+        "required": ["prompt"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "health",
+      "description": "Check health status of Delia and all configured GPU backends. Shows availability, loaded models, usage stats, and cost savings.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "queue_status",
+      "description": "Get current status of the model queue system. Shows loaded models, queued requests, and GPU memory usage.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "models",
+      "description": "List all configured models across all GPU backends. Shows model tiers (quick/coder/moe) and which are currently loaded.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "melons",
+      "description": "Display the melon leaderboard for Delia's model garden. Models earn melons for helpful responses - more melons = higher routing priority.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task_type": {
+            "type": "string",
+            "description": "Filter by task type (quick/coder/moe) or None for all"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "switch_backend",
+      "description": "Switch the active LLM backend.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "backend_id": {
+            "type": "string",
+            "description": "ID of the backend to switch to (from settings.json)"
+          }
+        },
+        "required": ["backend_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "switch_model",
+      "description": "Switch the model for a specific tier at runtime. Changes are persisted to settings.json.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tier": {
+            "type": "string",
+            "description": "Model tier to change",
+            "enum": ["quick", "coder", "moe", "thinking"]
+          },
+          "model_name": {
+            "type": "string",
+            "description": "New model name (must be available in the current backend)"
+          }
+        },
+        "required": ["tier", "model_name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_model_info_tool",
+      "description": "Get detailed information about a specific model. Returns VRAM requirements, context window size, and tier classification.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "description": "Name of the model (e.g., 'qwen2.5:14b', 'llama3.1:70b')"
+          }
+        },
+        "required": ["model_name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_servers",
+      "description": "Manage external MCP servers for tool passthrough. Enables Delia to use tools from any MCP server.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Action to perform",
+            "enum": ["status", "start", "stop", "start_all", "stop_all", "add", "remove", "tools"],
+            "default": "status"
+          },
+          "server_id": {
+            "type": "string",
+            "description": "Server ID for start/stop/remove actions"
+          },
+          "command": {
+            "type": "string",
+            "description": "JSON array of command args for 'add' action"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable name for 'add' action"
+          },
+          "env": {
+            "type": "string",
+            "description": "JSON object of environment variables for 'add' action"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Read contents of a file from disk. Use this to examine code, configs, or data files.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the file (absolute or relative to workspace/cwd)"
+          },
+          "start_line": {
+            "type": "integer",
+            "description": "First line to read (1-indexed)",
+            "default": 1,
+            "minimum": 1
+          },
+          "end_line": {
+            "type": "integer",
+            "description": "Last line to read (default: read all)",
+            "minimum": 1
+          }
+        },
+        "required": ["path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_directory",
+      "description": "List files and directories. Use this to explore the codebase structure.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory path",
+            "default": "."
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Include subdirectories",
+            "default": false
+          },
+          "pattern": {
+            "type": "string",
+            "description": "Glob pattern to filter files (e.g., '*.py')"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_code",
+      "description": "Search for a pattern in files using regex. Use this to find code, functions, or text.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "Regex pattern to search for"
+          },
+          "path": {
+            "type": "string",
+            "description": "Directory or file to search in",
+            "default": "."
+          },
+          "file_pattern": {
+            "type": "string",
+            "description": "Glob pattern to filter files (e.g., '*.py', '*.ts')"
+          },
+          "context_lines": {
+            "type": "integer",
+            "description": "Lines of context around matches",
+            "default": 2,
+            "minimum": 0
+          }
+        },
+        "required": ["pattern"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_fetch",
+      "description": "Fetch content from a URL. Use this to read documentation or API responses.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "URL to fetch (must start with http:// or https://)",
+            "pattern": "^https?://"
+          },
+          "extract_text": {
+            "type": "boolean",
+            "description": "Extract text from HTML",
+            "default": true
+          }
+        },
+        "required": ["url"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Search the web using DuckDuckGo. Use this to find current information, documentation, or answers.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum results to return",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 10
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_news",
+      "description": "Search recent news articles using DuckDuckGo. Use this for current events and recent developments.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "News search query"
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum results",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 10
+          },
+          "timelimit": {
+            "type": "string",
+            "description": "Time limit: d=day, w=week, m=month",
+            "enum": ["d", "w", "m"]
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ask_user",
+      "description": "Ask the user a question. Use this for clarification, confirmation, or missing info.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The question to ask"
+          }
+        },
+        "required": ["question"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "write_file",
+      "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. DANGEROUS: Requires user confirmation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the file"
+          },
+          "content": {
+            "type": "string",
+            "description": "Content to write to the file"
+          }
+        },
+        "required": ["path", "content"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_file",
+      "description": "Delete a file or empty directory. Cannot delete non-empty directories. DANGEROUS: Requires user confirmation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to file or empty directory to delete"
+          }
+        },
+        "required": ["path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "replace_in_file",
+      "description": "Replace text in a file. Fails if search string is not found. Surgical editing safer than overwrite.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to file"
+          },
+          "search": {
+            "type": "string",
+            "description": "Exact text to replace"
+          },
+          "replace": {
+            "type": "string",
+            "description": "New text to insert"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Max replacements (default: all)",
+            "minimum": 1
+          }
+        },
+        "required": ["path", "search", "replace"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "insert_into_file",
+      "description": "Insert content into a file after a specific line number.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to file"
+          },
+          "content": {
+            "type": "string",
+            "description": "Content to insert"
+          },
+          "line": {
+            "type": "integer",
+            "description": "Line number to insert after (0 for start)",
+            "minimum": 0
+          }
+        },
+        "required": ["path", "content", "line"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "shell_exec",
+      "description": "Execute a shell command. Some dangerous commands are blocked. DANGEROUS: Requires user confirmation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Shell command to execute"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Working directory"
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Command timeout in seconds",
+            "default": 60,
+            "minimum": 1,
+            "maximum": 300
+          }
+        },
+        "required": ["command"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "run_tests",
+      "description": "Run tests and return structured results. Auto-detects the test framework based on project files.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Test file or directory",
+            "default": "."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "Test name pattern to match (e.g., 'test_auth*')"
+          },
+          "verbose": {
+            "type": "boolean",
+            "description": "Show individual test results",
+            "default": true
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Maximum execution time in seconds",
+            "default": 300,
+            "minimum": 1
+          },
+          "framework": {
+            "type": "string",
+            "description": "Test framework (auto-detect if not specified)",
+            "enum": ["auto", "pytest", "jest", "cargo", "go"],
+            "default": "auto"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "apply_diff",
+      "description": "Apply a unified diff to file(s).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "diff": {
+            "type": "string",
+            "description": "Unified diff content"
+          },
+          "file_path": {
+            "type": "string",
+            "description": "Target file (optional, extracted from diff if not provided)"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "If True, show what would change without applying",
+            "default": false
+          }
+        },
+        "required": ["diff"]
+      }
+    }
+  }
+]
