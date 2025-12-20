@@ -114,6 +114,7 @@ class OllamaProvider:
         tool_choice: str | None = None,
         temperature: float | None = None,
         messages: list[dict[str, Any]] | None = None,
+        grammar: str | None = None,
     ) -> LLMResponse:
         """Call Ollama /api/chat or /api/generate."""
         start_time = time.time()
@@ -184,6 +185,7 @@ class OllamaProvider:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         messages: list[dict[str, Any]] | None = None,
+        grammar: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream completion from Ollama."""
         start_time = time.time()

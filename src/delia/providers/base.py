@@ -44,6 +44,7 @@ class StreamChunk:
         error: Error message if streaming failed mid-stream
         metadata: Provider-specific chunk metadata
         thinking: The thinking/reasoning content of this chunk (optional)
+        grammar: The grammar rule currently being satisfied (optional)
     """
 
     text: str = ""
@@ -52,6 +53,7 @@ class StreamChunk:
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     thinking: str | None = None
+    grammar: str | None = None
 
 
 @dataclass
@@ -168,6 +170,7 @@ class LLMProvider(Protocol):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         temperature: float | None = None,
+        grammar: str | None = None,
     ) -> LLMResponse:
         """Call the LLM provider with the given parameters.
 
@@ -184,6 +187,8 @@ class LLMProvider(Protocol):
             max_tokens: Optional limit on response length
             tools: Optional list of OpenAI-format tool schemas for native tool calling
             tool_choice: Optional tool choice strategy ("auto", "none", or specific tool name)
+            temperature: Sampling temperature
+            grammar: Optional GBNF grammar string to constrain model output
 
         Returns:
             LLMResponse with success status, response text, tokens, timing, and metadata.
@@ -209,6 +214,7 @@ class LLMProvider(Protocol):
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        grammar: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from the LLM provider token by token.
 
@@ -231,6 +237,7 @@ class LLMProvider(Protocol):
                 streaming mode is provider-dependent and best-effort.
             tool_choice: Optional tool choice strategy ("auto", "none", or
                 specific tool name). Only meaningful if tools are provided.
+            grammar: Optional GBNF grammar string to constrain model output
 
         Yields:
             StreamChunk objects containing:

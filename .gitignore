@@ -68,6 +68,28 @@ fuzz/
 .DS_Store
 Thumbs.db
 
+# Models & Large Weights
+models/
+tmp_model/
+tmp_lora/
+*.gguf
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.weights
+
+# Datasets & Large Data
+data/
+*.jsonl
+*.csv
+*.parquet
+
+# Cache
+.cache/
+.huggingface/
+
 # Fuzz test logs
 logs/
 outputs/

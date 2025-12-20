@@ -107,6 +107,7 @@ class LlamaCppProvider:
         tool_choice: str | None = None,
         temperature: float | None = None,
         messages: list[dict[str, Any]] | None = None,
+        grammar: str | None = None,
     ) -> LLMResponse:
         """Call OpenAI-compatible API with Pydantic validation, retry, and circuit breaker."""
         start_time = time.time()
@@ -184,6 +185,10 @@ class LlamaCppProvider:
             "max_tokens": max_tokens if max_tokens else num_ctx,
             "stream": False,
         }
+
+        # Add GBNF grammar if provided (native llama.cpp support)
+        if grammar:
+            payload["grammar"] = grammar
 
         # Add tool calling support if tools are provided
         if tools:
@@ -351,6 +356,7 @@ class LlamaCppProvider:
         backend_obj: BackendConfig | None = None,
         max_tokens: int | None = None,
         messages: list[dict[str, Any]] | None = None,
+        grammar: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from OpenAI-compatible API token by token.
 
@@ -420,6 +426,10 @@ class LlamaCppProvider:
             "max_tokens": max_tokens if max_tokens else num_ctx,
             "stream": True,  # Enable streaming
         }
+
+        # Add GBNF grammar if provided
+        if grammar:
+            payload["grammar"] = grammar
 
         client = backend_obj.get_client()
 

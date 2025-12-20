@@ -13,6 +13,7 @@ semantically rather than via regex patterns.
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -36,9 +37,19 @@ from .paths import DATA_DIR
 log = structlog.get_logger()
 
 # Default embeddings settings
-DEFAULT_EMBEDDINGS_URL = "http://localhost:8082"
 EMBEDDINGS_ENDPOINT = "/v1/embeddings"
-DEFAULT_LOCAL_MODEL = "all-MiniLM-L6-v2" # Fast, small, efficient
+
+# Ordered list of preferred models for auto-detection
+# BGE-M3 and MXBAI are top-tier for technical retrieval and RAG
+PREFERRED_MODELS = [
+    "BAAI/bge-m3",
+    "mxbai-embed-large",
+    "BAAI/bge-large-en-v1.5",
+    "nomic-embed-text",
+    "granite-embedding",
+    "all-minilm",
+    "qwen3:0.6b"
+]
 
 # Reference embeddings file
 REFERENCE_EMBEDDINGS_FILE = "reference_embeddings.json"
@@ -65,10 +76,11 @@ class EmbeddingsProvider(Protocol):
 class ExternalEmbeddingsProvider:
     """Client for external embeddings API (e.g., llama.cpp, Ollama)."""
 
-    def __init__(self, base_url: str = DEFAULT_EMBEDDINGS_URL, timeout: float = 30.0):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str | None = None, timeout: float = 30.0):
+        self.base_url = base_url.rstrip("/") if base_url else None
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
+        self.detected_model: str | None = os.getenv("DELIA_EMBEDDING_MODEL")
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -80,28 +92,69 @@ class ExternalEmbeddingsProvider:
             await self._client.aclose()
             self._client = None
 
+    async def detect_model(self) -> str | None:
+        """Probe the backend to see which preferred models are available."""
+        if self.detected_model:
+            return self.detected_model
+            
+        if not self.base_url:
+            return None
+
+        client = await self._get_client()
+        try:
+            # Try Ollama tags endpoint
+            response = await client.get(f"{self.base_url}/api/tags", timeout=2.0)
+            if response.status_code == 200:
+                models = [m["name"].split(":")[0] for m in response.json().get("models", [])]
+                for preferred in PREFERRED_MODELS:
+                    if any(preferred in m for m in models):
+                        self.detected_model = preferred
+                        log.info("embeddings_model_autodetected", model=preferred)
+                        return preferred
+        except Exception:
+            pass
+            
+        return PREFERRED_MODELS[-1] # Fallback to MiniLM
+
     async def embed(self, text: str) -> np.ndarray:
         """Get embedding vector for text."""
+        if not self.base_url:
+            raise RuntimeError("External embeddings URL not configured")
+
         client = await self._get_client()
+        model = await self.detect_model() or "nomic-embed-text"
 
         try:
+            # Try OpenAI compatible endpoint
             response = await client.post(
                 f"{self.base_url}{EMBEDDINGS_ENDPOINT}",
-                json={"input": text, "model": "nomic-embed-text-v1.5"},
+                json={"input": text, "model": model},
             )
-            response.raise_for_status()
-            data = response.json()
-
-            # Handle OpenAI-compatible response format
-            embedding = data["data"][0]["embedding"]
+            
+            if response.status_code != 200:
+                # Fallback for Ollama native /api/embeddings
+                response = await client.post(
+                    f"{self.base_url}/api/embeddings",
+                    json={"prompt": text, "model": model},
+                )
+                response.raise_for_status()
+                embedding = response.json()["embedding"]
+            else:
+                # Handle OpenAI-compatible response format
+                data = response.json()
+                embedding = data["data"][0]["embedding"]
+                
             return np.array(embedding, dtype=np.float32)
 
         except Exception as e:
-            log.debug("external_embeddings_failed", error=str(e))
+            log.debug("external_embeddings_failed", error=str(e), model=model)
             raise
 
     async def health_check(self) -> bool:
         """Check if embeddings service is available."""
+        if not self.base_url:
+            return False
+            
         client = await self._get_client()
         try:
             response = await client.get(f"{self.base_url}/health", timeout=2.0)
@@ -118,7 +171,7 @@ class ExternalEmbeddingsProvider:
 class LocalEmbeddingsProvider:
     """Provider using local sentence-transformers library."""
 
-    def __init__(self, model_name: str = DEFAULT_LOCAL_MODEL):
+    def __init__(self, model_name: str | None = None):
         self.model_name = model_name
         self._model: Any = None
         self._lock = asyncio.Lock()
@@ -129,9 +182,12 @@ class LocalEmbeddingsProvider:
                 if not SENTENCE_TRANSFORMERS_AVAILABLE:
                     raise ImportError("sentence-transformers not installed")
                 
-                log.info("loading_local_embeddings_model", model=self.model_name)
+                # If no model provided, use the best available from preferred list
+                model_to_load = self.model_name or PREFERRED_MODELS[0]
+                
+                log.info("loading_local_embeddings_model", model=model_to_load)
                 # Load in thread to avoid blocking event loop
-                self._model = await asyncio.to_thread(SentenceTransformer, self.model_name)
+                self._model = await asyncio.to_thread(SentenceTransformer, model_to_load)
                 
                 # Move to GPU if available
                 if torch.cuda.is_available():
@@ -162,8 +218,8 @@ class HybridEmbeddingsClient:
 
     def __init__(
         self, 
-        base_url: str = DEFAULT_EMBEDDINGS_URL, 
-        local_model: str = DEFAULT_LOCAL_MODEL,
+        base_url: str | None = None, 
+        local_model: str | None = None,
         timeout: float = 30.0
     ):
         self.external_provider = ExternalEmbeddingsProvider(base_url, timeout)
@@ -177,14 +233,24 @@ class HybridEmbeddingsClient:
             if self.active_provider:
                 return True
 
+            # If external URL is not provided, try to detect from active backend
+            if not self.external_provider.base_url:
+                from .backend_manager import backend_manager
+                active = backend_manager.get_active_backend()
+                if active:
+                    self.external_provider.base_url = active.url.rstrip("/")
+                    log.debug("embeddings_url_detected_from_backend", url=active.url)
+
             # Determine best provider
             if await self.external_provider.health_check():
                 self.active_provider = self.external_provider
-                log.info("embeddings_client_using_external_api")
+                # Trigger auto-detection
+                await self.external_provider.detect_model()
+                log.info("embeddings_client_using_external_api", model=self.external_provider.detected_model)
                 return True
             elif await self.local_provider.health_check():
                 self.active_provider = self.local_provider
-                log.info("embeddings_client_using_local_fallback")
+                log.info("embeddings_client_using_local_fallback", model=self.local_provider.model_name)
                 return True
             else:
                 log.warning("embeddings_client_no_provider_available")
@@ -368,8 +434,8 @@ class SemanticRouter:
 
     def __init__(
         self,
-        embeddings_url: str = DEFAULT_EMBEDDINGS_URL,
-        local_model: str = DEFAULT_LOCAL_MODEL,
+        embeddings_url: str | None = None,
+        local_model: str | None = None,
         cache_references: bool = True,
     ):
         self.client = HybridEmbeddingsClient(embeddings_url, local_model)
@@ -539,13 +605,16 @@ _semantic_router: SemanticRouter | None = None
 
 
 def get_semantic_router(
-    embeddings_url: str = DEFAULT_EMBEDDINGS_URL, 
-    local_model: str = DEFAULT_LOCAL_MODEL
+    embeddings_url: str | None = None, 
+    local_model: str | None = None
 ) -> SemanticRouter:
     """Get or create the global semantic router."""
     global _semantic_router
     if _semantic_router is None:
-        _semantic_router = SemanticRouter(embeddings_url, local_model)
+        from .config import config
+        url = embeddings_url or config.embeddings_url
+        model = local_model or config.embedding_model
+        _semantic_router = SemanticRouter(url, model)
     return _semantic_router
 
 

@@ -103,20 +103,47 @@ class ModelDispatcher:
         if not dispatcher_model or dispatcher_model == "current":
             dispatcher_model = config.model_dispatcher.default_model
 
-        system_prompt = build_system_prompt(ModelRole.DISPATCHER)
-        
         # 2. Call Dispatcher
+        is_functiongemma = "functiongemma" in dispatcher_model.lower()
+        
+        if is_functiongemma:
+            # Use specialized Delia LoRA prompt dialect
+            system_prompt = "You are the Delia Dispatcher. Select the best tool for the task."
+            # Manual tool block for small model reliability
+            tool_desc = "Available tools:\n"
+            for t in tools:
+                f = t["function"]
+                tool_desc += f"\n### {f['name']}\n{f['description']}\n"
+            
+            prompt = f"{tool_desc}\nUser: {message}\n\nDecision:"
+            
+            # Load GBNF grammar if available to constrain the tiny model
+            grammar = None
+            try:
+                from pathlib import Path
+                grammar_path = Path.cwd() / "dispatcher.gbnf"
+                if grammar_path.exists():
+                    grammar = grammar_path.read_text()
+                    log.debug("dispatcher_using_gbnf_grammar", path=str(grammar_path))
+            except Exception as e:
+                log.warning("dispatcher_grammar_load_failed", error=str(e))
+        else:
+            system_prompt = build_system_prompt(ModelRole.DISPATCHER)
+            prompt = message
+            grammar = None
+
         result = await self.call_llm(
             model=dispatcher_model,
-            prompt=message,
+            prompt=prompt,
             system=system_prompt,
             task_type="dispatcher",
             original_task=intent.task_type,
             language="unknown",
             content_preview=message[:100],
             backend_obj=backend_obj,
-            tools=tools,
-            tool_choice="auto",
+            tools=tools if not is_functiongemma else None, # Use text prompt for FG
+            tool_choice="auto" if not is_functiongemma else None,
+            grammar=grammar,
         )
 
         if not result.get("success"):
@@ -127,6 +154,22 @@ class ModelDispatcher:
         metadata = result.get("metadata", {})
         tool_calls = metadata.get("tool_calls", [])
         response_text = result.get("response", "").lower()
+        
+        # Check for specialized XML tool calls from fine-tuned FunctionGemma
+        if "<tool_call>" in response_text:
+            try:
+                # Extract JSON from <tool_call>{...}</tool_call>
+                call_json = response_text.split("<tool_call>")[1].split("</tool_call>")[0]
+                call_data = json.loads(call_json)
+                tool_name = call_data.get("name")
+                if tool_name == "call_planner":
+                    return "planner"
+                elif tool_name == "call_executor":
+                    return "executor"
+                elif tool_name == "call_status":
+                    return "status"
+            except Exception:
+                pass # Fallback to keyword check
         
         # If the tiny model gives a canned refusal (e.g. "I am sorry, I cannot..."),
         # we must ignore it and just use the Executor.

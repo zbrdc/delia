@@ -101,6 +101,12 @@ class Config:
     llamacpp_type: str = field(default_factory=lambda: os.getenv("LLAMACPP_TYPE", "remote"))
 
     # ============================================================
+    # EMBEDDINGS CONFIGURATION
+    # ============================================================
+    embeddings_url: str | None = field(default_factory=lambda: os.getenv("DELIA_EMBEDDINGS_URL"))
+    embedding_model: str | None = field(default_factory=lambda: os.getenv("DELIA_EMBEDDING_MODEL"))
+
+    # ============================================================
     # MODEL CONFIGURATION
     # Tier definitions only. Values set to -1 (auto) where possible.
     # Overrides can be set via env vars: DELIA_MODEL_{TIER}_VRAM

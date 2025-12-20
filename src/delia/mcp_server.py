@@ -2281,6 +2281,46 @@ async def health() -> str:
 
 
 @mcp.tool()
+async def reload_config() -> str:
+    """
+    Reload Delia configuration from settings.json.
+
+    Use this after modifying settings.json to apply changes without restart.
+    Properly closes all existing backend connections before reloading.
+
+    WHEN TO USE:
+    - After editing ~/.delia/settings.json
+    - After adding/removing backends via dashboard
+    - When backend configuration is stale
+
+    Returns:
+        JSON with reload status and new backend list
+    """
+    try:
+        await backend_manager.reload()
+        backends = backend_manager.get_enabled_backends()
+
+        return json.dumps({
+            "status": "reloaded",
+            "settings_file": str(backend_manager.settings_file),
+            "backends": [
+                {
+                    "id": b.id,
+                    "name": b.name,
+                    "provider": b.provider,
+                    "models": b.models,
+                }
+                for b in backends
+            ],
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "error": str(e),
+        }, indent=2)
+
+
+@mcp.tool()
 async def queue_status() -> str:
     """
     Get current status of the model queue system.
@@ -2924,10 +2964,21 @@ async def _startup_handler():
     """
     Startup handler for the server.
 
+    - Probes backends to detect available models
     - Starts background save task for tracker
     - Pre-warms tiktoken encoder to avoid first-call delay
     - Clears expired sessions
     """
+    # Probe all enabled backends to detect available models
+    # This ensures we use actual models, not stale config from settings.json
+    for backend in backend_manager.get_enabled_backends():
+        try:
+            probed = await backend_manager.probe_backend(backend.id)
+            if probed:
+                log.info("backend_probed_startup", id=backend.id, models=list(backend.models.keys()))
+        except Exception as e:
+            log.warning("backend_probe_failed_startup", id=backend.id, error=str(e))
+
     if TRACKING_ENABLED:
         await tracker.start_background_save()
 
@@ -2991,6 +3042,9 @@ def run_server(
         # Get fresh logger reference after reconfiguration
         log = structlog.get_logger()
         log.info("stdio_logging_configured", destination="stderr")
+
+        # Run startup handler (probes backends, starts background tasks)
+        asyncio.run(_startup_handler())
 
         # Register graceful shutdown handler
         atexit.register(lambda: asyncio.run(_shutdown_handler()))

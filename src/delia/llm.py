@@ -141,6 +141,7 @@ async def call_llm(
     tool_choice: str | None = None,
     temperature: float | None = None,
     messages: list[dict[str, Any]] | None = None,
+    grammar: str | None = None,
 ) -> dict[str, Any]:
     """
     Unified LLM call dispatcher that routes to the appropriate backend.
@@ -159,6 +160,8 @@ async def call_llm(
         tools: Optional list of OpenAI-format tool schemas for native tool calling
         tool_choice: Optional tool choice strategy ("auto", "none", or specific tool name)
         temperature: Sampling temperature (0.0-2.0, higher = more random/diverse)
+        messages: Optional conversation history
+        grammar: Optional GBNF grammar string to constrain model output
 
     Returns:
         Dict with 'success', 'response', 'tokens', 'error' keys
@@ -240,6 +243,7 @@ async def call_llm(
             tool_choice=tool_choice,
             temperature=temperature,
             messages=messages,
+            grammar=grammar,
         )
         result = response.to_dict()
         
@@ -270,6 +274,7 @@ async def call_llm_stream(
     backend_obj: BackendConfig | None = None,
     max_tokens: int | None = None,
     messages: list[dict[str, Any]] | None = None,
+    grammar: str | None = None,
 ) -> AsyncIterator[StreamChunk]:
     """
     Unified LLM streaming dispatcher that routes to the appropriate backend.
@@ -288,6 +293,7 @@ async def call_llm_stream(
         backend_obj: Optional BackendConfig object to use directly
         max_tokens: Maximum response tokens
         messages: Optional conversation history
+        grammar: Optional GBNF grammar string to constrain model output
 
     Yields:
         StreamChunk objects with incremental text and final metadata
@@ -335,6 +341,7 @@ async def call_llm_stream(
             backend_obj=active_backend,
             max_tokens=max_tokens,
             messages=messages,
+            grammar=grammar,
         ):
             yield chunk
     else:
@@ -351,6 +358,7 @@ async def call_llm_stream(
             backend_obj=active_backend,
             max_tokens=max_tokens,
             messages=messages,
+            grammar=grammar,
         )
         if response.success:
             yield StreamChunk(

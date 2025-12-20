@@ -22,7 +22,7 @@ Used by both CLI init wizard and backend_manager auto-detection.
 from __future__ import annotations
 
 
-# Patterns to exclude (vocab files, test files, etc.)
+# Patterns to exclude (vocab files, test files, embedding models, etc.)
 EXCLUDED_PATTERNS = [
     "ggml-vocab",
     "vocab-",
@@ -30,9 +30,18 @@ EXCLUDED_PATTERNS = [
     "dummy",
     "template",
     "example",
+    # Embedding models (not chat models)
     "embed",
     "bert",
     "clip",
+    "bge-",           # BGE embedding models
+    "bge:",
+    "minilm",         # all-minilm and similar
+    "nomic-embed",
+    "granite-embed",
+    "mxbai-embed",
+    "e5-",            # E5 embedding models
+    "sentence-",      # sentence transformers
 ]
 
 # Keywords for tier classification

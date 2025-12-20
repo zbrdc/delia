@@ -1,0 +1,14 @@
+# GBNF Grammar for Delia Dispatcher
+# Forces 270M models to stay within tool-calling bounds
+
+root ::= tool_call
+
+tool_call ::= "<tool_call>" tool_json "</tool_call>"
+
+tool_json ::= "{" ws "\"name\":" ws tool_name "," ws "\"arguments\":" ws arguments_obj ws "}"
+
+tool_name ::= "\"call_planner\"" | "\"call_executor\"" | "\"call_status\""
+
+arguments_obj ::= "{" ws (reasoning_kv | query_kv) ws "}"
+
+reasoning_kv ::= "\"reasoning\":
