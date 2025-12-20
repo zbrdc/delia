@@ -106,27 +106,6 @@ class MelonStats:
 
         return earned_golden
 
-    # Keep legacy methods for backward compatibility during transition
-    def award(self, count: int = 1) -> bool:
-        """Legacy: Award melons directly."""
-        if count <= 0:
-            return False
-        self.melons += count
-        earned_golden = False
-        while self.melons >= 500:
-            self.melons -= 500
-            self.golden_melons += 1
-            earned_golden = True
-        return earned_golden
-
-    def penalize(self, count: int = 1) -> None:
-        """Legacy: Remove melons. Deprecated - savings can't be negative."""
-        self.melons = max(0, self.melons - count)
-
-    def record_response(self, success: bool) -> None:
-        """Legacy: Record response. Use record_savings instead."""
-        self.total_calls += 1
-
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -205,32 +184,6 @@ class MelonTracker:
 
         self._save()
         return earned_golden
-
-    # Legacy methods for backward compatibility
-    def award(
-        self,
-        model_id: str,
-        task_type: str,
-        melons: int = 1,
-        success: bool = True,
-    ) -> bool:
-        """Legacy: Award melons directly. Use record_savings instead."""
-        stats = self._get_or_create(model_id, task_type)
-        stats.record_response(success)
-        earned_golden = stats.award(melons)
-        self._save()
-        return earned_golden
-
-    def penalize(
-        self,
-        model_id: str,
-        task_type: str,
-        melons: int = 1,
-    ) -> None:
-        """Legacy: Remove melons. Deprecated - savings can't be negative."""
-        stats = self._get_or_create(model_id, task_type)
-        stats.penalize(melons)
-        self._save()
 
     def get_stats(self, model_id: str, task_type: str) -> MelonStats:
         """Get melon stats for a specific model+task."""
@@ -427,59 +380,6 @@ def get_reward_collector() -> RewardCollector:
     return _reward_collector
 
 
-# Helper functions for common operations
-def record_call_economics(
-    model_id: str,
-    task_type: str,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-    cost_usd: float = 0.0,
-    latency_ms: int = 0,
-    quality_score: float | None = None,
-    success: bool = True,
-) -> float:
-    """
-    Record economic metrics for a call AND convert savings to melons.
-
-    This is the main entry point for recording LLM call outcomes.
-    It updates both the EconomicTracker (for routing) and MelonTracker (for display).
-
-    Args:
-        model_id: Model that was used
-        task_type: Task type (quick, coder, moe, etc.)
-        input_tokens: Number of input tokens
-        output_tokens: Number of output tokens
-        cost_usd: Actual cost in USD (0 for local models)
-        latency_ms: Latency in milliseconds
-        quality_score: Quality score 0.0-1.0 (optional)
-        success: Whether the call succeeded
-
-    Returns:
-        Savings in USD
-    """
-    from .economics import get_economic_tracker
-
-    # Record in economic tracker (affects routing)
-    economics = get_economic_tracker()
-    savings = economics.record_call(
-        model_id=model_id,
-        task_type=task_type,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cost_usd=cost_usd,
-        latency_ms=latency_ms,
-        quality_score=quality_score,
-        success=success,
-    )
-
-    # Record savings as melons (for display)
-    if savings > 0:
-        tracker = get_melon_tracker()
-        tracker.record_savings(model_id, task_type, savings)
-
-    return savings
-
-
 def award_melons_for_quality(
     model_id: str,
     task_type: str,
@@ -492,9 +392,8 @@ def award_melons_for_quality(
     """
     Record a call and award melons based on response quality.
 
-    This function now:
-    1. Records economics (quality, tokens, cost) for routing decisions
-    2. Calculates savings and awards melons for display
+    This is the main entry point for recording LLM call outcomes.
+    It updates both the EconomicTracker (for routing) and MelonTracker (for display).
 
     Melons are now based on SAVINGS, not arbitrary quality thresholds.
     The quality affects the economic routing score, not melon count.
@@ -509,11 +408,16 @@ def award_melons_for_quality(
         latency_ms: Latency in ms (optional)
 
     Returns:
-        Estimated melons from savings (for backward compatibility)
+        Estimated melons from savings
     """
-    # Record economics (this also awards savings-based melons)
+    from .economics import get_economic_tracker
+
+    # Determine success from quality score
     success = quality_score >= 0.3
-    savings = record_call_economics(
+
+    # Record in economic tracker (affects routing)
+    economics = get_economic_tracker()
+    savings = economics.record_call(
         model_id=model_id,
         task_type=task_type,
         input_tokens=input_tokens,
@@ -524,5 +428,9 @@ def award_melons_for_quality(
         success=success,
     )
 
-    # Return estimated melons for backward compatibility
+    # Record savings as melons (for display)
+    if savings > 0:
+        tracker = get_melon_tracker()
+        tracker.record_savings(model_id, task_type, savings)
+
     return int(savings * USD_TO_MELON)

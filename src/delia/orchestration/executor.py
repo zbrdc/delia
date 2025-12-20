@@ -547,15 +547,10 @@ class OrchestrationExecutor:
             # Meta-learning should never break the main flow
             log.error("ace_meta_learning_failed", error=str(e))
 
-    async def _execute_chain(self, intent: DetectedIntent, message: str, backend_type: str | None, model_override: str | None, messages: list[dict[str, Any]] | None = None) -> OrchestrationResult:
-        return await self._execute_simple(intent, message, backend_type, model_override, messages=messages)
-
-    async def _execute_workflow(self, intent: DetectedIntent, message: str, session_id: str | None, backend_type: str | None, model_override: str | None, messages: list[dict[str, Any]] | None = None) -> OrchestrationResult:
-        return await self._execute_simple(intent, message, backend_type, model_override, messages=messages)
-
     def _award_melons(self, result: OrchestrationResult, intent: DetectedIntent) -> None:
         from ..melons import award_melons_for_quality
-        if result.model_used: award_melons_for_quality(result.model_used, intent.task_type, result.quality_score)
+        if result.model_used and result.quality_score is not None:
+            award_melons_for_quality(result.model_used, intent.task_type, result.quality_score)
 
     async def _retrieve_context(self, message: str) -> str:
         available = list_memories()

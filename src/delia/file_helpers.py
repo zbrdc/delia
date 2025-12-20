@@ -109,21 +109,21 @@ def read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[str
     paths_list = [p.strip() for p in file_paths.split(",") if p.strip()]
 
     for path_str in paths_list:
-        file_path = Path(path_str)
-
-        # Try relative to cwd if not absolute
-        if not file_path.is_absolute():
-            file_path = Path.cwd() / file_path
-
-        if not file_path.exists():
-            log.warning("file_read_skipped", path=path_str, reason="not_found")
-            continue
-
-        if not file_path.is_file():
-            log.warning("file_read_skipped", path=path_str, reason="not_a_file")
-            continue
-
         try:
+            file_path = Path(path_str)
+
+            # Try relative to cwd if not absolute
+            if not file_path.is_absolute():
+                file_path = Path.cwd() / file_path
+
+            if not file_path.exists():
+                log.warning("file_read_skipped", path=path_str, reason="not_found")
+                continue
+
+            if not file_path.is_file():
+                log.warning("file_read_skipped", path=path_str, reason="not_a_file")
+                continue
+
             size = file_path.stat().st_size
             if size > max_size_bytes:
                 log.warning(
@@ -138,7 +138,9 @@ def read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[str
             content = file_path.read_text(encoding="utf-8")
             results.append((path_str, content))
             log.info("file_read_success", path=path_str, size_kb=size // 1024)
+        except (OSError, ValueError) as e:
+            log.warning("file_read_skipped", path=path_str[:100], reason="invalid_path", error=str(e))
         except Exception as e:
-            log.warning("file_read_failed", path=path_str, error=str(e))
+            log.warning("file_read_failed", path=path_str[:100], error=str(e))
 
     return results

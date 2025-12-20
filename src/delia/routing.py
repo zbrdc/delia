@@ -539,6 +539,25 @@ class BackendScorer:
             return 1.0  # Free = optimal
         return 1.0 / (1.0 + cost_per_1k / self._REFERENCE_COST_PER_1K)
 
+    def _filter_backends(
+        self,
+        backends: list["BackendConfig"],
+        backend_type: str | None = None,
+    ) -> tuple[list["BackendConfig"], list["BackendConfig"]]:
+        """Filter backends by enabled status, type, and circuit breaker health.
+
+        Returns:
+            Tuple of (candidates, available) where:
+            - candidates: enabled backends matching type filter
+            - available: candidates with healthy circuit breakers
+        """
+        candidates = [
+            b for b in backends
+            if b.enabled and (backend_type is None or b.type == backend_type)
+        ]
+        available = [b for b in candidates if get_backend_health(b.id).is_available()]
+        return candidates, available
+
     def select_best(
         self,
         backends: list["BackendConfig"],
@@ -558,27 +577,14 @@ class BackendScorer:
         Returns:
             Best backend or None if none available
         """
-        # Filter to enabled backends matching type
-        candidates = [
-            b
-            for b in backends
-            if b.enabled and (backend_type is None or b.type == backend_type)
-        ]
+        candidates, available = self._filter_backends(backends, backend_type)
 
         if not candidates:
             log.debug("no_candidates", backend_type=backend_type)
             return None
 
-        # Further filter by circuit breaker availability
-        available = [b for b in candidates if get_backend_health(b.id).is_available()]
-
         if not available:
-            # All circuit breakers open - return highest priority as fallback
-            log.warning(
-                "all_backends_unavailable",
-                backend_type=backend_type,
-                falling_back_to_priority=True,
-            )
+            log.warning("all_backends_unavailable", backend_type=backend_type, falling_back_to_priority=True)
             return max(candidates, key=lambda b: b.priority)
 
         # Score and select best
@@ -612,27 +618,14 @@ class BackendScorer:
         Returns:
             Selected backend or None if none available
         """
-        # Filter to enabled backends matching type
-        candidates = [
-            b
-            for b in backends
-            if b.enabled and (backend_type is None or b.type == backend_type)
-        ]
+        candidates, available = self._filter_backends(backends, backend_type)
 
         if not candidates:
             log.debug("no_candidates", backend_type=backend_type)
             return None
 
-        # Further filter by circuit breaker availability
-        available = [b for b in candidates if get_backend_health(b.id).is_available()]
-
         if not available:
-            # All circuit breakers open - return highest priority as fallback
-            log.warning(
-                "all_backends_unavailable_weighted",
-                backend_type=backend_type,
-                falling_back_to_priority=True,
-            )
+            log.warning("all_backends_unavailable_weighted", backend_type=backend_type, falling_back_to_priority=True)
             return max(candidates, key=lambda b: b.priority)
 
         # Single backend - no need for weighted selection
@@ -681,19 +674,11 @@ class BackendScorer:
         Returns:
             List of up to N backends, sorted by score (best first)
         """
-        # Filter to enabled backends matching type
-        candidates = [
-            b
-            for b in backends
-            if b.enabled and (backend_type is None or b.type == backend_type)
-        ]
+        candidates, available = self._filter_backends(backends, backend_type)
 
         if not candidates:
             log.debug("no_candidates_for_hedging", backend_type=backend_type)
             return []
-
-        # Filter by circuit breaker availability
-        available = [b for b in candidates if get_backend_health(b.id).is_available()]
 
         if not available:
             log.debug("no_available_backends_for_hedging", backend_type=backend_type)

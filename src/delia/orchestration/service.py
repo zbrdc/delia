@@ -378,37 +378,18 @@ class OrchestrationService:
         if session_id:
             repeat_info = self.frustration.check_repeat(session_id, message)
             
-            # Penalize if frustration detected (even if not strictly a repeat)
+            # Log frustration (routing handled via orchestration upgrades)
             if repeat_info.level != FrustrationLevel.NONE and repeat_info.previous_model:
-                # Escalating penalties
-                base_penalty = 0
-                if repeat_info.level == FrustrationLevel.LOW:
-                    base_penalty = 2
-                elif repeat_info.level == FrustrationLevel.MEDIUM:
-                    base_penalty = 3
-                elif repeat_info.level == FrustrationLevel.HIGH:
-                    base_penalty = 5
-                
-                frustration_penalty = base_penalty
-                
-                self.melons.penalize(
-                    repeat_info.previous_model,
-                    "quick",  # Use quick as default task type for penalty
-                    melons=frustration_penalty,
-                )
-                
                 span.event(
                     "frustration_detected",
                     level=repeat_info.level.value,
-                    penalty=frustration_penalty,
                     previous_model=repeat_info.previous_model,
                 )
-                
+
                 log.warning(
-                    "frustration_penalty_applied",
+                    "frustration_detected",
                     level=repeat_info.level.value,
                     model=repeat_info.previous_model,
-                    penalty=frustration_penalty,
                 )
         
         # STEP 3: Auto-upgrade orchestration based on frustration level

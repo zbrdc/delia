@@ -1238,17 +1238,11 @@ You are Delia. You have personality. Use it. """
             affinity_tracker = get_affinity_tracker()
             affinity_tracker.update(backend_id, detected_task, quality=0.0)
             
-            # Penalize with melons for bad response 🍈
-            from .melons import get_melon_tracker
-            melon_tracker = get_melon_tracker()
-            melon_tracker.penalize(selected_model, detected_task, melons=2)  # Failures hurt!
-            
             log.debug(
                 "chat_affinity_updated",
                 backend=backend_id,
                 task_type=detected_task,
                 quality=0.0,
-                melons=-1,
                 success=False,
             )
             
@@ -1680,18 +1674,11 @@ async def chat_agent_stream(
         affinity_tracker = get_affinity_tracker()
         affinity_tracker.update(backend_id, detected_task, quality=1.0)
         
-        # Award melon for successful orchestrated response 🍈
-        # Only 1 melon without quality validation - melons must be EARNED!
-        from .melons import get_melon_tracker
-        melon_tracker = get_melon_tracker()
-        melon_tracker.award(selected_model, detected_task, melons=1, success=True)
-        
         log.debug(
             "chat_affinity_updated",
             backend=backend_id,
             task_type=detected_task,
             quality=1.0,
-            melons=1,
             success=True,
         )
         
@@ -1716,17 +1703,11 @@ async def chat_agent_stream(
             affinity_tracker = get_affinity_tracker()
             affinity_tracker.update(backend_id, detected_task, quality=0.0)
             
-            # Penalize with melons 🍈
-            from .melons import get_melon_tracker
-            melon_tracker = get_melon_tracker()
-            melon_tracker.penalize(selected_model, detected_task, melons=2)  # Failures hurt!
-            
             log.debug(
                 "chat_affinity_updated",
                 backend=backend_id,
                 task_type=detected_task,
                 quality=0.0,
-                melons=-1,
                 success=False,
             )
         except Exception:

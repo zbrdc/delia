@@ -216,13 +216,13 @@ class TestRealMelonEconomy:
             self.temp_file.unlink()
 
     def test_melon_accumulation(self):
-        """Test that melons accumulate correctly."""
+        """Test that melons accumulate correctly via savings."""
         model = "test-model"
 
-        # Award some melons using correct API
-        self.tracker.award(model, "coder", melons=5)
-        self.tracker.award(model, "coder", melons=3)
-        self.tracker.award(model, "quick", melons=2)
+        # Award melons via savings (1 melon = $0.001)
+        self.tracker.record_savings(model, "coder", 0.005)  # 5 melons
+        self.tracker.record_savings(model, "coder", 0.003)  # 3 melons
+        self.tracker.record_savings(model, "quick", 0.002)  # 2 melons
 
         # Get total across task types
         coder_stats = self.tracker.get_stats(model, "coder")
@@ -252,9 +252,9 @@ class TestRealMelonEconomy:
         """Test golden melon (500+) detection."""
         model = "golden-model"
 
-        # Below threshold - award 400 in chunks
+        # Below threshold - award 400 via savings (1 melon = $0.001)
         for _ in range(40):
-            self.tracker.award(model, "coder", melons=10)
+            self.tracker.record_savings(model, "coder", 0.01)  # 10 melons each
 
         stats = self.tracker.get_stats(model, "coder")
         assert stats.melons == 400, f"Should have 400 melons: got {stats.melons}"
@@ -262,7 +262,7 @@ class TestRealMelonEconomy:
 
         # Cross threshold - award 100 more
         for _ in range(10):
-            self.tracker.award(model, "coder", melons=10)
+            self.tracker.record_savings(model, "coder", 0.01)  # 10 melons each
 
         stats = self.tracker.get_stats(model, "coder")
         assert stats.golden_melons == 1, f"Should have 1 golden melon: got {stats.golden_melons}"
