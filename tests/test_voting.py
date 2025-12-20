@@ -127,7 +127,7 @@ class TestVotingConsensus:
 
     def test_similar_responses_match(self):
         """Similar responses should be grouped together."""
-        consensus = VotingConsensus(k=2, similarity_threshold=0.8)
+        consensus = VotingConsensus(k=2, similarity_threshold=0.9)
 
         consensus.add_vote("The answer is 42")
         result = consensus.add_vote("the answer is 42")  # Same but lowercase

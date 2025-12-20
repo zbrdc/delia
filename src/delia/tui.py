@@ -16,8 +16,8 @@
 """
 Text User Interface (TUI) for Delia using Rich.
 
-Provides a centralized, LIVE Dashboard interface for agent interactions.
-Includes panels for tasks, planning, tool execution, and final results.
+Provides a clean, linear streaming interface for agent interactions.
+Similar to standard CLIs (Gemini/Claude) with spinners and clear status updates.
 """
 
 from __future__ import annotations
@@ -26,18 +26,13 @@ import datetime
 from typing import Any, List
 
 try:
-    from rich.console import Console, Group
-    from rich.layout import Layout
-    from rich.live import Live
+    from rich.console import Console
     from rich.markdown import Markdown
     from rich.panel import Panel
-    from rich.syntax import Syntax
     from rich.text import Text
     from rich.theme import Theme
-    from rich.spinner import Spinner
-    from rich.table import Table
-    from rich.progress_bar import ProgressBar
-    from rich.style import Style
+    from rich.status import Status
+    from rich.padding import Padding
     
     # Custom theme for Delia
     delia_theme = Theme({
@@ -49,6 +44,7 @@ try:
         "tool": "bold magenta",
         "reflection": "italic purple",
         "dim": "dim",
+        "thought": "italic cyan",
     })
     
     console = Console(theme=delia_theme)
@@ -59,247 +55,146 @@ except ImportError:
 
 
 class RichAgentUI:
-    """Live Dashboard TUI for Delia Agent."""
+    """Linear Streaming TUI for Delia Agent."""
 
     def __init__(self):
         self.console = console
-        self._live: Live | None = None
-        
-        # State
-        self.task: str = ""
-        self.plan: str = ""
-        self.logs: List[Any] = []  # List of renderables
-        self.status: str = "Initializing..."
+        self._status: Status | None = None
         self.model: str = "Unknown"
         self.backend: str = "Unknown"
-        self.is_thinking: bool = False
-        
-        # Layout components
-        self.layout = None
 
     def is_available(self) -> bool:
-        """Check if Rich is available."""
         return RICH_AVAILABLE and self.console is not None
 
     def start(self) -> None:
-        """Start the Live Dashboard."""
-        if not self.is_available():
-            return
-            
-        self.layout = self._make_layout()
-        self._live = Live(
-            self.layout,
-            console=self.console,
-            refresh_per_second=4,
-            screen=True  # Full screen mode
-        )
-        self._live.start()
+        """Start the interaction (no-op for linear UI)."""
+        pass
 
     def stop(self) -> None:
-        """Stop the Live Dashboard."""
-        if self._live:
-            self._live.stop()
-            self._live = None
+        """Stop any active spinners."""
+        if self._status:
+            self._status.stop()
+            self._status = None
 
-    def _make_layout(self) -> Layout:
-        """Create the main layout structure."""
-        layout = Layout(name="root")
-        
-        layout.split_column(
-            Layout(name="header", size=3),
-            Layout(name="body"),
-            Layout(name="footer", size=3),
-        )
-        
-        layout["body"].split_row(
-            Layout(name="left", ratio=1),
-            Layout(name="right", ratio=2),
-        )
-        
-        self._update_layout(layout)
-        return layout
+    def _set_status(self, message: str, spinner: str = "dots") -> None:
+        """Update or create the status spinner."""
+        if not self.is_available():
+            print(f"Status: {message}")
+            return
 
-    def _update_layout(self, layout: Layout) -> None:
-        """Update layout contents from state."""
-        # Header
-        header_text = Text()
-        header_text.append(" 🍈 DELIA AGENT ", style="bold magenta reverse")
-        header_text.append(f"  Task: {self.task[:60]}...", style="bold white")
-        if len(self.task) > 60:
-            header_text.append("...", style="bold white")
-            
-        meta_table = Table.grid(padding=(0, 2))
-        meta_table.add_row(
-            Text(f"Model: {self.model}", style="cyan"),
-            Text(f"Backend: {self.backend}", style="green"),
-            Text(datetime.datetime.now().strftime("%H:%M:%S"), style="dim")
-        )
-        
-        layout["header"].update(
-            Panel(
-                meta_table,
-                title=header_text,
-                border_style="magenta",
-                padding=(0, 1)
-            )
-        )
-        
-        # Left: Plan
-        if self.plan:
-            plan_renderable = Markdown(self.plan)
+        if self._status:
+            self._status.update(message, spinner=spinner)
         else:
-            plan_renderable = Text("No plan generated yet.", style="dim italic")
-            
-        layout["left"].update(
-            Panel(
-                plan_renderable,
-                title="[bold blue]Execution Plan[/bold blue]",
-                border_style="blue",
-            )
-        )
-        
-        # Right: Activity Log
-        # Keep last 10 logs
-        visible_logs = self.logs[-10:] if self.logs else [Text("Waiting for activity...", style="dim")]
-        log_group = Group(*visible_logs)
-        
-        layout["right"].update(
-            Panel(
-                log_group,
-                title="[bold green]Activity Log[/bold green]",
-                border_style="green",
-            )
-        )
-        
-        # Footer: Status
-        status_text = Text()
-        if self.is_thinking:
-            status_text.append("🧠 ", style="bold")
-        status_text.append(self.status, style="bold white")
-        
-        layout["footer"].update(
-            Panel(
-                status_text,
-                border_style="dim",
-                padding=(0, 1)
-            )
-        )
+            self._status = self.console.status(message, spinner=spinner)
+            self._status.start()
 
-    def refresh(self) -> None:
-        """Trigger a UI refresh."""
-        if self._live and self.layout:
-            self._update_layout(self.layout)
-            self._live.refresh()
+    # --- Public API ---
 
-    # --- Public API (Updates State) ---
-
-    def print_header(self, task: str) -> None:
-        """Set the task header."""
-        self.task = task.replace("\n", " ").strip()
+    def print_header(self, task: str, subtitle: str = "") -> None:
+        """Print the task header."""
         if not self.is_available():
             print(f"\nTask: {task}\n{'='*40}")
+            return
+
+        self.console.print()
+        title = Text(" 🍈 DELIA ", style="bold magenta reverse")
+        title.append(f" {task}", style="bold white")
+        
+        if subtitle:
+            self.console.print(Panel(
+                Text(subtitle, style="dim italic", justify="center"),
+                title=title,
+                border_style="magenta",
+                padding=(0, 2)
+            ))
+        else:
+            self.console.print(Panel(
+                Text("Processing...", style="dim"),
+                title=title,
+                border_style="magenta"
+            ))
 
     def update_metadata(self, model: str, backend: str) -> None:
-        """Update model and backend info."""
+        """Update model info (displayed in footer/logs)."""
         self.model = model
         self.backend = backend
-        self.refresh()
 
     def print_planning_start(self) -> None:
-        """Indicate planning phase has started."""
-        self.status = "Generating plan..."
-        self.is_thinking = True
-        self.logs.append(Text("📝 Generating execution plan...", style="cyan"))
-        self.refresh()
-        
-        if not self.is_available():
-            print("\n[Planning] Generating plan...")
+        """Indicate planning phase."""
+        self._set_status("[bold blue]Generating execution plan...[/bold blue]", spinner="earth")
 
     def print_plan(self, plan: str) -> None:
-        """Set the approved plan."""
-        self.plan = plan
-        self.status = "Plan approved."
-        self.is_thinking = False
-        self.logs.append(Text("✅ Plan generated.", style="green"))
-        self.refresh()
-        
+        """Display the plan."""
+        self.stop()
         if not self.is_available():
-            print(f"\n[Plan]\n{plan}\n")
+            print(f"Plan: {plan}")
+            return
+            
+        self.console.print(Panel(
+            Markdown(plan),
+            title="[bold blue]Execution Plan[/bold blue]",
+            border_style="blue",
+            padding=(1, 2)
+        ))
 
     def print_tool_call(self, name: str, args: dict[str, Any]) -> None:
         """Log a tool call."""
-        self.status = f"Executing tool: {name}..."
-        self.is_thinking = False
+        self.stop() # Stop previous spinner
         
-        # Format args
+        # Format args for display
         import json
         args_str = json.dumps(args)
-        if len(args_str) > 100:
-            args_str = args_str[:100] + "..."
+        if len(args_str) > 120:
+            args_str = args_str[:117] + "..."
             
-        log_entry = Text()
-        log_entry.append("🛠️  ", style="bold magenta")
-        log_entry.append(f"{name}", style="bold magenta")
-        log_entry.append(f"({args_str})", style="dim")
-        
-        self.logs.append(log_entry)
-        self.refresh()
-        
-        if not self.is_available():
-            print(f"\n[Tool] {name}: {args}")
+        if self.is_available():
+            self.console.print(f"[bold magenta]🛠️  {name}[/bold magenta] [dim]{args_str}[/dim]")
+            self._set_status(f"Running {name}...", spinner="bouncingBall")
+        else:
+            print(f"[Tool] {name}: {args_str}")
 
     def print_tool_result(self, name: str, result: str, success: bool = True) -> None:
         """Log a tool result."""
-        status_icon = "✅" if success else "❌"
-        style = "green" if success else "red"
+        self.stop()
         
-        preview = result.replace("\n", " ")[:100]
-        if len(result) > 100:
-            preview += "..."
-            
-        log_entry = Text()
-        log_entry.append(f"  {status_icon} ", style=style)
-        log_entry.append(f" {preview}", style="dim")
-        
-        self.logs.append(log_entry)
-        self.refresh()
-        
+        # Truncate long results for display
+        preview = result.strip()
+        lines = preview.split('\n')
+        if len(lines) > 5:
+            preview = "\n".join(lines[:5]) + f"\n... ({len(lines)-5} more lines)"
+        elif len(preview) > 300:
+            preview = preview[:300] + "..."
+
         if not self.is_available():
             status = "OK" if success else "FAIL"
-            print(f"[{status}] Result: {result[:200]}...")
+            print(f"[{status}] {preview}")
+            return
+
+        if success:
+            self.console.print(Padding(Text(f"✓ {preview}", style="dim green"), (0, 2)))
+        else:
+            self.console.print(Padding(Text(f"✗ {preview}", style="red"), (0, 2)))
 
     def print_reflection_start(self) -> None:
-        """Indicate reflection started."""
-        self.status = "Reflecting on results..."
-        self.is_thinking = True
-        self.logs.append(Text("🤔 Critiquing response...", style="purple"))
-        self.refresh()
-        
-        if not self.is_available():
-            print("\n[Reflection] Critiquing response...")
+        """Indicate reflection."""
+        self._set_status("[italic purple]Reflecting on results...[/italic purple]", spinner="moon")
 
     def print_reflection_feedback(self, feedback: str) -> None:
-        """Log reflection feedback."""
-        self.logs.append(Text("⚠️  Critique: Feedback received", style="yellow"))
-        # Add feedback as a dim block
-        self.logs.append(Text(f"  > {feedback[:100]}...", style="dim yellow"))
-        self.refresh()
-        
-        if not self.is_available():
-            print(f"Feedback: {feedback}")
+        """Log critique."""
+        self.stop()
+        if self.is_available():
+            self.console.print(f"[yellow]⚠️  Critique:[/yellow] [dim yellow]{feedback}[/dim yellow]")
+        else:
+            print(f"Critique: {feedback}")
 
     def print_reflection_success(self) -> None:
-        """Log verification success."""
-        self.status = "Verified."
-        self.logs.append(Text("✨ Verified.", style="bold green"))
-        self.refresh()
-        
-        if not self.is_available():
-            print("Response Verified.")
+        """Log verification."""
+        self.stop()
+        if self.is_available():
+            self.console.print("[bold green]✨ Verified.[/bold green]")
 
     def print_final_response(self, response: str) -> None:
         """Display final response."""
-        # Stop live mode to print final result cleanly
         self.stop()
         
         if not self.is_available():
@@ -316,18 +211,10 @@ class RichAgentUI:
 
     def print_footer(self, model: str, backend: str, iterations: int, elapsed_ms: int) -> None:
         """Print final stats."""
+        self.stop()
         if not self.is_available():
-            print(f"\nStats: {model} on {backend} | {iterations} steps | {elapsed_ms}ms")
+            print(f"Stats: {model} | {iterations} steps | {elapsed_ms}ms")
             return
             
-        text = Text()
-        text.append("Model: ", style="dim")
-        text.append(f"{model} ", style="cyan")
-        text.append("| Backend: ", style="dim")
-        text.append(f"{backend} ", style="cyan")
-        text.append("| Steps: ", style="dim")
-        text.append(f"{iterations} ", style="cyan")
-        text.append("| Time: ", style="dim")
-        text.append(f"{elapsed_ms}ms", style="cyan")
-        
-        self.console.print(Panel(text, border_style="dim", expand=False))
+        stats = f"[dim]Model:[/dim] [cyan]{model}[/cyan]  [dim]Time:[/dim] [cyan]{elapsed_ms}ms[/cyan]  [dim]Steps:[/dim] [cyan]{iterations}[/cyan]"
+        self.console.print(Padding(stats, (1, 0)))

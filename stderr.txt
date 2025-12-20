@@ -1,2 +1,0 @@
-[12/14/25 17:57:20] INFO     Starting MCP server 'delia' with transport     server.py:2491
-                             'stdio'                                                      

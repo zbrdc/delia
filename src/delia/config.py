@@ -60,11 +60,11 @@ class VotingConfig:
 
     enabled: bool = True
     default_k: int = 2  # First-to-ahead-by-2 (99.99% with p=0.99)
-    max_k: int = 5  # Maximum votes before giving up
+    max_k: int = 6  # Increased to 6 for 99.99% reliability on 20+ step tasks
     auto_kmin: bool = True  # Auto-calculate k based on task complexity
     max_response_length: int = 700  # Red-flag threshold (tokens), per MDAP paper
     timeout_per_vote: float = 30.0  # Seconds per voting round
-    similarity_threshold: float = 0.85  # Semantic similarity for vote matching
+    similarity_threshold: float = 0.90  # Increased for stricter local grouping
 
 
 @dataclass
@@ -102,39 +102,39 @@ class Config:
 
     # ============================================================
     # MODEL CONFIGURATION
-    # Validated: 40K tokens @ 4 chars/token @ 75% util = 117KB theoretical
-    # We use 50KB practical limit for quality output headroom
+    # Tier definitions only. Values set to -1 (auto) where possible.
+    # Overrides can be set via env vars: DELIA_MODEL_{TIER}_VRAM
     # ============================================================
     model_quick: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="quick",
-            default_model="qwen3:14b",
-            vram_gb=9.0,
-            context_tokens=40_000,
-            num_ctx=8192,  # 8192 * 4 / 1024 = 32KB request context
-            max_input_kb=50,  # 50KB ≈ 12,500 tokens, leaves room for output
+            default_model="auto",
+            vram_gb=float(os.getenv("DELIA_MODEL_QUICK_VRAM", "-1")), # -1 = Auto/Unknown
+            context_tokens=-1,
+            num_ctx=-1,
+            max_input_kb=int(os.getenv("DELIA_MODEL_QUICK_INPUT_KB", "50")),
         )
     )
 
     model_coder: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="coder",
-            default_model="qwen2.5-coder:14b",
-            vram_gb=9.0,
-            context_tokens=128_000,
-            num_ctx=16384,  # 16384 * 4 / 1024 = 64KB request context
-            max_input_kb=100,  # 100KB ≈ 25,000 tokens
+            default_model="auto",
+            vram_gb=float(os.getenv("DELIA_MODEL_CODER_VRAM", "-1")),
+            context_tokens=-1,
+            num_ctx=-1,
+            max_input_kb=int(os.getenv("DELIA_MODEL_CODER_INPUT_KB", "100")),
         )
     )
 
     model_moe: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="moe",
-            default_model="qwen3:30b-a3b",
-            vram_gb=17.0,
-            context_tokens=128_000,
-            num_ctx=16384,
-            max_input_kb=100,
+            default_model="auto",
+            vram_gb=float(os.getenv("DELIA_MODEL_MOE_VRAM", "-1")),
+            context_tokens=-1,
+            num_ctx=-1,
+            max_input_kb=int(os.getenv("DELIA_MODEL_MOE_INPUT_KB", "100")),
         )
     )
 
@@ -142,11 +142,23 @@ class Config:
     model_dispatcher: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="dispatcher",
-            default_model="functiongemma:270m",
-            vram_gb=0.5, # Tiny, can run on CPU
-            context_tokens=8192,
-            num_ctx=4096,
+            default_model="auto",
+            vram_gb=float(os.getenv("DELIA_MODEL_DISPATCHER_VRAM", "0.5")), # Keep small default
+            context_tokens=-1,
+            num_ctx=-1,
             max_input_kb=16,
+        )
+    )
+
+    # Dedicated critic model (QA) for verification
+    model_critic: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            name="critic",
+            default_model="auto",
+            vram_gb=float(os.getenv("DELIA_MODEL_CRITIC_VRAM", "-1")),
+            context_tokens=-1,
+            num_ctx=-1,
+            max_input_kb=32,
         )
     )
 
@@ -154,10 +166,10 @@ class Config:
     model_thinking: ModelConfig = field(
         default_factory=lambda: ModelConfig(
             name="thinking",
-            default_model=os.getenv("THINKING_MODEL", "nemotron:30b-nano"),
-            vram_gb=17.0,
-            context_tokens=128_000,
-            num_ctx=16384,
+            default_model="auto",
+            vram_gb=float(os.getenv("DELIA_MODEL_THINKING_VRAM", "-1")),
+            context_tokens=-1,
+            num_ctx=-1,
             max_input_kb=100,
         )
     )
@@ -168,10 +180,14 @@ class Config:
     # ============================================================
 
     # Content size threshold for upgrading to coder/moe (bytes)
-    large_content_threshold: int = 50_000  # 50KB → 12,500 tokens
+    large_content_threshold: int = field(
+        default_factory=lambda: int(os.getenv("DELIA_THRESHOLD_LARGE", "50000"))
+    )
 
     # Medium content threshold (used when quick is loaded to avoid unnecessary upgrade)
-    medium_content_threshold: int = 30_000  # 30KB → 7,500 tokens
+    medium_content_threshold: int = field(
+        default_factory=lambda: int(os.getenv("DELIA_THRESHOLD_MEDIUM", "30000"))
+    )
 
     # Tasks that require MoE model (complex multi-step reasoning)
     moe_tasks: frozenset[str] = field(default_factory=lambda: frozenset({"plan", "critique"}))
@@ -187,10 +203,14 @@ class Config:
     # ============================================================
 
     # Temperature for normal generation (lower = more deterministic)
-    temperature_normal: float = 0.3
+    temperature_normal: float = field(
+        default_factory=lambda: float(os.getenv("DELIA_TEMP_NORMAL", "0.3"))
+    )
 
     # Temperature when thinking mode is enabled
-    temperature_thinking: float = 0.6
+    temperature_thinking: float = field(
+        default_factory=lambda: float(os.getenv("DELIA_TEMP_THINKING", "0.6"))
+    )
 
     # ============================================================
     # COST ESTIMATION
@@ -758,7 +778,7 @@ class AffinityTracker:
             raise ValueError("Either 'success' or 'quality' must be provided")
 
         key = (backend_id, task_type)
-        old = self._scores.get(key, 0.5)  # Start neutral
+        old = self.get_affinity(backend_id, task_type)
         self._scores[key] = old * (1 - self.alpha) + q * self.alpha
 
     def get_affinity(self, backend_id: str, task_type: str) -> float:
@@ -835,6 +855,10 @@ class AffinityTracker:
             "alpha": self.alpha,
             "scores": {f"{k[0]}:{k[1]}": v for k, v in self._scores.items()},
         }
+
+    def reset(self) -> None:
+        """Clear all learned affinity scores."""
+        self._scores.clear()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AffinityTracker":
@@ -983,6 +1007,10 @@ class PrewarmTracker:
             "threshold": self.threshold,
             "scores": {f"{k[0]}:{k[1]}": v for k, v in self._scores.items()},
         }
+
+    def reset(self) -> None:
+        """Clear all learned usage patterns."""
+        self._scores.clear()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PrewarmTracker":
@@ -1233,6 +1261,9 @@ def _detect_model_tier_cached(model_name: str) -> str:
 
     This is the core logic - separated to enable caching.
     """
+    if not isinstance(model_name, str):
+        return "quick"
+
     info = parse_model_name(model_name)
 
     # MoE models get moe tier (complex reasoning capability)
@@ -1255,7 +1286,7 @@ def _detect_model_tier_cached(model_name: str) -> str:
     return "quick"
 
 
-def detect_model_tier(model_name: str, known_models: dict[str, str] | None = None) -> str:
+def detect_model_tier(model_name: str | list[str], known_models: dict[str, str | list[str]] | None = None) -> str:
     """
     Detect which tier a model belongs to based on parsed characteristics.
 
@@ -1268,14 +1299,43 @@ def detect_model_tier(model_name: str, known_models: dict[str, str] | None = Non
 
     Returns 'quick', 'coder', or 'moe'.
     """
+    # Handle list input (pick first)
+    if isinstance(model_name, list):
+        if not model_name:
+            return "quick"
+        model_name = model_name[0]
+
+    if not isinstance(model_name, str):
+        return "quick"
+
     # Priority 1: Exact match against configured models (not cached - dict not hashable)
     if known_models:
         model_lower = model_name.lower()
         for tier, tier_model in known_models.items():
-            tier_normalized = tier_model.lower().replace(":latest", "")
-            model_normalized = model_lower.replace(":latest", "")
-            if tier_normalized == model_normalized or tier_normalized in model_normalized:
-                return tier
+            # Handle list of models for a tier
+            if isinstance(tier_model, list):
+                for m in tier_model:
+                    if isinstance(m, str):
+                        m_normalized = m.lower().replace(":latest", "")
+                        model_normalized = model_lower.replace(":latest", "")
+                        if m_normalized == model_normalized or m_normalized in model_normalized:
+                            return tier
+            elif isinstance(tier_model, str):
+                tier_normalized = tier_model.lower().replace(":latest", "")
+                model_normalized = model_lower.replace(":latest", "")
+                if tier_normalized == model_normalized or tier_normalized in model_normalized:
+                    return tier
 
     # Priority 2: Use cached tier detection based on model parsing
     return _detect_model_tier_cached(model_name)
+
+
+def reset_affinity() -> None:
+    """Reset the global affinity tracker."""
+    get_affinity_tracker().reset()
+
+
+def reset_prewarm() -> None:
+    """Reset the global prewarm tracker."""
+    get_prewarm_tracker().reset()
+

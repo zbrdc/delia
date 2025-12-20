@@ -108,6 +108,7 @@ class TrainingConfig:
     save_steps: int = 100
     eval_steps: int = 100
     logging_steps: int = 10
+    report_to: str = "none"  # "wandb", "tensorboard", "all", or "none"
     
     def __post_init__(self):
         if self.lora_target_modules is None:
@@ -298,6 +299,7 @@ def main():
     parser.add_argument("--output_dir", default=str(OUTPUT_DIR), help="Output directory")
     parser.add_argument("--resume_from", help="Resume from checkpoint")
     parser.add_argument("--no_4bit", action="store_true", help="Disable 4-bit quantization")
+    parser.add_argument("--report_to", default="none", choices=["wandb", "tensorboard", "all", "none"], help="Experiment tracking service")
     args = parser.parse_args()
     
     # Create configuration
@@ -310,6 +312,7 @@ def main():
         lora_r=args.lora_r,
         output_dir=args.output_dir,
         use_4bit=not args.no_4bit,
+        report_to=args.report_to,
     )
     
     print("=" * 60)
@@ -325,6 +328,7 @@ def main():
     print(f"  Max seq length: {config.max_seq_length}")
     print(f"  4-bit quantization: {config.use_4bit}")
     print(f"  Output: {config.output_dir}")
+    print(f"  Report to: {config.report_to}")
     
     # Check for training data
     if not TRAIN_FILE.exists():
@@ -402,7 +406,7 @@ def main():
         bf16=torch.cuda.is_bf16_supported(),
         fp16=not torch.cuda.is_bf16_supported(),
         optim="adamw_8bit" if UNSLOTH_AVAILABLE else "adamw_torch",
-        report_to="none",  # Disable wandb/tensorboard
+        report_to=config.report_to,
         remove_unused_columns=False,
     )
     

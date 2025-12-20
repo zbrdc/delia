@@ -29,6 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 # Paths
 TOOLS_SCHEMA_PATH = SCRIPT_DIR / "tools.openai.json"
+SYNTHETIC_DATA_PATH = SCRIPT_DIR / "synthetic_examples.json"
 TESTS_DIR = PROJECT_ROOT / "tests"
 DATA_DIR = PROJECT_ROOT / "data"
 TRAIN_OUTPUT = DATA_DIR / "train.jsonl"
@@ -279,158 +280,17 @@ def generate_synthetic_examples(tools: list[dict], tool_map: dict[str, dict]) ->
     """Generate synthetic training examples for each tool."""
     examples = []
     
-    # Synthetic examples with varied prompts
-    synthetic_data = [
-        # delegate tool
-        {
-            "user": "Review this Python code for bugs:\n```python\ndef add(a, b):\n    return a + b\n```",
-            "tool": "delegate",
-            "args": {"task": "review", "content": "def add(a, b):\n    return a + b", "language": "python"},
-        },
-        {
-            "user": "Generate a function to calculate fibonacci numbers",
-            "tool": "delegate",
-            "args": {"task": "generate", "content": "Write a function to calculate fibonacci numbers", "language": "python"},
-        },
-        {
-            "user": "Analyze this code and explain what it does:\n```python\nmap(lambda x: x**2, range(10))\n```",
-            "tool": "delegate",
-            "args": {"task": "analyze", "content": "map(lambda x: x**2, range(10))"},
-        },
-        {
-            "user": "Summarize this document briefly",
-            "tool": "delegate",
-            "args": {"task": "summarize", "content": "This is a long document about machine learning..."},
-        },
-        {
-            "user": "Plan the architecture for a REST API",
-            "tool": "delegate",
-            "args": {"task": "plan", "content": "Design a REST API for a user management system"},
-        },
+    # Load synthetic data from external JSON
+    if not SYNTHETIC_DATA_PATH.exists():
+        print(f"  Warning: Synthetic data file not found at {SYNTHETIC_DATA_PATH}")
+        return []
         
-        # think tool
-        {
-            "user": "I need to think through how to implement caching in our system",
-            "tool": "think",
-            "args": {"problem": "How should we implement caching?", "depth": "deep"},
-        },
-        {
-            "user": "Quick question: what's the best sort algorithm for small arrays?",
-            "tool": "think",
-            "args": {"problem": "Best sort algorithm for small arrays?", "depth": "quick"},
-        },
-        
-        # batch tool
-        {
-            "user": "Review all three config files: app.json, db.json, and auth.json",
-            "tool": "batch",
-            "args": {"tasks": '[{"task": "review", "content": "app.json"}, {"task": "review", "content": "db.json"}, {"task": "review", "content": "auth.json"}]'},
-        },
-        
-        # read_file tool
-        {
-            "user": "Show me the contents of config.py",
-            "tool": "read_file",
-            "args": {"path": "config.py"},
-        },
-        {
-            "user": "Read lines 10-50 from main.py",
-            "tool": "read_file",
-            "args": {"path": "main.py", "start_line": 10, "end_line": 50},
-        },
-        
-        # list_directory tool
-        {
-            "user": "What files are in the src folder?",
-            "tool": "list_directory",
-            "args": {"path": "src"},
-        },
-        {
-            "user": "List all Python files in the project",
-            "tool": "list_directory",
-            "args": {"path": ".", "recursive": True, "pattern": "*.py"},
-        },
-        
-        # search_code tool
-        {
-            "user": "Find all usages of 'async def' in Python files",
-            "tool": "search_code",
-            "args": {"pattern": "async def", "file_pattern": "*.py"},
-        },
-        {
-            "user": "Search for TODO comments",
-            "tool": "search_code",
-            "args": {"pattern": "TODO", "context_lines": 3},
-        },
-        
-        # web_search tool
-        {
-            "user": "Search for Python asyncio best practices",
-            "tool": "web_search",
-            "args": {"query": "Python asyncio best practices", "max_results": 5},
-        },
-        
-        # web_fetch tool
-        {
-            "user": "Fetch the Python documentation page",
-            "tool": "web_fetch",
-            "args": {"url": "https://docs.python.org/3/", "extract_text": True},
-        },
-        
-        # health tool
-        {
-            "user": "Check if all backends are healthy",
-            "tool": "health",
-            "args": {},
-        },
-        {
-            "user": "What's the status of the LLM backends?",
-            "tool": "health",
-            "args": {},
-        },
-        
-        # models tool
-        {
-            "user": "What models are available?",
-            "tool": "models",
-            "args": {},
-        },
-        {
-            "user": "List configured models",
-            "tool": "models",
-            "args": {},
-        },
-        
-        # agent tool
-        {
-            "user": "Use the agent to explore the codebase and find all error handling patterns",
-            "tool": "agent",
-            "args": {"prompt": "Explore this codebase and identify error handling patterns", "max_iterations": 5},
-        },
-        
-        # switch_backend tool
-        {
-            "user": "Switch to the local backend",
-            "tool": "switch_backend",
-            "args": {"backend_id": "local"},
-        },
-        
-        # switch_model tool
-        {
-            "user": "Change the coder model to qwen2.5:14b",
-            "tool": "switch_model",
-            "args": {"tier": "coder", "model_name": "qwen2.5:14b"},
-        },
-        
-        # chain tool
-        {
-            "user": "Generate code, then review it, then generate tests",
-            "tool": "chain",
-            "args": {"steps": '[{"id": "gen", "task": "generate", "content": "Write hello world"}, {"id": "review", "task": "review", "content": "${gen}"}]'},
-        },
-        
-        # Multi-turn examples (assistant makes tool call, gets result, responds)
-    ]
+    try:
+        with open(SYNTHETIC_DATA_PATH) as f:
+            synthetic_data = json.load(f)
+    except Exception as e:
+        print(f"  Error loading synthetic data: {e}")
+        return []
     
     for item in synthetic_data:
         tool_name = item["tool"]

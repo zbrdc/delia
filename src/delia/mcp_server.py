@@ -29,6 +29,7 @@ import asyncio
 import contextvars
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -94,6 +95,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # Import unified backend manager (single source of truth from settings.json)
 from .backend_manager import BackendConfig, backend_manager
+from .routing import get_router
 
 # Import configuration (all tunable values in config.py)
 from .config import (
@@ -124,9 +126,6 @@ from .messages import (
     get_status_message,
     get_tier_message,
 )
-
-# Import prompt templating system
-from .prompt_templates import create_structured_prompt
 
 # Import validation functions
 from .validation import (
@@ -186,6 +185,9 @@ from .language import (
 from .file_helpers import MEMORY_DIR, read_file_safe
 from .text_utils import strip_thinking_tags
 from .types import Workspace
+
+# Import orchestration service
+from .orchestration.service import get_orchestration_service
 
 # Import delegation helpers
 from .delegation import (
@@ -441,12 +443,15 @@ def _configure_structlog(use_stderr: bool = False):
         use_stderr: If True, suppress stdout output (required for STDIO transport)
                    to keep stdout pure for JSON-RPC messages.
     """
+    # Check for debug mode via environment variable
+    is_debug = os.environ.get("DELIA_DEBUG", "").lower() in ("true", "1", "yes")
+    log_level = logging.DEBUG if is_debug else logging.INFO
 
     # Clear any cached loggers before reconfiguring
     structlog.reset_defaults()
 
     # For STDIO mode, suppress all console logging to keep stdout pure for JSON-RPC
-    if use_stderr:
+    if use_stderr and not is_debug:
         # In STDIO mode: no console output at all
         # Only keep dashboard processor to capture logs for other systems
         processors_silent: list[Processor] = cast(
@@ -479,13 +484,14 @@ def _configure_structlog(use_stderr: bool = False):
 
         structlog.configure(
             processors=processors_silent,
-            wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+            wrapper_class=structlog.make_filtering_bound_logger(log_level),
             context_class=dict,
             logger_factory=SilentLoggerFactory(),
             cache_logger_on_first_use=False,
         )
     else:
-        # For non-STDIO modes, use normal console logging with colors
+        # For non-STDIO modes (or if debug is forced), use normal console logging
+        # When use_stderr=True (STDIO transport), we MUST output to stderr!
         processors_console: list[Processor] = cast(
             list[Processor],
             [
@@ -496,15 +502,19 @@ def _configure_structlog(use_stderr: bool = False):
                 structlog.processors.StackInfoRenderer(),
                 structlog.processors.format_exc_info,
                 _dashboard_processor,  # Capture dashboard logs
-                structlog.dev.ConsoleRenderer(colors=True),  # ← Only in non-STDIO mode
+                structlog.dev.ConsoleRenderer(colors=True),  # Normal console colors
             ],
         )
 
+        # Determine which stream to print to
+        import sys
+        target_file = sys.stderr if use_stderr else sys.stdout
+
         structlog.configure(
             processors=processors_console,
-            wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+            wrapper_class=structlog.make_filtering_bound_logger(log_level),
             context_class=dict,
-            logger_factory=structlog.PrintLoggerFactory(),
+            logger_factory=structlog.PrintLoggerFactory(file=target_file),
             cache_logger_on_first_use=True,
         )
 
@@ -1021,25 +1031,35 @@ async def _delegate_impl(
     max_tokens: int | None = None,
     session_id: str | None = None,
 ) -> str:
-    """Core implementation for delegate - wrapper that uses delegation module."""
-    ctx = _get_delegate_context()
-    return await delegate_impl(
-        ctx,
-        task,
-        content,
-        file,
-        model,
-        language,
-        context,
-        symbols,
-        include_references,
-        backend,
-        backend_obj,
-        files,
-        include_metadata,
-        max_tokens,
+    """Core implementation for delegate using the Unified Orchestration Service."""
+    service = get_orchestration_service()
+    
+    # Process through unified pipeline
+    result = await service.process(
+        message=content,
         session_id=session_id,
+        backend_type=backend, # Map backend ID/type
+        model_override=model,
+        files=files or file,
+        context=context,
+        symbols=symbols,
+        include_references=include_references,
     )
+
+    if not result.result.success:
+        return f"Error: {result.result.error}"
+
+    response = result.result.response
+
+    # Add metadata footer if requested
+    if include_metadata:
+        elapsed = result.result.elapsed_ms
+        model_used = result.result.model_used
+        tokens = result.result.tokens
+        
+        response += f"\n\n---\n_Model: {model_used} | Tokens: {tokens} | Time: {elapsed}ms | Quality: {result.quality_score:.2f} 🍈_"
+
+    return response
 
 
 @mcp.tool()
@@ -1131,8 +1151,8 @@ async def delegate(
         )
         return json_mod.dumps(signals, indent=2)
 
-    # Smart backend selection using backend_manager
-    backend_provider, backend_obj = await _select_optimal_backend_v2(content, file, task, backend_type)
+    # Smart backend selection using ModelRouter
+    _, backend_obj = await get_router().select_optimal_backend(content, file, task, backend_type)
 
     # Streaming mode: use streaming API internally (better for long responses)
     if stream and backend_obj:
@@ -1146,19 +1166,39 @@ async def delegate(
         # Map task to internal type
         task_type = determine_task_type(task)
 
-        # Create enhanced, structured prompt with templates
-        prepared_content = create_structured_prompt(
-            task_type=task_type,
-            content=prepared_content,
-            file_path=file,
-            language=language,
-            symbols=symbols.split(",") if symbols else None,
-            context_files=context.split(",") if context else None,
-        )
+        # Build context header manually (replaces create_structured_prompt templates)
+        context_header = f"Task: {task_type}\n"
+        if file:
+            context_header += f"File: {file}\n"
+        if language:
+            context_header += f"Language: {language}\n"
+        if symbols:
+            context_header += f"Symbols: {symbols}\n"
+        if context:
+            context_header += f"Context Files: {context}\n"
+        
+        prepared_content = f"{context_header}\n{prepared_content}"
 
         # Detect language and get system prompt
         detected_language = language or detect_language(prepared_content, file or "")
-        system = get_system_prompt(detected_language, task_type)
+        
+        # Use new system prompts
+        from .prompts import build_system_prompt, ModelRole
+        
+        # Determine role
+        role_map = {
+            "review": ModelRole.CODE_REVIEWER,
+            "generate": ModelRole.CODE_GENERATOR,
+            "analyze": ModelRole.ANALYST,
+            "summarize": ModelRole.SUMMARIZER,
+            "plan": ModelRole.ARCHITECT,
+            "critique": ModelRole.ANALYST,
+        }
+        role = role_map.get(task_type, ModelRole.ASSISTANT)
+        system = build_system_prompt(role=role)
+        
+        if detected_language:
+            system += f"\n\nPrimary language: {detected_language}"
 
         # Select model (use implementation directly with ctx)
         selected_model, tier, _source = await _select_delegate_model_impl(
@@ -1214,7 +1254,7 @@ _[OK] {task} (streamed) | {tier} tier | {elapsed_ms}ms | {selected_model}_"""
         context,
         symbols,
         include_references,
-        backend=backend_provider,
+        backend=backend_type,
         backend_obj=backend_obj,
         files=files,
         include_metadata=include_metadata,
@@ -1297,129 +1337,27 @@ async def think(
 
 Think deeply before answering."""
 
-    # Route to best backend (prefer large context for deep thinking)
-    backend_provider, backend_obj = await _select_optimal_backend_v2(thinking_prompt, None, task_type)
-
-    result = await _delegate_impl(
-        task=task_type,
-        content=thinking_prompt,
-        file=None,
-        model=model_hint,
-        language=None,
-        context=None,
-        symbols=None,
-        include_references=False,
-        backend=backend_provider,
-        backend_obj=backend_obj,
+    # Execute thinking via Unified Orchestration Service
+    service = get_orchestration_service()
+    
+    # Map depth to orchestration intent override if possible
+    # For now, we'll just process it as a high-stakes request
+    result = await service.process(
+        message=thinking_prompt,
         session_id=session_id,
+        model_override=model_hint,
     )
 
     # Track think() separately (in addition to underlying task type)
     stats_service.increment_task("think")
     await save_all_stats_async()
 
-    return result
+    return result.result.response
 
 
 # ============================================================
 # MULTI-BACKEND INTELLIGENT ROUTING
 # ============================================================
-
-
-async def _select_optimal_backend_v2(
-    content: str,
-    file_path: str | None = None,
-    task_type: str = "quick",
-    backend_type: str | None = None,
-) -> tuple[str | None, Any | None]:
-    """
-    Select optimal backend using performance-based scoring.
-
-    Uses BackendScorer to select the best backend based on:
-    - Latency (lower is better)
-    - Throughput (higher is better)
-    - Reliability (success rate)
-    - Availability (circuit breaker status)
-
-    Args:
-        content: The content to process (for future content-based routing)
-        file_path: Optional file path for context
-        task_type: Type of task being performed
-        backend_type: Optional backend type constraint ("local" or "remote")
-
-    Returns:
-        Tuple of (None, backend_obj) where backend_obj is the selected backend
-    """
-    enabled_backends = backend_manager.get_enabled_backends()
-
-    if not enabled_backends:
-        return (None, None)
-
-    # Use BackendScorer for intelligent selection with configured weights
-    weights = backend_manager.get_scoring_weights()
-    scorer = BackendScorer(weights=weights)
-
-    # Use weighted random selection if load balancing is enabled
-    load_balance = backend_manager.routing_config.get("load_balance", False)
-    if load_balance:
-        selected = scorer.select_weighted(
-            enabled_backends, backend_type=backend_type, task_type=task_type
-        )
-    else:
-        selected = scorer.select_best(
-            enabled_backends, backend_type=backend_type, task_type=task_type
-        )
-
-    if selected:
-        log.debug(
-            "selected_backend_by_score",
-            backend_id=selected.id,
-            backend_type=selected.type,
-            requested_type=backend_type,
-            load_balanced=load_balance,
-        )
-        return (None, selected)
-
-    # Fallback to active backend if no matching type found
-    active_backend = backend_manager.get_active_backend()
-    if active_backend:
-        log.debug(
-            "fallback_to_active_backend",
-            backend_id=active_backend.id,
-            requested_type=backend_type,
-        )
-    return (None, active_backend)
-
-
-def _assign_backends_to_tasks(task_list: list[dict], available: dict[str, bool]) -> list[str]:
-    """
-    Assign backends to tasks using round-robin load balancing across enabled backends.
-
-    Args:
-        task_list: List of tasks to assign
-        available: Dict of backend_id -> bool availability
-
-    Returns:
-        List of backend IDs matching task_list order
-    """
-    # Get enabled backends that are available
-    enabled_backends = backend_manager.get_enabled_backends()
-    candidate_backends = [b.id for b in enabled_backends if available.get(b.id, False)]
-
-    if not candidate_backends:
-        # Fallback to active backend even if status unknown, or just return empty/error
-        active = backend_manager.get_active_backend()
-        return [active.id] * len(task_list) if active else ["none"] * len(task_list)
-
-    assignments = []
-    backend_count = len(candidate_backends)
-
-    for i, _ in enumerate(task_list):
-        # Round-robin assignment
-        backend_id = candidate_backends[i % backend_count]
-        assignments.append(backend_id)
-
-    return assignments
 
 
 @mcp.tool()
@@ -1485,7 +1423,7 @@ async def batch(
 
     # Check which backends are available
     available = await backend_manager.check_all_health()
-    backend_assignments = _assign_backends_to_tasks(task_list, available)
+    backend_assignments = get_router().assign_backends_to_tasks(task_list, available, backend_manager)
 
     # Log routing decisions
     routing_counts: dict[str, int] = {}
@@ -1945,26 +1883,17 @@ async def chain(
             "steps_total": 0,
         }, indent=2)
     
-    # Get delegate context
-    ctx = _get_delegate_context()
-    
-    # Execute chain
+    # Execute chain via Unified Orchestration Service
+    service = get_orchestration_service()
     try:
-        result = await execute_chain(
-            steps=parsed_steps,
-            ctx=ctx,
+        result = await service.process_chain(
+            steps_json=steps,
             session_id=session_id,
-            continue_on_error=continue_on_error,
         )
-        return json.dumps(result.to_dict(), indent=2)
+        return result.result.response
     except Exception as e:
         log.error("chain_execution_failed", error=str(e))
-        return json.dumps({
-            "success": False,
-            "error": str(e),
-            "steps_completed": 0,
-            "steps_total": len(parsed_steps),
-        }, indent=2)
+        return f"Error: Chain execution failed - {e}"
 
 
 @mcp.tool()
@@ -2050,41 +1979,17 @@ async def workflow(
             ]
         }')
     """
-    import json
-    
-    # Parse workflow definition
+    # Execute workflow via Unified Orchestration Service
+    service = get_orchestration_service()
     try:
-        parsed_def = parse_workflow_definition(definition)
-    except ValueError as e:
-        return json.dumps({
-            "success": False,
-            "error": str(e),
-            "nodes_completed": [],
-            "nodes_failed": [],
-            "nodes_skipped": [],
-        }, indent=2)
-    
-    # Get delegate context
-    ctx = _get_delegate_context()
-    
-    # Execute workflow
-    try:
-        result = await execute_workflow(
-            definition=parsed_def,
-            ctx=ctx,
+        result = await service.process_workflow(
+            workflow_json=definition,
             session_id=session_id,
-            max_retries=max_retries,
         )
-        return json.dumps(result.to_dict(), indent=2)
+        return result.result.response
     except Exception as e:
         log.error("workflow_execution_failed", error=str(e))
-        return json.dumps({
-            "success": False,
-            "error": str(e),
-            "nodes_completed": [],
-            "nodes_failed": [],
-            "nodes_skipped": [n.id for n in parsed_def.nodes],
-        }, indent=2)
+        return f"Error: Workflow execution failed - {e}"
 
 
 @mcp.tool()
@@ -2150,7 +2055,7 @@ async def agent(
     start_time = time.time()
 
     # Select backend
-    backend_provider, backend_obj = await _select_optimal_backend_v2(
+    _, backend_obj = await get_router().select_optimal_backend(
         prompt, None, "analyze", backend_type
     )
 

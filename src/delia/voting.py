@@ -13,6 +13,7 @@ Formula verified with Wolfram Alpha.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import math
 import re
@@ -62,7 +63,7 @@ class VotingConsensus:
         self,
         k: int,
         quality_validator: ResponseQualityValidator | None = None,
-        similarity_threshold: float = 0.85,
+        similarity_threshold: float = 0.9,
         max_response_length: int = 700,
     ):
         """
@@ -184,7 +185,7 @@ class VotingConsensus:
     def calculate_kmin(
         total_steps: int,
         target_accuracy: float = 0.9999,
-        base_accuracy: float = 0.99,
+        base_accuracy: float | None = None,
     ) -> int:
         """
         Calculate minimum k for target overall accuracy.
@@ -194,7 +195,8 @@ class VotingConsensus:
         Args:
             total_steps: Number of steps in the task
             target_accuracy: Target overall accuracy (e.g., 0.9999)
-            base_accuracy: Per-step model accuracy (e.g., 0.99)
+            base_accuracy: Per-step model accuracy (0.0-1.0). 
+                           If None, defaults to 0.99.
 
         Returns:
             Minimum k value needed (clamped to [2, 5])
@@ -202,7 +204,8 @@ class VotingConsensus:
         if total_steps <= 0:
             return 2
 
-        p = base_accuracy
+        # Use provided accuracy or optimistic default
+        p = base_accuracy if base_accuracy is not None else 0.99
 
         # For each step, need per-step accuracy >= target^(1/s)
         # P(correct|k) = 1 / (1 + ((1-p)/p)^k) >= step_target
@@ -213,8 +216,10 @@ class VotingConsensus:
         # Avoid division by zero or invalid log arguments
         if step_target >= 1.0:
             return 2  # Already at target
-        if p >= 1.0 or p <= 0.5:
-            return 5  # Max k for edge cases
+        
+        # If model is no better than random guessing, use max redundancy
+        if p <= 0.5:
+            return 5
 
         try:
             ratio = (1 - step_target) / step_target
@@ -225,7 +230,7 @@ class VotingConsensus:
         except (ValueError, ZeroDivisionError):
             k = 2
 
-        # Clamp to reasonable range
+        # Clamp to reasonable range (MDAP paper suggests k=3-5 for high stakes)
         return max(2, min(k, 5))
 
     @staticmethod
@@ -254,10 +259,12 @@ class VotingConsensus:
         """Normalize text for comparison."""
         # Lowercase
         text = text.lower()
-        # Remove extra whitespace
-        text = re.sub(r"\s+", " ", text).strip()
-        # Remove common markdown/formatting
+        # Remove markdown formatting
         text = re.sub(r"[*_`#\[\]()]", "", text)
+        # Remove punctuation for semantic grouping
+        text = re.sub(r"[.,!?;:]", " ", text)
+        # Normalize whitespace
+        text = re.sub(r"\s+", " ", text).strip()
         return text
 
     def _semantic_hash(self, normalized_text: str) -> str:
@@ -288,24 +295,16 @@ class VotingConsensus:
 
     def _text_similarity(self, text1: str, text2: str) -> float:
         """
-        Calculate simple text similarity using word overlap.
+        Calculate text similarity using difflib.SequenceMatcher.
 
         Returns:
-            Similarity score 0.0-1.0 (Jaccard similarity)
+            Similarity score 0.0-1.0 (Gestalt Pattern Matching)
         """
         if not text1 or not text2:
             return 0.0
 
-        words1 = set(text1.split())
-        words2 = set(text2.split())
-
-        if not words1 or not words2:
-            return 0.0
-
-        intersection = len(words1 & words2)
-        union = len(words1 | words2)
-
-        return intersection / union if union > 0 else 0.0
+        # difflib is much better than Jaccard for sentence structure
+        return difflib.SequenceMatcher(None, text1, text2).ratio()
 
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count (rough: ~4 chars per token)."""

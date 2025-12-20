@@ -30,10 +30,14 @@ EXCLUDED_PATTERNS = [
     "dummy",
     "template",
     "example",
+    "embed",
+    "bert",
+    "clip",
 ]
 
 # Keywords for tier classification
 TIER_KEYWORDS = {
+    "dispatcher": ["functiongemma"],
     "thinking": ["think", "reason", "r1", "o1", "deepseek-r"],
     "coder": ["code", "coder", "codestral", "starcoder", "qwen2.5-coder"],
     "moe": ["30b", "32b", "70b", "72b", "moe", "mixtral", "qwen3:30"],
@@ -69,7 +73,7 @@ def classify_model(model_name: str) -> str:
         model_name: Name of the model
 
     Returns:
-        Tier name: "thinking", "coder", "moe", or "quick"
+        Tier name: "thinking", "coder", "moe", "quick", or "dispatcher"
     """
     model_lower = model_name.lower()
 
@@ -107,6 +111,7 @@ def assign_models_to_tiers(models: list[str]) -> dict[str, list[str]]:
             "coder": [model],
             "moe": [model],
             "thinking": [model],
+            "dispatcher": [model],
         }
 
     # Multiple models - classify each and assign to tiers
@@ -115,6 +120,7 @@ def assign_models_to_tiers(models: list[str]) -> dict[str, list[str]]:
         "coder": [],
         "moe": [],
         "thinking": [],
+        "dispatcher": [],
     }
 
     # First pass: assign based on keywords

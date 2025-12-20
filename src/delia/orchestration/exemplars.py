@@ -118,6 +118,16 @@ AGENTIC_EXEMPLARS = [
     IntentExemplar("search for TODO comments", OrchestrationMode.AGENTIC),
     IntentExemplar("grep for error handling", OrchestrationMode.AGENTIC),
 
+    # LSP (Code Intelligence)
+    IntentExemplar("find the definition of this function", OrchestrationMode.AGENTIC),
+    IntentExemplar("go to definition of get_config", OrchestrationMode.AGENTIC),
+    IntentExemplar("where is this class defined", OrchestrationMode.AGENTIC),
+    IntentExemplar("find all references to this variable", OrchestrationMode.AGENTIC),
+    IntentExemplar("show me usages of this method", OrchestrationMode.AGENTIC),
+    IntentExemplar("what is the type of this object", OrchestrationMode.AGENTIC),
+    IntentExemplar("show documentation for this symbol", OrchestrationMode.AGENTIC),
+    IntentExemplar("lsp hover on this line", OrchestrationMode.AGENTIC),
+
     # Web search
     IntentExemplar("search the web for python best practices", OrchestrationMode.AGENTIC),
     IntentExemplar("look up the latest React documentation", OrchestrationMode.AGENTIC),

@@ -101,7 +101,7 @@ def validate_path(
     except Exception as e:
         return False, f"Invalid path: {e}"
 
-    path_str = str(expanded)
+    path_str = str(expanded).lower()
 
     # Check for path traversal (unless workspace allows it)
     if ".." in path:
@@ -110,11 +110,23 @@ def validate_path(
         elif not workspace:
             return False, "Path traversal not allowed"
 
+    # CRITICAL SECURITY: Block sensitive directory patterns
+    sensitive_patterns = [
+        "/.ssh", "/.aws", "/.config/gcloud", "/etc/passwd", "/etc/shadow",
+        "/.bash_history", "/.zsh_history", "/.env"
+    ]
+    for pattern in sensitive_patterns:
+        if pattern in path_str:
+            return False, f"Access to sensitive pattern '{pattern}' is not allowed"
+
     # Check blocked paths (always blocked, even within workspace)
     for blocked in BLOCKED_PATHS:
-        blocked_expanded = str(Path(blocked).expanduser().resolve())
-        if path_str.startswith(blocked_expanded):
-            return False, f"Access to {blocked} is not allowed"
+        try:
+            blocked_expanded = str(Path(blocked).expanduser().resolve()).lower()
+            if path_str.startswith(blocked_expanded):
+                return False, f"Access to {blocked} is not allowed"
+        except Exception:
+            continue
 
     # If workspace provided, enforce boundary
     if workspace:

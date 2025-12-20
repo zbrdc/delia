@@ -43,6 +43,7 @@ class StreamChunk:
         tokens: Running token count (only set on final chunk)
         error: Error message if streaming failed mid-stream
         metadata: Provider-specific chunk metadata
+        thinking: The thinking/reasoning content of this chunk (optional)
     """
 
     text: str = ""
@@ -50,6 +51,7 @@ class StreamChunk:
     tokens: int = 0
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    thinking: str | None = None
 
 
 @dataclass

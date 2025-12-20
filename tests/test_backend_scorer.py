@@ -136,27 +136,30 @@ class TestBackendScorerThroughputScoring:
         assert scorer._score_throughput(0.0) == 0.5
 
     def test_reference_throughput_capped(self):
-        """Reference throughput (100 tok/s) returns 1.0."""
+        """Reference throughput (100 tok/s) returns ~0.833 on saturation curve."""
         from delia.routing import BackendScorer
 
         scorer = BackendScorer()
-        assert scorer._score_throughput(100.0) == 1.0
+        # 100 / (100 + 20) = 0.8333...
+        assert abs(scorer._score_throughput(100.0) - 0.833) < 0.01
 
     def test_throughput_linear_scaling(self):
-        """Throughput scales linearly up to cap."""
+        """Throughput follows saturation curve."""
         from delia.routing import BackendScorer
 
         scorer = BackendScorer()
-        assert scorer._score_throughput(50.0) == 0.5
-        assert scorer._score_throughput(75.0) == 0.75
+        # 50 / (50 + 20) = 0.714...
+        assert abs(scorer._score_throughput(50.0) - 0.714) < 0.01
+        # 20 / (20 + 20) = 0.5
+        assert scorer._score_throughput(20.0) == 0.5
 
     def test_throughput_capped_at_one(self):
-        """Throughput score capped at 1.0."""
+        """Throughput score approaches 1.0 asymptotically."""
         from delia.routing import BackendScorer
 
         scorer = BackendScorer()
-        assert scorer._score_throughput(200.0) == 1.0
-        assert scorer._score_throughput(1000.0) == 1.0
+        assert scorer._score_throughput(1000.0) > 0.95
+        assert scorer._score_throughput(1000.0) < 1.0
 
 
 class TestBackendScorerScore:
@@ -216,7 +219,7 @@ class TestBackendScorerScore:
         assert score < 0.6
 
     def test_score_new_backend_optimistic(self):
-        """New backend with no metrics gets optimistic score."""
+        """New backend with no metrics gets optimistic score + exploration boost."""
         from delia.config import BACKEND_METRICS
         from delia.routing import BackendScorer
 
@@ -228,8 +231,10 @@ class TestBackendScorerScore:
         score = scorer.score(backend)
 
         # No data = optimistic defaults (latency=1.0, throughput=0.5, reliability=1.0, avail=1.0)
-        # Expected: 0.35*1.0 + 0.15*0.5 + 0.35*1.0 + 0.15*1.0 = 0.35 + 0.075 + 0.35 + 0.15 = 0.925
-        assert 0.9 <= score <= 0.95
+        # Base: 0.35*1.0 + 0.15*0.5 + 0.35*1.0 + 0.15*1.0 = 0.925
+        # Exploration Modifier (0 reqs): 1.0 + 0.25 = 1.25
+        # Total: 0.925 * 1.25 = 1.156
+        assert 1.1 <= score <= 1.2
 
     def test_score_unavailable_backend(self):
         """Unavailable backend (circuit breaker open) gets lower score."""
@@ -250,8 +255,8 @@ class TestBackendScorerScore:
         scorer = BackendScorer()
         score = scorer.score(backend)
 
-        # Availability = 0 reduces score by 0.15
-        assert score < 0.85
+        # Availability = 0 reduces score significantly
+        assert score < 1.0
 
 
 class TestBackendScorerSelectBest:
@@ -530,8 +535,8 @@ class TestBackendScorerCostAwareRouting:
         assert result is local
 
 
-class TestSelectOptimalBackendV2Integration:
-    """Test _select_optimal_backend_v2 function uses BackendScorer."""
+class TestSelectOptimalBackendIntegration:
+    """Test select_optimal_backend function uses BackendScorer."""
 
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -546,9 +551,10 @@ class TestSelectOptimalBackendV2Integration:
 
     @pytest.mark.asyncio
     async def test_selects_best_backend_by_score(self):
-        """_select_optimal_backend_v2 selects based on score when multiple backends available."""
+        """select_optimal_backend selects based on score when multiple backends available."""
         from delia.backend_manager import BackendConfig, BackendManager
         from delia.config import BACKEND_METRICS, BackendMetrics
+        from delia.routing import get_router
 
         # Create a manager with two backends
         manager = BackendManager()
@@ -586,16 +592,13 @@ class TestSelectOptimalBackendV2Integration:
             metrics_slow.record_success(elapsed_ms=2000.0, tokens=50)  # 2000ms latency
         BACKEND_METRICS["slow"] = metrics_slow
 
-        # Mock the global backend_manager
-        import delia.mcp_server as mcp_server
-
-        original_manager = mcp_server.backend_manager
-        mcp_server.backend_manager = manager
+        # Use router directly for integration test
+        router = get_router()
+        original_bm = router.backend_manager
+        router.backend_manager = manager
 
         try:
-            from delia.mcp_server import _select_optimal_backend_v2
-
-            _, selected = await _select_optimal_backend_v2(
+            _, selected = await router.select_optimal_backend(
                 content="test", task_type="quick"
             )
 
@@ -603,12 +606,13 @@ class TestSelectOptimalBackendV2Integration:
             assert selected is not None
             assert selected.id == "fast"
         finally:
-            mcp_server.backend_manager = original_manager
+            router.backend_manager = original_bm
 
     @pytest.mark.asyncio
     async def test_respects_backend_type_filter(self):
-        """_select_optimal_backend_v2 respects backend_type filter."""
+        """select_optimal_backend respects backend_type filter."""
         from delia.backend_manager import BackendConfig, BackendManager
+        from delia.routing import get_router
 
         # Create a manager with local and remote backends
         manager = BackendManager()
@@ -635,29 +639,26 @@ class TestSelectOptimalBackendV2Integration:
             ),
         }
 
-        import delia.mcp_server as mcp_server
-
-        original_manager = mcp_server.backend_manager
-        mcp_server.backend_manager = manager
+        router = get_router()
+        original_bm = router.backend_manager
+        router.backend_manager = manager
 
         try:
-            from delia.mcp_server import _select_optimal_backend_v2
-
             # Request only remote
-            _, selected = await _select_optimal_backend_v2(
+            _, selected = await router.select_optimal_backend(
                 content="test", task_type="quick", backend_type="remote"
             )
             assert selected is not None
             assert selected.id == "remote"
 
             # Request only local
-            _, selected = await _select_optimal_backend_v2(
+            _, selected = await router.select_optimal_backend(
                 content="test", task_type="quick", backend_type="local"
             )
             assert selected is not None
             assert selected.id == "local"
         finally:
-            mcp_server.backend_manager = original_manager
+            router.backend_manager = original_bm
 
 
 class TestScoringWeightsFromDict:

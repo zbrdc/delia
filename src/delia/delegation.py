@@ -36,7 +36,6 @@ from .backend_manager import backend_manager
 from .routing import BackendScorer
 from .file_helpers import read_files, read_serena_memory
 from .language import detect_language, get_system_prompt
-from .prompt_templates import create_structured_prompt
 from .text_utils import strip_thinking_tags
 from .tokens import count_tokens
 from .validation import (
@@ -919,19 +918,38 @@ async def delegate_impl(
     # Map task to internal type
     task_type = determine_task_type(task)
 
-    # Create enhanced, structured prompt with templates
-    prepared_content = create_structured_prompt(
-        task_type=task_type,
-        content=prepared_content,
-        file_path=file,
-        language=language,
-        symbols=symbols.split(",") if symbols else None,
-        context_files=context.split(",") if context else None,
-    )
+    # Build context header manually (replaces create_structured_prompt templates)
+    context_header = f"Task: {task_type}\n"
+    if file:
+        context_header += f"File: {file}\n"
+    if language:
+        context_header += f"Language: {language}\n"
+    if symbols:
+        context_header += f"Symbols: {symbols}\n"
+    if context:
+        context_header += f"Context Files: {context}\n"
+    
+    prepared_content = f"{context_header}\n{prepared_content}"
 
-    # Detect language and get system prompt
+    # Detect language
     detected_language = language or detect_language(prepared_content, file or "")
-    system = get_system_prompt(detected_language, task_type)
+    
+    # Get system prompt using new system
+    from .prompts import build_system_prompt, ModelRole
+    
+    role_map = {
+        "review": ModelRole.CODE_REVIEWER,
+        "generate": ModelRole.CODE_GENERATOR,
+        "analyze": ModelRole.ANALYST,
+        "summarize": ModelRole.SUMMARIZER,
+        "plan": ModelRole.ARCHITECT,
+        "critique": ModelRole.ANALYST,
+    }
+    role = role_map.get(task_type, ModelRole.ASSISTANT)
+    system = build_system_prompt(role=role)
+    
+    if detected_language:
+        system += f"\n\nPrimary language: {detected_language}"
 
     # Select model and backend
     selected_model, tier, target_backend = await select_delegate_model(
@@ -1183,15 +1201,18 @@ async def get_delegate_signals(
     # Map task to internal type
     task_type = determine_task_type(task)
 
-    # Create structured prompt (same as delegate_impl)
-    prepared_content = create_structured_prompt(
-        task_type=task_type,
-        content=prepared_content,
-        file_path=file,
-        language=language,
-        symbols=symbols.split(",") if symbols else None,
-        context_files=context.split(",") if context else None,
-    )
+    # Build context header manually
+    context_header = f"Task: {task_type}\n"
+    if file:
+        context_header += f"File: {file}\n"
+    if language:
+        context_header += f"Language: {language}\n"
+    if symbols:
+        context_header += f"Symbols: {symbols}\n"
+    if context:
+        context_header += f"Context Files: {context}\n"
+    
+    prepared_content = f"{context_header}\n{prepared_content}"
 
     # Detect language
     detected_language = language or detect_language(prepared_content, file or "")

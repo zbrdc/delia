@@ -42,6 +42,7 @@ from .registry import ToolDefinition, ToolRegistry
 from .web_search import web_search, web_news
 from .editing import replace_in_file, insert_into_file
 from .interaction import ask_user
+from .lsp import lsp_goto_definition, lsp_find_references, lsp_hover
 
 log = structlog.get_logger()
 
@@ -740,6 +741,61 @@ def get_default_tools(
             "required": ["query"]
         },
         handler=web_news,
+    ))
+
+    # LSP Tools
+    if workspace:
+        lsp_def_handler = partial(lsp_goto_definition, workspace=workspace)
+        lsp_ref_handler = partial(lsp_find_references, workspace=workspace)
+        lsp_hover_handler = partial(lsp_hover, workspace=workspace)
+    else:
+        lsp_def_handler = lsp_goto_definition
+        lsp_ref_handler = lsp_find_references
+        lsp_hover_handler = lsp_hover
+
+    registry.register(ToolDefinition(
+        name="lsp_goto_definition",
+        description="Find where a symbol (function, class, etc.) is defined using Language Server Protocol.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": path_desc},
+                "line": {"type": "integer", "description": "1-indexed line number"},
+                "character": {"type": "integer", "description": "0-indexed character position"}
+            },
+            "required": ["path", "line", "character"]
+        },
+        handler=lsp_def_handler,
+    ))
+
+    registry.register(ToolDefinition(
+        name="lsp_find_references",
+        description="Find all usages of a symbol across the codebase using Language Server Protocol.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": path_desc},
+                "line": {"type": "integer", "description": "1-indexed line number"},
+                "character": {"type": "integer", "description": "0-indexed character position"}
+            },
+            "required": ["path", "line", "character"]
+        },
+        handler=lsp_ref_handler,
+    ))
+
+    registry.register(ToolDefinition(
+        name="lsp_hover",
+        description="Get type information and documentation for a symbol at a specific position.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": path_desc},
+                "line": {"type": "integer", "description": "1-indexed line number"},
+                "character": {"type": "integer", "description": "0-indexed character position"}
+            },
+            "required": ["path", "line", "character"]
+        },
+        handler=lsp_hover_handler,
     ))
 
     # ask_user is currently disabled by default to prevent blocking in tests/CI

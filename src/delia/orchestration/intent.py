@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import ClassVar
 
 import structlog
 
-from .result import DetectedIntent, OrchestrationMode, ModelRole
+from .result import DetectedIntent, ModelRole, OrchestrationMode
 
 log = structlog.get_logger()
 
@@ -43,15 +44,15 @@ class IntentPattern:
 class IntentDetector:
     """
     NLP-based intent detection for Delia orchestration.
-    
+
     Instead of giving models tools and hoping they use them correctly,
     we detect intent at the Delia layer and orchestrate appropriately.
-    
+
     Key insight from ToolOrchestra paper:
     - Models ARE the tools
     - Intent detection drives orchestration
     - Models receive task-specific prompts, not tool schemas
-    
+
     Usage:
         detector = IntentDetector()
         intent = detector.detect("Make sure this code is secure: def login()...")
@@ -59,9 +60,9 @@ class IntentDetector:
         # intent.model_role = CODE_REVIEWER
         # intent.task_type = "coder"
     """
-    
+
     # Verification signals → Voting mode
-    VERIFICATION_PATTERNS = [
+    VERIFICATION_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
             re.compile(r"\b(make sure|verify|double.?check|confirm|validate|ensure|certain)\b", re.I),
             orchestration_mode=OrchestrationMode.VOTING,
@@ -81,31 +82,37 @@ class IntentDetector:
             reasoning="high-stakes context",
         ),
     ]
-    
+
     # Comparison signals → Comparison mode
-    COMPARISON_PATTERNS = [
+    COMPARISON_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
-            re.compile(r"\b(compare|contrast|vs|versus|different\s+(models?|approaches?|opinions?))\b", re.I),
+            re.compile(r"\b(compare|contrast|vs|versus|comparison)\b", re.I),
             orchestration_mode=OrchestrationMode.COMPARISON,
             confidence_boost=0.35,
             reasoning="comparison requested",
         ),
         IntentPattern(
-            re.compile(r"\bwhat\s+do\s+(different|multiple|other)\s+(models?|llms?)\s+think\b", re.I),
+            re.compile(r"\b(what\s+do\s+)?(different|multiple|other)\s+(models?|llms?|bots?)\s+(think|say)\b", re.I),
             orchestration_mode=OrchestrationMode.COMPARISON,
             confidence_boost=0.4,
             reasoning="multi-model perspective requested",
         ),
         IntentPattern(
-            re.compile(r"\b(second|third)\s+opinion\b", re.I),
+            re.compile(r"\b(second|third|multiple|different)\s+opinions?\b", re.I),
             orchestration_mode=OrchestrationMode.COMPARISON,
             confidence_boost=0.3,
-            reasoning="additional opinion requested",
+            reasoning="additional opinions requested",
+        ),
+        IntentPattern(
+            re.compile(r"\bwhich\s+model\s+is\s+(better|faster|smarter|best)\b", re.I),
+            orchestration_mode=OrchestrationMode.COMPARISON,
+            confidence_boost=0.4,
+            reasoning="model capability comparison requested",
         ),
     ]
-    
+
     # Deep thinking signals → Deep mode
-    DEEP_THINKING_PATTERNS = [
+    DEEP_THINKING_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
             re.compile(r"\b(think\s+(carefully|deeply|thoroughly)|deep\s+(analysis|thinking|dive))\b", re.I),
             orchestration_mode=OrchestrationMode.DEEP_THINKING,
@@ -121,17 +128,24 @@ class IntentDetector:
             reasoning="methodical analysis requested",
         ),
         IntentPattern(
-            re.compile(r"\b(architect|design|trade.?offs?|pros?\s+and\s+cons?)\b", re.I),
+            re.compile(r"\b(architect|design|trade.?offs?|pros?\s+and\s+cons?|efficient|scalability|performance)\b", re.I),
             orchestration_mode=OrchestrationMode.DEEP_THINKING,
             task_type="moe",
             model_role=ModelRole.ARCHITECT,
             confidence_boost=0.2,
-            reasoning="architecture/design task",
+            reasoning="architecture/performance task",
+        ),
+        IntentPattern(
+            re.compile(r"\b(plan|design|migration|strategy)\b", re.I),
+            orchestration_mode=OrchestrationMode.DEEP_THINKING,
+            task_type="moe",
+            confidence_boost=0.2,
+            reasoning="planning/strategy task",
         ),
     ]
 
     # Tree of Thoughts signals → Advanced search
-    TOT_PATTERNS = [
+    TOT_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
             re.compile(r"\b(explore|brainstorm|find)\s+(multiple|all|different|possible)\s+(solutions|options|paths|approaches)\b", re.I),
             orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
@@ -154,9 +168,9 @@ class IntentDetector:
             reasoning="optimal path selection requested",
         ),
     ]
-    
+
     # Agentic signals → Agent mode with tools
-    AGENTIC_PATTERNS = [
+    AGENTIC_PATTERNS: ClassVar[list[IntentPattern]] = [
         # Web search - explicit requests for web/internet search
         IntentPattern(
             re.compile(r"^(web\s+)?search\s+(the\s+)?(web|internet|online|google|duckduckgo)\b", re.I),
@@ -176,23 +190,44 @@ class IntentDetector:
             confidence_boost=0.4,
             reasoning="current information requested - may need web search",
         ),
+        # Search patterns
         IntentPattern(
-            re.compile(r"\b(read|open|cat|view)\s+(the\s+)?(file|contents?|code)\b", re.I),
+            re.compile(r"\b(search|find|grep|look\s*up)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
-            confidence_boost=0.4,
-            reasoning="file read requested",
+            confidence_boost=0.5,
+            reasoning="search requested",
+        ),
+        # Listing patterns
+        IntentPattern(
+            re.compile(r"\b(list|ls|show|display|whats?\s+in|what's\s+in)\s+(the\s+)?(files?|directory|folder|contents?|repo|workspace)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.5,
+            reasoning="listing requested",
         ),
         IntentPattern(
-            re.compile(r"\b(list|ls)\s+(the\s+)?(files?|directory|folder)\b", re.I),
+            re.compile(r"\bshow\s+me\s+the\s+(files|contents)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
-            confidence_boost=0.4,
-            reasoning="directory listing requested",
+            confidence_boost=0.5,
+            reasoning="explicit show files requested",
+        ),
+        # Context patterns
+        IntentPattern(
+            re.compile(r"\b(where\s+are\s+we|where\s+am\s+i|pwd|current\s+path|location|what\s+folder)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.6,
+            reasoning="location query detected",
         ),
         IntentPattern(
-            re.compile(r"^(run|execute|exec)\s+(this\s+)?(command|script|shell)\b", re.I),
+            re.compile(r"\b(what|which)\s+(directory|direcotry|dir|folder|path|workspace|location|repo|project)\b", re.I),
             orchestration_mode=OrchestrationMode.AGENTIC,
-            confidence_boost=0.45,
-            reasoning="shell execution requested",
+            confidence_boost=0.6,
+            reasoning="environment query detected",
+        ),
+        IntentPattern(
+            re.compile(r"\b(news|latest|current)\b.*\b(today|now|recent)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            confidence_boost=0.4,
+            reasoning="timely info requested",
         ),
         IntentPattern(
             re.compile(r"\b(write|create|save|update|modify|edit)\s+.*(to\s+)?\w+\.(py|js|ts|rs|go|sh|yaml|json|toml|txt|md|css|html)\b", re.I),
@@ -244,43 +279,43 @@ class IntentDetector:
             reasoning="specific file referenced",
         ),
     ]
-    
+
     # Chain/pipeline signals → Sequential multi-step execution
-    CHAIN_PATTERNS = [
+    CHAIN_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
             re.compile(r"\bfirst\s+\w+.*\bthen\s+\w+", re.I | re.DOTALL),
             orchestration_mode=OrchestrationMode.CHAIN,
-            confidence_boost=0.4,
+            confidence_boost=0.7,
             reasoning="first...then sequence detected",
         ),
         IntentPattern(
             re.compile(r"\bstep\s*[1I]\b.*\bstep\s*[2II]\b", re.I | re.DOTALL),
             orchestration_mode=OrchestrationMode.CHAIN,
-            confidence_boost=0.45,
+            confidence_boost=0.75,
             reasoning="step 1...step 2 sequence detected",
         ),
         IntentPattern(
             re.compile(r"\b(1\.|1\))\s*\w+.*\b(2\.|2\))\s*\w+", re.I | re.DOTALL),
             orchestration_mode=OrchestrationMode.CHAIN,
-            confidence_boost=0.4,
+            confidence_boost=0.7,
             reasoning="numbered list detected",
         ),
         IntentPattern(
             re.compile(r"\b(analyze|review).*\b(then|and\s+then|after\s+that)\s*(generate|implement|write|create)\b", re.I),
             orchestration_mode=OrchestrationMode.CHAIN,
-            confidence_boost=0.45,
+            confidence_boost=0.7,
             reasoning="analyze-then-generate pipeline",
         ),
         IntentPattern(
             re.compile(r"\b(generate|write|create).*\b(then|and\s+then)\s*(review|test|verify)\b", re.I),
             orchestration_mode=OrchestrationMode.CHAIN,
-            confidence_boost=0.45,
+            confidence_boost=0.7,
             reasoning="generate-then-review pipeline",
         ),
         IntentPattern(
             re.compile(r"\b(plan|design).*\b(then|and\s+then|after\s+that)\s*(implement|build|create)\b", re.I),
             orchestration_mode=OrchestrationMode.CHAIN,
-            confidence_boost=0.45,
+            confidence_boost=0.7,
             reasoning="plan-then-implement pipeline",
         ),
         IntentPattern(
@@ -290,9 +325,9 @@ class IntentDetector:
             reasoning="pipeline mentioned",
         ),
     ]
-    
+
     # Melon/status queries → Direct response
-    STATUS_PATTERNS = [
+    STATUS_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
             re.compile(r"\b(show|display|get|view|list)\b.*\b(leader.?board|melon\s+rankings?|melon\s+stats)\b", re.I),
             orchestration_mode=OrchestrationMode.NONE,
@@ -308,15 +343,22 @@ class IntentDetector:
             reasoning="status command detected",
         ),
     ]
-    
+
     # Code-related signals → Coder task type
-    CODE_PATTERNS = [
+    CODE_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
-            re.compile(r"\b(review|audit|check)\s+(this\s+)?(code|function|class|script)\b", re.I),
+            re.compile(r"\b(review|audit|check|analyze)\s+(this\s+)?(code|function|class|script|website|app|site|project)\b", re.I),
             task_type="coder",
             model_role=ModelRole.CODE_REVIEWER,
             confidence_boost=0.3,
             reasoning="code review requested",
+        ),
+        IntentPattern(
+            re.compile(r"\bperform\s+(a\s+)?(review|audit|check|analysis)\b", re.I),
+            task_type="coder",
+            model_role=ModelRole.CODE_REVIEWER,
+            confidence_boost=0.3,
+            reasoning="task review requested",
         ),
         IntentPattern(
             re.compile(r"\b(security|vulnerability|vulnerabilities|exploit|injection|xss|sql)\b", re.I),
@@ -340,6 +382,12 @@ class IntentDetector:
             reasoning="debugging requested",
         ),
         IntentPattern(
+            re.compile(r"\b(efficient|performance|optimize|improvement|bottleneck)\b", re.I),
+            task_type="coder",
+            confidence_boost=0.25,
+            reasoning="code optimization requested",
+        ),
+        IntentPattern(
             re.compile(r"```[\w]*\n", re.I),  # Code block
             task_type="coder",
             confidence_boost=0.2,
@@ -352,9 +400,9 @@ class IntentDetector:
             reasoning="code syntax detected",
         ),
     ]
-    
+
     # Quick/simple signals → Quick task type
-    QUICK_PATTERNS = [
+    QUICK_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
             re.compile(r"^(hi|hello|hey|thanks?|thank\s+you|ok|okay|yes|no|bye)\b", re.I),
             task_type="quick",
@@ -376,9 +424,9 @@ class IntentDetector:
             reasoning="summary requested",
         ),
     ]
-    
+
     # Explanation signals → Explainer role
-    EXPLAIN_PATTERNS = [
+    EXPLAIN_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
             re.compile(r"\b(explain|teach|help\s+me\s+understand|walk\s+me\s+through)\b", re.I),
             model_role=ModelRole.EXPLAINER,
@@ -393,7 +441,7 @@ class IntentDetector:
             reasoning="beginner explanation requested",
         ),
     ]
-    
+
     def __init__(self) -> None:
         """Initialize the intent detector with all patterns."""
         # Combine all patterns in priority order
@@ -413,7 +461,7 @@ class IntentDetector:
             self.QUICK_PATTERNS +
             self.EXPLAIN_PATTERNS
         )
-    
+
     # =========================================================================
     # TIERED INTENT DETECTION
     # =========================================================================
@@ -423,28 +471,28 @@ class IntentDetector:
     # Layer 3: LLM classification (~500ms) - handles complex/ambiguous cases
     #
     # =========================================================================
-    
+
     # Confidence threshold for Layer 1 (regex) to be considered sufficient
     REGEX_CONFIDENCE_THRESHOLD = 0.7
-    
+
     # Confidence threshold for Layer 2 (semantic) to be considered sufficient
     SEMANTIC_CONFIDENCE_THRESHOLD = 0.6
-    
+
     def detect(self, message: str) -> DetectedIntent:
         """
         Detect intent using tiered NLP approach (sync version).
-        
+
         This is the main entry point for intent detection.
         Uses Layer 1 (regex) and Layer 2 (semantic). For Layer 3 (LLM),
         use detect_async().
-        
+
         Tiered approach:
         1. Fast regex patterns first (0ms)
         2. Semantic matching if regex uncertain (50-100ms)
-        
+
         Args:
             message: The user's message
-            
+
         Returns:
             DetectedIntent with all routing information
         """
@@ -455,10 +503,10 @@ class IntentDetector:
                 confidence=0.5,
                 reasoning="very short message",
             )
-        
+
         # Layer 1: Fast regex patterns
         intent = self._detect_regex(message)
-        
+
         if intent.confidence >= self.REGEX_CONFIDENCE_THRESHOLD:
             log.debug(
                 "intent_layer1_sufficient",
@@ -466,10 +514,10 @@ class IntentDetector:
                 reasoning=intent.reasoning,
             )
             return intent
-        
+
         # Layer 2: Semantic matching (if regex uncertain)
         semantic_intent = self._detect_semantic(message)
-        
+
         if semantic_intent and semantic_intent.confidence >= self.SEMANTIC_CONFIDENCE_THRESHOLD:
             # Merge semantic results with regex results
             intent = self._merge_intents(intent, semantic_intent)
@@ -478,33 +526,33 @@ class IntentDetector:
                 confidence=intent.confidence,
                 reasoning=intent.reasoning,
             )
-        
+
         return intent
-    
+
     async def detect_async(self, message: str) -> DetectedIntent:
         """
         Detect intent using all three tiers (async version).
-        
+
         Includes Layer 3 (LLM classification) for complex cases.
-        
+
         Args:
             message: The user's message
-            
+
         Returns:
             DetectedIntent with all routing information
         """
         # Try sync detection first (Layers 1 & 2)
         intent = self.detect(message)
-        
+
         if intent.confidence >= self.SEMANTIC_CONFIDENCE_THRESHOLD:
             return intent
-        
+
         # Layer 3: LLM classification for complex/ambiguous cases
         try:
             from .llm_classifier import get_llm_classifier
-            
+
             llm_intent = await get_llm_classifier().classify(message)
-            
+
             if llm_intent and llm_intent.confidence >= 0.6:
                 # Merge LLM results
                 intent = self._merge_intents(intent, llm_intent)
@@ -515,9 +563,9 @@ class IntentDetector:
                 )
         except Exception as e:
             log.warning("intent_layer3_error", error=str(e))
-        
+
         return intent
-    
+
     def _detect_regex(self, message: str) -> DetectedIntent:
         """
         Layer 1: Fast regex pattern matching.
@@ -530,35 +578,59 @@ class IntentDetector:
             confidence=0.3, # Reduced from 0.5
             reasoning="default",
         )
-        
+
         # Track matched patterns
         matched_keywords: list[str] = []
         confidence_adjustments: list[float] = []
         reasons: list[str] = []
+
+        # PRE-PROCESSING: Strip code blocks for pattern matching
+        # We want to match intent on the USER'S words, not the pasted code.
+        # Remove ```...``` blocks
+        clean_message = re.sub(r"```[\s\S]*?```", "", message)
+        # Remove indented blocks (simple heuristic for pasted code)
+        clean_message = re.sub(r"^\s{4,}.+", "", clean_message, flags=re.MULTILINE)
         
-        # Check all patterns
+        # Fallback: if message is mostly code, use the first few lines only
+        if len(clean_message.strip()) < 10 and len(message) > 100:
+             clean_message = message[:200] # Just check the header/intro
+
+        # Check all patterns against CLEAN message
         for pat in self.all_patterns:
-            match = pat.pattern.search(message)
+            match = pat.pattern.search(clean_message)
             if match:
                 matched_keywords.append(match.group(0))
                 # Halve the boosts to require more specific/multiple matches
-                confidence_adjustments.append(pat.confidence_boost * 0.7) 
+                confidence_adjustments.append(pat.confidence_boost * 0.7)
                 if pat.reasoning:
                     reasons.append(pat.reasoning)
-                
+
                 # Apply pattern effects
                 if pat.orchestration_mode is not None:
-                    # Orchestration mode is important - only override if higher priority
-                    if intent.orchestration_mode == OrchestrationMode.NONE:
+                    # Orchestration mode priority: AGENTIC > VOTING > COMPARISON > others
+                    mode_priority = {
+                        OrchestrationMode.AGENTIC: 100,
+                        OrchestrationMode.VOTING: 80,
+                        OrchestrationMode.CHAIN: 70,  # Increased
+                        OrchestrationMode.COMPARISON: 60,
+                        OrchestrationMode.DEEP_THINKING: 50,
+                        OrchestrationMode.TREE_OF_THOUGHTS: 40,
+                        OrchestrationMode.WORKFLOW: 20,
+                        OrchestrationMode.NONE: 0
+                    }
+                    current_prio = mode_priority.get(intent.orchestration_mode, 0)
+                    new_prio = mode_priority.get(pat.orchestration_mode, 0)
+
+                    if new_prio > current_prio:
                         intent.orchestration_mode = pat.orchestration_mode
-                
+
                 if pat.model_role is not None:
                     intent.model_role = pat.model_role
-                
+
                 if pat.task_type is not None:
                     intent.task_type = pat.task_type
-        
-        # Check for code content (affects task type)
+
+        # Check for code content (affects task type) - Check FULL message here
         intent.contains_code = bool(
             re.search(r"```|\bdef\s|\bclass\s|\bfunction\s|\bconst\s|\blet\s", message)
         )
@@ -566,19 +638,19 @@ class IntentDetector:
             intent.task_type = "coder"
             reasons.append("code content detected")
             confidence_adjustments.append(0.15)
-        
+
         # Calculate final confidence
         if confidence_adjustments:
             intent.confidence = min(0.95, 0.5 + sum(confidence_adjustments))
-        
+
         # Build reasoning
         intent.reasoning = "; ".join(reasons) if reasons else "general chat"
         intent.trigger_keywords = matched_keywords
-        
+
         # Calculate k for voting mode
         if intent.orchestration_mode == OrchestrationMode.VOTING:
             intent.k_votes = self._calculate_k(message, intent)
-        
+
         # Extract chain steps for chain mode
         if intent.orchestration_mode == OrchestrationMode.CHAIN:
             intent.chain_steps = self._extract_chain_steps(message)
@@ -590,7 +662,7 @@ class IntentDetector:
                 )
                 intent.orchestration_mode = OrchestrationMode.NONE
                 intent.reasoning += "; chain fallback (couldn't extract steps)"
-        
+
         log.info(
             "intent_detected",
             layer="regex",
@@ -601,25 +673,25 @@ class IntentDetector:
             reasoning=intent.reasoning,
             keywords=matched_keywords[:5],  # Limit for logging
         )
-        
+
         return intent
-    
+
     def _detect_semantic(self, message: str) -> DetectedIntent | None:
         """
         Layer 2: Semantic matching using sentence-transformers.
-        
+
         Returns None if no confident match found.
         """
         try:
             from .semantic import get_semantic_matcher
-            
+
             matcher = get_semantic_matcher()
             return matcher.detect_intent(message)
-            
+
         except Exception as e:
             log.warning("intent_semantic_error", error=str(e))
             return None
-    
+
     def _merge_intents(
         self,
         base: DetectedIntent,
@@ -627,7 +699,7 @@ class IntentDetector:
     ) -> DetectedIntent:
         """
         Merge two intents, preferring higher-confidence values.
-        
+
         Uses base as starting point, overlays values from overlay
         if they're more confident or fill gaps.
         """
@@ -635,57 +707,70 @@ class IntentDetector:
         result = DetectedIntent(
             task_type=overlay.task_type if overlay.confidence > base.confidence else base.task_type,
             orchestration_mode=(
-                overlay.orchestration_mode 
-                if overlay.orchestration_mode != OrchestrationMode.NONE 
+                overlay.orchestration_mode
+                if overlay.orchestration_mode != OrchestrationMode.NONE
                 else base.orchestration_mode
             ),
             model_role=(
-                overlay.model_role 
-                if overlay.model_role != ModelRole.ASSISTANT 
+                overlay.model_role
+                if overlay.model_role != ModelRole.ASSISTANT
                 else base.model_role
             ),
             confidence=max(base.confidence, overlay.confidence),
             reasoning=f"{base.reasoning}; {overlay.reasoning}".strip("; "),
             k_votes=base.k_votes or overlay.k_votes,
             contains_code=base.contains_code or overlay.contains_code,
-            trigger_keywords=list(set(base.trigger_keywords + overlay.trigger_keywords)),
+            # Robust deduplication of keywords
+            trigger_keywords=base.trigger_keywords + [
+                k for k in overlay.trigger_keywords 
+                if isinstance(k, str) and k not in base.trigger_keywords
+            ],
+            # Merge models and steps
+            comparison_models=base.comparison_models + [
+                m for m in overlay.comparison_models 
+                if isinstance(m, str) and m not in base.comparison_models
+            ],
+            chain_steps=base.chain_steps + [
+                s for s in overlay.chain_steps 
+                if isinstance(s, str) and s not in base.chain_steps
+            ],
         )
-        
+
         return result
-    
+
     def _calculate_k(self, message: str, intent: DetectedIntent) -> int:
         """
         Calculate optimal k for voting based on task complexity.
-        
+
         Uses the MDAP formula: kmin = Θ(ln s) where s is step count.
         We estimate steps from message complexity.
         """
         from ..voting import VotingConsensus, estimate_task_complexity
-        
+
         task_steps = estimate_task_complexity(message)
-        
+
         k = VotingConsensus.calculate_kmin(
             total_steps=task_steps,
             target_accuracy=0.9999,
             base_accuracy=0.95,  # Conservative
         )
-        
-        return max(2, min(k, 5))  # Clamp to reasonable range
-    
+
+        return max(2, min(k, 3))  # Clamp to reasonable range (max 3 for stability)
+
     def _extract_chain_steps(self, message: str) -> list[str]:
         """
         Extract sequential steps from a chain-like message.
-        
+
         Parses various formats:
         - "First analyze, then generate, then review"
         - "1. analyze 2. generate 3. review"
         - "Step 1: analyze Step 2: generate"
-        
+
         Returns list of step descriptions like ["analyze", "generate", "review"]
         """
         steps: list[str] = []
-        
-        # Pattern 1: "first... then... then..." 
+
+        # Pattern 1: "first... then... then..."
         first_then = re.search(
             r"\bfirst\s+(.+?)(?:\.|,)?\s+(?:and\s+)?then\s+(.+?)(?:\.|,|$)",
             message, re.I
@@ -701,19 +786,19 @@ class IntentDetector:
                 steps.append(first_then.group(2).strip())
             if steps:
                 return self._normalize_steps(steps)
-        
+
         # Pattern 2: Numbered list "1. analyze 2. generate" or "1) analyze 2) generate"
         numbered = re.findall(r"\b(\d+)[.)]\s*([^0-9.),]+)", message, re.I)
         if len(numbered) >= 2:
             steps = [step.strip() for _, step in sorted(numbered, key=lambda x: int(x[0]))]
             return self._normalize_steps(steps)
-        
+
         # Pattern 3: "Step 1: analyze, Step 2: generate" or "Step 1. analyze. Step 2. generate."
         step_n = re.findall(r"\bstep\s*(\d+)[:.]\s*([^.]+)", message, re.I)
         if len(step_n) >= 2:
             steps = [step.strip() for _, step in sorted(step_n, key=lambda x: int(x[0]))]
             return self._normalize_steps(steps)
-        
+
         # Pattern 4: Comma-separated actions with "then" or "and"
         action_chain = re.search(
             r"\b(analyze|review|generate|write|plan|design|implement|test|debug|summarize|critique)"
@@ -730,9 +815,9 @@ class IntentDetector:
             if len(actions) >= 2:
                 steps = [a.lower() for a in actions]
                 return self._normalize_steps(steps)
-        
+
         return []
-    
+
     def _normalize_steps(self, steps: list[str]) -> list[str]:
         """Normalize step descriptions to task types."""
         # Map common phrases to task types
@@ -753,7 +838,7 @@ class IntentDetector:
             "fix": "generate",
             "refactor": "generate",
         }
-        
+
         normalized = []
         for step in steps:
             # Extract first word as action
@@ -763,17 +848,17 @@ class IntentDetector:
                 task = task_mapping.get(action, "quick")
                 # Keep original step description but add task type
                 normalized.append(f"{task}: {step}")
-        
+
         return normalized
-    
+
     def needs_orchestration(self, intent: DetectedIntent) -> bool:
         """Check if intent requires orchestration (vs simple model call)."""
         return intent.orchestration_mode != OrchestrationMode.NONE
-    
+
     def get_debug_info(self, message: str) -> dict:
         """Get detailed debug info about intent detection (for troubleshooting)."""
         intent = self.detect(message)
-        
+
         return {
             "message_preview": message[:200],
             "detected_intent": {
@@ -804,4 +889,3 @@ def get_intent_detector() -> IntentDetector:
 def detect_intent(message: str) -> DetectedIntent:
     """Detect intent from a message using the global detector."""
     return get_intent_detector().detect(message)
-

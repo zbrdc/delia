@@ -18,6 +18,8 @@ import structlog
 
 from ..file_helpers import read_files, read_serena_memory
 from ..language import detect_language
+from .summarizer import get_summarizer
+from .graph import get_symbol_graph
 
 log = structlog.get_logger()
 
@@ -30,6 +32,8 @@ class ContextEngine:
     - Retrieving Serena memories (Project Knowledge)
     - Formatting symbol focus for IDE-like behavior
     - Injecting session history for conversation continuity
+    - Hierarchical project summarization (Infinite Context)
+    - Dependency Graph navigation (GraphRAG)
     """
 
     @staticmethod
@@ -40,25 +44,66 @@ class ContextEngine:
         include_references: bool = False,
         files: str | None = None,
         session_context: str | None = None,
+        include_project_overview: bool = False,
     ) -> str:
         """
         Assembles all contextual parts into a single prompt string.
         """
         parts = []
 
+        # 0. Project Overview (Gemini-class Hierarchical Context)
+        if include_project_overview:
+            summarizer = get_summarizer()
+            await summarizer.initialize()
+            overview = summarizer.get_project_overview()
+            if overview:
+                parts.append(overview)
+
         # 1. Session History (Continuity)
         if session_context:
             parts.append(f"### Previous Conversation\n{session_context}\n")
 
         # 2. File Context (Direct Disk Access)
+        explicit_files = set()
         if files:
             file_contents = read_files(files)
             if file_contents:
                 for path, file_content in file_contents:
+                    explicit_files.add(path)
                     ext = Path(path).suffix.lstrip(".")
                     lang_hint = ext if ext else ""
                     parts.append(f"### File: `{path}`\n```{lang_hint}\n{file_content}\n```")
                 log.info("context_files_loaded", count=len(file_contents))
+
+        # 2.5 Dynamic Windowing & Graph Neighbors (GraphRAG Dependency Mapping) 🌐
+        # Objective: Prioritize "Graph Neighbors" over "Recent History" for better structural awareness.
+        if explicit_files:
+            try:
+                graph = get_symbol_graph()
+                await graph.initialize()
+                summarizer = get_summarizer()
+                await summarizer.initialize()
+                
+                related_files = set()
+                for f in explicit_files:
+                    related = graph.get_related_files(f)
+                    related_files.update(related)
+                
+                # Identify neighbors that aren't already included
+                neighbors = related_files - explicit_files
+                if neighbors:
+                    # Sort neighbors by importance (e.g. number of connections)
+                    neighbor_lines = []
+                    for nf in sorted(neighbors):
+                        summary_text = summarizer.summaries[nf].summary if nf in summarizer.summaries else "(Direct dependency)"
+                        neighbor_lines.append(f"- `{nf}`: {summary_text}")
+                            
+                    if neighbor_lines:
+                        # Dynamic windowing: Injected as high-priority architectural context
+                        parts.append("### Architectural Context (Dependency Graph)\n" + "\n".join(neighbor_lines))
+                        log.info("dynamic_window_neighbors_injected", count=len(neighbor_lines))
+            except Exception as e:
+                log.debug("graph_context_failed", error=str(e))
 
         # 3. Serena Memories (Project Knowledge)
         if context:

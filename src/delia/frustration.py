@@ -240,18 +240,18 @@ class FrustrationTracker:
         # Determine Frustration Level
         level = FrustrationLevel.NONE
         
-        # Scoring system
+        # Scoring system - refined thresholds
         score = 0
         if repeat_count > 0: score += repeat_count * 1.5  # Repeats are strong signal
-        if has_angry_keywords: score += 3.0              # Anger is very strong
-        if has_negative_feedback: score += 2.0           # Explicit feedback is strong
-        if is_rapid_fire: score += 1.0                   # Mash is moderate
+        if has_angry_keywords: score += 3.5              # Anger is very strong
+        if has_negative_feedback: score += 2.5           # Explicit feedback is strong
+        if is_rapid_fire: score += 0.5                   # Mash is minor boost
         
-        if score >= 4.0:
+        if score >= 5.0:
             level = FrustrationLevel.HIGH
-        elif score >= 2.0:
+        elif score >= 3.0:
             level = FrustrationLevel.MEDIUM
-        elif score >= 1.0:
+        elif score >= 1.5:
             level = FrustrationLevel.LOW
             
         info = RepeatInfo(

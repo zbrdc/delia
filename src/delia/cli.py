@@ -32,7 +32,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Annotated, Optional
 
 import httpx
 import typer
@@ -835,27 +835,70 @@ def _find_free_port(start: int = 34589, end: int = 34689) -> int:
 
 @app.command()
 def chat(
-    model: str = typer.Option(None, "--model", "-m", help="Model tier (quick/coder/moe) or specific model"),
-    backend: str = typer.Option(None, "--backend", "-b", help="Force backend type (local/remote)"),
-    session: str = typer.Option(None, "--session", "-s", help="Resume existing session by ID"),
-    port: int = typer.Option(None, "--port", "-p", help="API server port (default: auto-select)"),
+    model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model tier (quick/coder/moe) or specific model")] = None,
+    backend: Annotated[Optional[str], typer.Option("--backend", "-b", help="Force backend type (local/remote)")] = None,
+    session: Annotated[Optional[str], typer.Option("--session", "-s", help="Resume existing session by ID")] = None,
+    port: Annotated[Optional[int], typer.Option("--port", "-p", help="API server port (unused in native mode)")] = None,
+    debug: Annotated[bool, typer.Option("--debug", help="Enable debug logging")] = False,
+    # New flags
+    web: Annotated[bool, typer.Option("--web", help="Use legacy web-style interface (TypeScript CLI)")] = False,
+    workspace: Annotated[Optional[str], typer.Option("--workspace", "-w", help="Confine file operations to directory")] = None,
 ) -> None:
     """
     Start an interactive chat session.
 
-    This launches the chat interface, automatically starting the API server
-    if needed. The chat provides a REPL-style interface for conversations.
+    By default, this uses the Native Python TUI (same as 'delia agent').
+    To use the legacy TypeScript interface, pass --web.
 
     Examples:
-        delia chat                    # Start chat with default settings
+        delia chat                    # Start native chat
         delia chat --model coder      # Use coder model tier
-        delia chat --session abc123   # Resume existing session
+        delia chat --web              # Use legacy web-style UI
     """
+    
+    # Safety check: If called from Python (main), default values might be OptionInfo objects
+    # This can happen if Typer's wrapping behavior leaks the default OptionInfo
+    import typer.models
+    if isinstance(workspace, typer.models.OptionInfo):
+        workspace = None
+    if isinstance(model, typer.models.OptionInfo):
+        model = None
+    if isinstance(backend, typer.models.OptionInfo):
+        backend = None
+    if isinstance(session, typer.models.OptionInfo):
+        session = None
+    if isinstance(web, typer.models.OptionInfo):
+        web = False
+
+    # 1. Native Chat Mode (Default)
+    if not web:
+        from .agent_cli import AgentCLIConfig, run_chat_cli
+        import asyncio
+        
+        config = AgentCLIConfig(
+            model=model,
+            backend_type=backend,
+            workspace=workspace,
+            verbose=debug,
+            # Enable agent capabilities by default in chat
+            planning_enabled=True,
+            reflection_enabled=True, 
+        )
+        
+        try:
+            asyncio.run(run_chat_cli(config))
+        except KeyboardInterrupt:
+            pass
+        return
+
+    # 2. Legacy Web/TS CLI Mode
     import atexit
     import signal
     import socket
     import sys
     import time
+
+    delia_root = get_delia_root()
 
     # Auto-select port if not specified
     if port is None:
@@ -877,6 +920,8 @@ def chat(
         # This ensures the API uses the same settings as the CLI
         env = os.environ.copy()
         env["DELIA_SETTINGS_FILE"] = str(SETTINGS_FILE)
+        if debug:
+            env["DELIA_DEBUG"] = "true"
 
         # Start API server in background
         # Capture stderr for debugging startup failures
@@ -1001,20 +1046,20 @@ def chat(
 
 @app.command()
 def agent(
-    task: str = typer.Argument(..., help="Task for the agent to complete"),
-    model: str = typer.Option(None, "--model", "-m", help="Model tier (quick/coder/moe) or specific model"),
-    workspace: str = typer.Option(None, "--workspace", "-w", help="Confine file operations to directory"),
-    max_iterations: int = typer.Option(10, "--max-iterations", help="Maximum tool call iterations"),
-    tools: str = typer.Option(None, "--tools", help="Comma-separated tools to enable (default: all)"),
-    backend: str = typer.Option(None, "--backend", "-b", help="Force backend type (local/remote)"),
-    voting: bool = typer.Option(False, "--voting", help="Enable k-voting for reliability"),
-    voting_k: int = typer.Option(None, "--voting-k", help="Override k value for voting"),
+    task: Annotated[str, typer.Argument(help="Task for the agent to complete")],
+    model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model tier (quick/coder/moe) or specific model")] = None,
+    workspace: Annotated[Optional[str], typer.Option("--workspace", "-w", help="Confine file operations to directory")] = None,
+    max_iterations: Annotated[int, typer.Option("--max-iterations", help="Maximum tool call iterations")] = 10,
+    tools: Annotated[Optional[str], typer.Option("--tools", help="Comma-separated tools to enable (default: all)")] = None,
+    backend: Annotated[Optional[str], typer.Option("--backend", "-b", help="Force backend type (local/remote)")] = None,
+    voting: Annotated[bool, typer.Option("--voting", help="Enable k-voting for reliability")] = False,
+    voting_k: Annotated[Optional[int], typer.Option("--voting-k", help="Override k value for voting")] = None,
     # New features
-    plan: bool = typer.Option(True, "--plan/--no-plan", help="Enable planning phase (default: True)"),
-    reflect: bool = typer.Option(True, "--reflect/--no-reflect", help="Enable agentic reflection (default: True)"),
-    reflection_confidence: str = typer.Option("normal", "--confidence", help="Reflection confidence (normal/high)"),
-    tui: bool = typer.Option(True, "--tui/--no-tui", help="Use Rich TUI (default: True)"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
+    plan: Annotated[bool, typer.Option("--plan/--no-plan", help="Enable planning phase (default: True)")] = True,
+    reflect: Annotated[bool, typer.Option("--reflect/--no-reflect", help="Enable agentic reflection (default: True)")] = True,
+    reflection_confidence: Annotated[str, typer.Option("--confidence", help="Reflection confidence (normal/high)")] = "normal",
+    tui: Annotated[bool, typer.Option("--tui/--no-tui", help="Use Rich TUI (default: True)")] = True,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed output")] = False,
 ) -> None:
     """
     Run an autonomous agent to complete a task.
@@ -1319,6 +1364,53 @@ def uninstall(
 
 
 # Default command: launch chat if no command specified
+@app.command()
+def prewarm() -> None:
+    """
+    Predictively preload models into GPU memory based on usage patterns.
+    
+    Uses the Melon Economy and Prewarm Tracker to identify which
+    models you are likely to use at this hour.
+    """
+    import asyncio
+    from .config import get_prewarm_tracker, load_prewarm
+    from .backend_manager import backend_manager
+    from .llm import init_llm_module, get_llm_provider
+    
+    # Load learned patterns
+    load_prewarm()
+    tracker = get_prewarm_tracker()
+    tiers = tracker.get_predicted_tiers()
+    
+    if not tiers:
+        print_info("No usage patterns learned yet. Start chatting to enable pre-warming!")
+        return
+
+    print_header(f"Pre-warming {len(tiers)} predicted tiers...")
+    
+    async def run_prewarm():
+        await init_llm_module()
+        active_backend = backend_manager.get_active_backend()
+        if not active_backend:
+            print_error("No active backend found.")
+            return
+
+        provider = get_llm_provider("ollama") # Assume ollama for now
+        
+        for tier in tiers:
+            model = active_backend.models.get(tier)
+            if model:
+                print_info(f"Pre-loading {tier:10} -> {model}...")
+                # load_model uses keep_alive=-1 (Hot VRAM)
+                res = await provider.load_model(model, backend_obj=active_backend)
+                if res.success:
+                    print_success(f"{model} is ready.")
+                else:
+                    print_error(f"Failed to load {model}: {res.error}")
+
+    asyncio.run(run_prewarm())
+
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
     """
@@ -1351,7 +1443,7 @@ def main(ctx: typer.Context) -> None:
                 raise typer.Exit(0)
 
         # Launch chat with defaults
-        chat(model=None, backend=None, session=None, port=None)
+        chat()
 
 
 if __name__ == "__main__":

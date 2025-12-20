@@ -41,10 +41,11 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from .backend_manager import backend_manager, shutdown_backends
-from .llm import call_llm
-from .routing import select_model, detect_chat_task_type
-from .mcp_server import _select_optimal_backend_v2
+from .llm import call_llm, init_llm_module
+from .routing import select_model, detect_chat_task_type, get_router
 from .orchestration import detect_intent, get_orchestration_executor
+from .stats import StatsService
+from .queue import ModelQueue
 from .tools.agent import AgentConfig, AgentResult, run_agent_loop
 from .tools.builtins import get_default_tools
 from .tools.parser import ParsedToolCall
@@ -52,6 +53,47 @@ from .tools.executor import ToolResult
 from .types import Workspace
 
 log = structlog.get_logger()
+
+# =============================================================================
+# Global Services
+# =============================================================================
+
+# Initialize shared services
+stats_service = StatsService()
+model_queue = ModelQueue()
+
+
+def _update_stats_sync(
+    model_tier: str,
+    task_type: str,
+    original_task: str,
+    tokens: int,
+    elapsed_ms: int,
+    content_preview: str,
+    enable_thinking: bool,
+    backend: str,
+) -> None:
+    """Update stats synchronously."""
+    stats_service.record_call(
+        model_tier=model_tier,
+        task_type=task_type,
+        original_task=original_task,
+        tokens=tokens,
+        elapsed_ms=elapsed_ms,
+        content_preview=content_preview,
+        enable_thinking=enable_thinking,
+        backend=backend,
+    )
+
+
+async def _save_all_stats_async() -> None:
+    """Save all stats to disk."""
+    await stats_service.save_all()
+
+
+def _save_stats_background() -> None:
+    """Schedule stats saving as a background task (non-blocking)."""
+    asyncio.create_task(_save_all_stats_async())
 
 
 # =============================================================================
@@ -65,12 +107,15 @@ async def lifespan(app: Starlette):
     
     Ensures:
     - Initialization of OrchestrationService (loads affinity, prewarm)
+    - Initialization of LLM module (model queue, stats)
     - Background state persistence task
     - Clean shutdown of backend HTTP clients
     - Proper cleanup of pending confirmations
     - Graceful handling of in-flight requests
+    - Distributed discovery (mDNS)
     """
     from .orchestration import get_orchestration_service
+    from .discovery import get_discovery_engine
     
     log.info("api_server_startup")
     
@@ -79,13 +124,30 @@ async def lifespan(app: Starlette):
     service = get_orchestration_service()
     log.info("orchestration_service_ready", stats=service.get_stats())
     
+    # Initialize LLM module (sets up model queue, etc.)
+    init_llm_module(
+        stats_callback=_update_stats_sync,
+        save_stats_callback=_save_stats_background,
+        model_queue=model_queue,
+    )
+    log.info("llm_module_initialized")
+    
     # Start background state persistence task
     persistence_task = asyncio.create_task(_state_persistence_loop(service))
+    
+    # Start distributed discovery in background (can be slow)
+    discovery = get_discovery_engine()
+    api_port = app.state.port if hasattr(app.state, "port") else 34589
+    discovery_task = asyncio.create_task(discovery.start(port=api_port))
     
     yield
     
     # Shutdown: cleanup resources
     log.info("api_server_shutdown_starting")
+    
+    # Stop discovery
+    discovery_task.cancel()
+    await discovery.stop()
     
     # Cancel persistence task
     persistence_task.cancel()
@@ -253,7 +315,7 @@ async def agent_run_stream(
 
     # Select backend
     try:
-        backend_provider, backend_obj = await _select_optimal_backend_v2(
+        _, backend_obj = await get_router().select_optimal_backend(
             task, None, "analyze", backend_type
         )
     except Exception as e:
@@ -967,15 +1029,9 @@ async def chat_stream(
             "message": f"Switching to {model_command} tier",
             "details": {"tier": model_command}
         })
-    else:
-        yield await sse_event("status", {
-            "phase": "routing",
-            "message": "Selecting backend...",
-        })
-
     # Select backend
     try:
-        backend_provider, backend_obj = await _select_optimal_backend_v2(
+        _, backend_obj = await get_router().select_optimal_backend(
             message, None, "analyze", backend_type
         )
     except Exception as e:
@@ -1045,11 +1101,12 @@ async def chat_stream(
 
     # Add system prompt for chat context
     # Import Delia's identity and time context
-    from .prompt_templates import DELIA_IDENTITY_FULL
+    from .prompts import build_system_prompt, ModelRole
     from .language import get_current_time_context
 
     time_context = get_current_time_context()
-    system_prompt = f"""{DELIA_IDENTITY_FULL}
+    base_prompt = build_system_prompt(role=ModelRole.ASSISTANT)
+    system_prompt = f"""{base_prompt}
 
 {time_context}
 
@@ -1065,14 +1122,14 @@ IMPORTANT - Stay in character as Delia:
 4. For opinions/preferences: EXPRESS them! You're Delia, not a generic bot
 5. When uncertain, be playful about it (not apologetic)
 6. Use markdown for code blocks
-7. If asked personal questions (favorite X?): have fun with it, lean into melon jokes
+7. Keep your personality balanced - you're a high-end AI orchestrator, not a one-trick bot.
 
 FORBIDDEN phrases:
 - "As an AI, I don't have..."
 - "I'm just a language model..."
 - "I cannot have preferences..."
 
-You are Delia. You have personality. Use it. 🍈"""
+You are Delia. You have personality. Use it. """
 
     yield await sse_event("thinking", {"status": "Generating..."})
 
@@ -1347,7 +1404,7 @@ async def chat_agent_stream(
     from .session_manager import SessionManager
     from .tools.orchestration import get_orchestration_tools
     from .tools.builtins import get_default_tools
-    from .prompt_templates import ORCHESTRATION_SYSTEM_PROMPT
+    from .prompts import build_system_prompt, ModelRole
     
     start_time = time.time()
     manager = SessionManager()
@@ -1384,7 +1441,7 @@ async def chat_agent_stream(
     
     # Select backend
     try:
-        backend_provider, backend_obj = await _select_optimal_backend_v2(
+        _, backend_obj = await get_router().select_optimal_backend(
             message, None, "analyze", backend_type
         )
     except Exception as e:
@@ -1498,14 +1555,15 @@ async def chat_agent_stream(
     )
     
     # Track tool calls for real-time display
-    from .tools.agent import build_system_prompt, build_messages, execute_tools
+    from .tools.agent import build_system_prompt as agent_build_system_prompt, build_messages, execute_tools
     from .tools.parser import parse_tool_calls, has_tool_calls
     
     all_tool_calls = []
     all_tool_results = []
     
     # Build system prompt with tools
-    full_system = build_system_prompt(ORCHESTRATION_SYSTEM_PROMPT, registry, use_native)
+    legacy_system = build_system_prompt(role=ModelRole.ASSISTANT)
+    full_system = agent_build_system_prompt(legacy_system, registry, use_native)
     messages = build_messages(combined_prompt)
     
     # Run agent loop manually to emit events in real-time
@@ -1778,7 +1836,7 @@ async def chat_nlp_orchestrated_stream(
     })
     
     try:
-        backend_provider, backend_obj = await _select_optimal_backend_v2(
+        _, backend_obj = await get_router().select_optimal_backend(
             message, None, intent.task_type, backend_type
         )
     except Exception as e:
@@ -1817,87 +1875,43 @@ async def chat_nlp_orchestrated_stream(
     else:
         yield await sse_event("thinking", {"status": "Generating response..."})
     
+    # Execute via unified OrchestrationService
+    # This handles: frustration penalty, prewarm update, quality validation, rewards
     try:
-        # Execute via unified OrchestrationService
-        # This handles: frustration penalty, prewarm update, quality validation, rewards
-        processing_result = await service.process(
+        async for event in service.process_stream(
             message=message,
             session_id=session_id,
             backend_type=backend_type,
             model_override=model,
-        )
-        
-        result = processing_result.result
-        
-        if result.success:
-            # Store response in session
-            manager.add_to_session(
-                session.session_id,
-                "assistant",
-                result.response,
-                model=result.model_used,
-            )
+            include_file_tools=include_file_tools,
+        ):
+            # Prepare data payload
+            data = {
+                "message": event.message,
+                **event.details
+            }
             
-            # Emit orchestration details if not simple
-            if result.mode != OrchestrationMode.NONE:
-                yield await sse_event("orchestration", {
-                    "mode": result.mode.value,
-                    "model": result.model_used,
-                    "votes_cast": result.votes_cast,
-                    "consensus_reached": result.consensus_reached,
-                    "confidence": round(result.confidence, 4) if result.confidence else None,
-                    "models_compared": result.models_compared,
-                })
+            # Map fields for client compatibility
+            if event.event_type in ("token", "response"):
+                data["content"] = event.message
+            elif event.event_type == "thinking":
+                data["status"] = event.message
+
+            # Pass events to the client
+            yield await sse_event(event.event_type, data)
             
-            # Emit quality status
-            yield await sse_event("status", {
-                "phase": "quality",
-                "message": f"Quality: {processing_result.quality_score:.0%}" if processing_result.quality_score else "Quality: N/A",
-                "details": {
-                    "quality_score": processing_result.quality_score,
-                    "model": result.model_used,
-                    "melons_awarded": processing_result.melons_awarded,
-                    "prewarm_updated": processing_result.prewarm_updated,
-                }
-            })
-            
-            log.info(
-                "nlp_orchestration_success",
-                mode=result.mode.value,
-                model=result.model_used,
-                quality=processing_result.quality_score,
-                melons=processing_result.melons_awarded,
-                prewarm_updated=processing_result.prewarm_updated,
-                elapsed_ms=processing_result.elapsed_ms,
-            )
-            
-            # Emit response
-            yield await sse_event("response", {"content": result.response})
-            
-            # Done
-            yield await sse_event("done", {
-                "success": True,
-                "session_id": session_id,
-                "model": result.model_used,
-                "backend": backend_name,
-                "elapsed_ms": processing_result.elapsed_ms,
-                "quality": processing_result.quality_score,
-                "orchestration_mode": result.mode.value,
-                "consensus_reached": result.consensus_reached,
-                "confidence": result.confidence,
-                "melons_awarded": processing_result.melons_awarded,
-            })
-            
-        else:
-            # Failed
-            yield await sse_event("error", {"message": result.error or "Orchestration failed"})
-            yield await sse_event("done", {
-                "success": False,
-                "session_id": session_id,
-                "model": result.model_used,
-                "backend": backend_name,
-                "elapsed_ms": processing_result.elapsed_ms,
-            })
+            # Record final response in session if it's a 'response' event
+            if event.event_type == "response" and event.message:
+                model_detail = event.details.get("model", "unknown")
+                if isinstance(model_detail, list):
+                    model_detail = model_detail[0] if model_detail else "unknown"
+                
+                manager.add_to_session(
+                    session.session_id,
+                    "assistant",
+                    event.message,
+                    model=str(model_detail)
+                )
             
     except Exception as e:
         log.error("nlp_orchestration_error", error=str(e))
@@ -2012,6 +2026,9 @@ def run_api(host: str = "0.0.0.0", port: int = 34589) -> None:
         log.error("port_bind_failed", host=host, port=port, error=str(e))
         sock.close()
         raise SystemExit(f"Cannot bind to {host}:{port} - {e}") from e
+    
+    # Store port for discovery engine
+    app.state.port = port
     
     # Configure uvicorn with the pre-bound socket
     # - fd: Use our pre-bound socket with SO_REUSEADDR

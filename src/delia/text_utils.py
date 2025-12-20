@@ -20,37 +20,49 @@ import re
 
 def strip_thinking_tags(response: str) -> str:
     """Remove <think> tags from LLM response.
-
-    Some models (e.g., Qwen3, DeepSeek-R1, nemotron) output thinking in 
-    <think>...</think> tags. This function extracts the useful content:
-
-    1. If there's content after </think>, return that (the "answer")
-    2. If </think> is at the end but <think> exists, return thinking content
-    3. If </think> exists without <think> (malformed), strip everything before it
-    4. If no thinking tags, return the original response
-
-    Args:
-        response: Raw LLM response text
-
-    Returns:
-        Cleaned response with thinking tags removed
-    """
-    if "</think>" not in response:
-        return response
-
-    # Try to get content after the thinking block
-    after_think = response.split("</think>")[-1].strip()
-    if after_think:
-        return after_think
-
-    # No content after </think> - check if <think> tag exists
-    if "<think>" in response:
-        # Extract thinking content between tags
-        match = re.search(r"<think>(.*?)</think>", response, re.DOTALL)
-        if match:
-            return match.group(1).strip()
     
-    # Malformed: </think> exists but no <think> and no content after
-    # This shouldn't normally happen, but return empty or original
-    # Remove everything up to and including </think>
-    return response.replace("</think>", "").strip()
+    DEPRECATED: Use extract_answer() for better logic.
+    """
+    return extract_answer(response)
+
+
+def extract_thinking(response: str) -> str | None:
+    """Extract content between <think> tags.
+    
+    Handles:
+    - Multiple <think> blocks (concatenates them)
+    - Unclosed <think> tags (extracts until end of string)
+    """
+    if "<think>" not in response:
+        return None
+        
+    # Find all <think> blocks
+    thinking_parts = []
+    
+    # Simple regex for matching blocks
+    pattern = re.compile(r"<think>(.*?)(?:</think>|$)", re.DOTALL)
+    for match in pattern.finditer(response):
+        content = match.group(1).strip()
+        if content:
+            thinking_parts.append(content)
+            
+    return "\n\n".join(thinking_parts) if thinking_parts else None
+
+
+def extract_answer(response: str) -> str:
+    """Extract the actual answer (content outside <think> tags).
+    
+    If thinking blocks exist, returns everything AFTER the last </think> tag.
+    If no thinking tags exist, returns the original response.
+    If only <think> exists but no </think>, returns empty string (answer not started).
+    """
+    if "</think>" in response:
+        # Split by the last </think> and take the remainder
+        parts = response.split("</think>")
+        return parts[-1].strip()
+        
+    if "<think>" in response:
+        # Thinking started but not finished, so answer hasn't started
+        return ""
+        
+    return response.strip()

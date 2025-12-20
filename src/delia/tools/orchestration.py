@@ -49,7 +49,8 @@ async def _delegate_handler(
     
     Wraps the MCP delegate tool for use within the agent loop.
     """
-    from ..mcp_server import _delegate_impl, _select_optimal_backend_v2
+    from ..mcp_server import _delegate_impl
+    from ..routing import get_router
     
     log.info(
         "orchestration_delegate",
@@ -61,7 +62,7 @@ async def _delegate_handler(
     )
     
     try:
-        backend_provider, backend_obj = await _select_optimal_backend_v2(
+        _, backend_obj = await get_router().select_optimal_backend(
             content, None, task, backend_type
         )
         
@@ -74,7 +75,7 @@ async def _delegate_handler(
             context=None,
             symbols=None,
             include_references=False,
-            backend=backend_provider,
+            backend=backend_type,
             backend_obj=backend_obj,
             files=None,
             include_metadata=True,

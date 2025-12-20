@@ -16,19 +16,29 @@ import json
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 import numpy as np
 import structlog
 
+# Optional dependencies for local fallback
+SENTENCE_TRANSFORMERS_AVAILABLE = False
+try:
+    from sentence_transformers import SentenceTransformer
+    import torch
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    pass
+
 from .paths import DATA_DIR
 
 log = structlog.get_logger()
 
-# Default embeddings endpoint (llama.cpp compatible)
+# Default embeddings settings
 DEFAULT_EMBEDDINGS_URL = "http://localhost:8082"
 EMBEDDINGS_ENDPOINT = "/v1/embeddings"
+DEFAULT_LOCAL_MODEL = "all-MiniLM-L6-v2" # Fast, small, efficient
 
 # Reference embeddings file
 REFERENCE_EMBEDDINGS_FILE = "reference_embeddings.json"
@@ -43,6 +53,175 @@ class ContentClassification:
     subcategory: str | None = None  # e.g., "python", "typescript"
     reasoning: str = ""
     all_scores: dict[str, float] = field(default_factory=dict)
+
+
+class EmbeddingsProvider(Protocol):
+    """Protocol for embeddings providers."""
+    async def embed(self, text: str) -> np.ndarray: ...
+    async def health_check(self) -> bool: ...
+    async def close(self) -> None: ...
+
+
+class ExternalEmbeddingsProvider:
+    """Client for external embeddings API (e.g., llama.cpp, Ollama)."""
+
+    def __init__(self, base_url: str = DEFAULT_EMBEDDINGS_URL, timeout: float = 30.0):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self._client: httpx.AsyncClient | None = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
+
+    async def close(self) -> None:
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+    async def embed(self, text: str) -> np.ndarray:
+        """Get embedding vector for text."""
+        client = await self._get_client()
+
+        try:
+            response = await client.post(
+                f"{self.base_url}{EMBEDDINGS_ENDPOINT}",
+                json={"input": text, "model": "nomic-embed-text-v1.5"},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Handle OpenAI-compatible response format
+            embedding = data["data"][0]["embedding"]
+            return np.array(embedding, dtype=np.float32)
+
+        except Exception as e:
+            log.debug("external_embeddings_failed", error=str(e))
+            raise
+
+    async def health_check(self) -> bool:
+        """Check if embeddings service is available."""
+        client = await self._get_client()
+        try:
+            response = await client.get(f"{self.base_url}/health", timeout=2.0)
+            return response.status_code == 200
+        except Exception:
+            try:
+                # Fallback check for Ollama or other providers
+                response = await client.get(self.base_url, timeout=2.0)
+                return response.status_code == 200
+            except Exception:
+                return False
+
+
+class LocalEmbeddingsProvider:
+    """Provider using local sentence-transformers library."""
+
+    def __init__(self, model_name: str = DEFAULT_LOCAL_MODEL):
+        self.model_name = model_name
+        self._model: Any = None
+        self._lock = asyncio.Lock()
+
+    async def _get_model(self) -> Any:
+        async with self._lock:
+            if self._model is None:
+                if not SENTENCE_TRANSFORMERS_AVAILABLE:
+                    raise ImportError("sentence-transformers not installed")
+                
+                log.info("loading_local_embeddings_model", model=self.model_name)
+                # Load in thread to avoid blocking event loop
+                self._model = await asyncio.to_thread(SentenceTransformer, self.model_name)
+                
+                # Move to GPU if available
+                if torch.cuda.is_available():
+                    self._model = self._model.to("cuda")
+                elif torch.backends.mps.is_available():
+                    self._model = self._model.to("mps")
+                    
+            return self._model
+
+    async def embed(self, text: str) -> np.ndarray:
+        model = await self._get_model()
+        # Run inference in thread
+        embedding = await asyncio.to_thread(model.encode, text)
+        return np.array(embedding, dtype=np.float32)
+
+    async def health_check(self) -> bool:
+        return SENTENCE_TRANSFORMERS_AVAILABLE
+
+    async def close(self) -> None:
+        self._model = None
+
+
+class HybridEmbeddingsClient:
+    """
+    Hybrid embeddings client that tries external API first, then falls back to local model.
+    Implements the same interface as the old EmbeddingsClient for compatibility.
+    """
+
+    def __init__(
+        self, 
+        base_url: str = DEFAULT_EMBEDDINGS_URL, 
+        local_model: str = DEFAULT_LOCAL_MODEL,
+        timeout: float = 30.0
+    ):
+        self.external_provider = ExternalEmbeddingsProvider(base_url, timeout)
+        self.local_provider = LocalEmbeddingsProvider(local_model)
+        self.active_provider: EmbeddingsProvider | None = None
+        self._init_lock = asyncio.Lock()
+
+    async def initialize(self) -> bool:
+        """Initialize and determine the best provider."""
+        async with self._init_lock:
+            if self.active_provider:
+                return True
+
+            # Determine best provider
+            if await self.external_provider.health_check():
+                self.active_provider = self.external_provider
+                log.info("embeddings_client_using_external_api")
+                return True
+            elif await self.local_provider.health_check():
+                self.active_provider = self.local_provider
+                log.info("embeddings_client_using_local_fallback")
+                return True
+            else:
+                log.warning("embeddings_client_no_provider_available")
+                return False
+
+    async def embed(self, text: str) -> np.ndarray:
+        """Get embedding vector for text."""
+        if not self.active_provider:
+            if not await self.initialize():
+                raise RuntimeError("No embeddings provider available")
+        
+        try:
+            return await self.active_provider.embed(text)
+        except Exception as e:
+            # If external fails, try switching to local immediately
+            if self.active_provider == self.external_provider:
+                log.warning("external_embeddings_failed_during_call", error=str(e))
+                if await self.local_provider.health_check():
+                    self.active_provider = self.local_provider
+                    log.info("switched_to_local_fallback")
+                    return await self.active_provider.embed(text)
+            raise
+
+    async def health_check(self) -> bool:
+        """Check if any provider is available."""
+        if self.active_provider:
+            return await self.active_provider.health_check()
+        return await self.initialize()
+
+    async def close(self) -> None:
+        """Clean up resources."""
+        await self.external_provider.close()
+        await self.local_provider.close()
+
+
+# Alias for backward compatibility with RAG modules
+EmbeddingsClient = HybridEmbeddingsClient
 
 
 # Reference content for each category - these get embedded once and cached
@@ -184,87 +363,16 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
-class EmbeddingsClient:
-    """Client for local embeddings model."""
-
-    def __init__(self, base_url: str = DEFAULT_EMBEDDINGS_URL, timeout: float = 30.0):
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-        self._client: httpx.AsyncClient | None = None
-
-    async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self.timeout)
-        return self._client
-
-    async def close(self) -> None:
-        if self._client:
-            await self._client.aclose()
-            self._client = None
-
-    async def embed(self, text: str) -> np.ndarray:
-        """Get embedding vector for text."""
-        client = await self._get_client()
-
-        try:
-            response = await client.post(
-                f"{self.base_url}{EMBEDDINGS_ENDPOINT}",
-                json={"input": text, "model": "nomic-embed-text-v1.5"},
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            # Handle OpenAI-compatible response format
-            embedding = data["data"][0]["embedding"]
-            return np.array(embedding, dtype=np.float32)
-
-        except httpx.HTTPError as e:
-            log.warning("embeddings_request_failed", error=str(e))
-            raise
-        except (KeyError, IndexError) as e:
-            log.warning("embeddings_parse_failed", error=str(e), response=data)
-            raise ValueError(f"Unexpected embeddings response format: {e}")
-
-    async def embed_batch(self, texts: list[str]) -> list[np.ndarray]:
-        """Get embeddings for multiple texts."""
-        client = await self._get_client()
-
-        try:
-            response = await client.post(
-                f"{self.base_url}{EMBEDDINGS_ENDPOINT}",
-                json={"input": texts, "model": "nomic-embed-text-v1.5"},
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            return [
-                np.array(item["embedding"], dtype=np.float32)
-                for item in sorted(data["data"], key=lambda x: x["index"])
-            ]
-
-        except httpx.HTTPError as e:
-            log.warning("embeddings_batch_failed", error=str(e))
-            raise
-
-    async def health_check(self) -> bool:
-        """Check if embeddings service is available."""
-        client = await self._get_client()
-        try:
-            response = await client.get(f"{self.base_url}/health", timeout=5.0)
-            return response.status_code == 200
-        except Exception:
-            return False
-
-
 class SemanticRouter:
-    """Semantic content classification using embeddings."""
+    """Semantic content classification using embeddings with hybrid fallback."""
 
     def __init__(
         self,
         embeddings_url: str = DEFAULT_EMBEDDINGS_URL,
+        local_model: str = DEFAULT_LOCAL_MODEL,
         cache_references: bool = True,
     ):
-        self.client = EmbeddingsClient(embeddings_url)
+        self.client = HybridEmbeddingsClient(embeddings_url, local_model)
         self.reference_embeddings: dict[str, np.ndarray] = {}
         self._initialized = False
         self._cache_references = cache_references
@@ -278,16 +386,18 @@ class SemanticRouter:
 
             # Try to load cached embeddings first
             if self._cache_references and self._load_cached_embeddings():
-                self._initialized = True
-                log.info("semantic_router_loaded_cache", categories=len(self.reference_embeddings))
-                return True
+                # Still check if we can get a provider
+                if await self.client.initialize():
+                    self._initialized = True
+                    log.info("semantic_router_loaded_cache", categories=len(self.reference_embeddings))
+                    return True
 
             # Check if embeddings service is available
             if not await self.client.health_check():
                 log.warning("semantic_router_embeddings_unavailable")
                 return False
 
-            # Generate reference embeddings (one at a time - some servers don't support batch)
+            # Generate reference embeddings
             try:
                 log.info("semantic_router_generating_references", count=len(REFERENCE_CONTENT))
 
@@ -322,7 +432,7 @@ class SemanticRouter:
                 data = json.load(f)
 
             # Verify all categories are present
-            if set(data.keys()) != set(REFERENCE_CONTENT.keys()):
+            if not all(cat in data for cat in REFERENCE_CONTENT.keys()):
                 log.info("semantic_router_cache_outdated")
                 return False
 
@@ -428,11 +538,14 @@ class SemanticRouter:
 _semantic_router: SemanticRouter | None = None
 
 
-def get_semantic_router(embeddings_url: str = DEFAULT_EMBEDDINGS_URL) -> SemanticRouter:
+def get_semantic_router(
+    embeddings_url: str = DEFAULT_EMBEDDINGS_URL, 
+    local_model: str = DEFAULT_LOCAL_MODEL
+) -> SemanticRouter:
     """Get or create the global semantic router."""
     global _semantic_router
     if _semantic_router is None:
-        _semantic_router = SemanticRouter(embeddings_url)
+        _semantic_router = SemanticRouter(embeddings_url, local_model)
     return _semantic_router
 
 

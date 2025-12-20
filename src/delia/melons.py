@@ -304,6 +304,10 @@ Higher melons = higher routing priority"""
             self._stats_file.write_text(json.dumps(data, indent=2))
         except Exception as e:
             log.warning("melons_save_error", error=str(e))
+
+    def save(self) -> None:
+        """Public alias for _save to match OrchestrationService expectations."""
+        self._save()
     
     def reset(self) -> None:
         """Reset all stats (for testing)."""
@@ -326,6 +330,62 @@ def reset_melon_tracker() -> None:
     """Reset the global melon tracker (for testing)."""
     global _melon_tracker
     _melon_tracker = None
+
+
+class RewardCollector:
+    """
+    Automatically collects high-quality training pairs for fine-tuning.
+    
+    Objective: Save prompt/response pairs that receive a "Golden Melon"
+    or exceptional quality score (>= 0.95).
+    """
+
+    def __init__(self, output_file: Path | None = None):
+        self.output_file = output_file or (paths.DATA_DIR / "training_feedback.jsonl")
+
+    def record_winning_pair(
+        self,
+        prompt: str,
+        response: str,
+        model_id: str,
+        task_type: str,
+        quality_score: float,
+    ) -> None:
+        """
+        Record a high-quality interaction for the fine-tuning dataset.
+        """
+        if quality_score < 0.95:
+            return
+
+        import datetime
+        data = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "model": model_id,
+            "task": task_type,
+            "quality": quality_score,
+            "prompt": prompt,
+            "response": response,
+        }
+
+        try:
+            self.output_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.output_file, "a") as f:
+                f.write(json.dumps(data) + "\n")
+            log.info("🏆 interaction_recorded_for_training", model=model_id, quality=quality_score)
+        except Exception as e:
+            log.warning("failed_to_record_reward", error=str(e))
+
+
+# Singleton instances
+_reward_collector: RewardCollector | None = None
+
+
+def get_reward_collector() -> RewardCollector:
+    """Get the global reward collector instance."""
+    global _reward_collector
+    if _reward_collector is None:
+        _reward_collector = RewardCollector()
+    return _reward_collector
 
 
 # Helper functions for common operations

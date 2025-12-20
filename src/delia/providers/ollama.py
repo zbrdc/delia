@@ -25,6 +25,7 @@ for Ollama backends. It handles:
 """
 
 import json
+import re
 import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Callable
@@ -180,8 +181,23 @@ def log_thinking_and_response(response_text: str, model_tier: str, tokens: int) 
     )
 
 
+def _gemma_escape_json(obj: Any) -> str:
+    """Recursive formatter for FunctionGemma's peculiar JSON-like DSL."""
+    if isinstance(obj, str):
+        return f"<escape>{obj}<escape>"
+    if isinstance(obj, list):
+        items = [_gemma_escape_json(i) for i in obj]
+        return "[" + ",".join(items) + "]"
+    if isinstance(obj, dict):
+        # Keys are NOT quoted in FunctionGemma DSL
+        pairs = [f"{k}:{_gemma_escape_json(v)}" for k, v in obj.items()]
+        return "{" + ",".join(pairs) + "}"
+    # For numbers/booleans, standard JSON is fine
+    return json.dumps(obj)
+
+
 def _format_function_gemma_tools(tools: list[dict[str, Any]]) -> str:
-    """Format tools for FunctionGemma using strict XML-like tags.
+    """Format tools for FunctionGemma using strict XML-like tags and DSL.
     
     See: https://docs.unsloth.ai/models/functiongemma
     """
@@ -191,19 +207,19 @@ def _format_function_gemma_tools(tools: list[dict[str, Any]]) -> str:
             continue
         func = tool["function"]
         name = func["name"]
-        desc = func.get("description", "").replace('"', '\\"')
-        params = json.dumps(func.get("parameters", {}))
+        desc = func.get("description", "")
+        params = _gemma_escape_json(func.get("parameters", {}))
         
         # FunctionGemma expects: <start_function_declaration>declaration:name{description:<escape>desc<escape>,parameters:params}<end_function_declaration>
+        # Note: No space after colon, no quotes on top-level keys.
         decl = (
-            f"<start_function_declaration>declaration:{name}{{"
+            f"\ndeclaration:{name}{{"
             f"description:<escape>{desc}<escape>,"
             f"parameters:{params}}}"
-            f"<end_function_declaration>"
         )
         declarations.append(decl)
     
-    return "".join(declarations)
+    return "<start_function_declaration>" + "".join(declarations) + "\n<end_function_declaration>"
 
 
 # Type for stats callback
@@ -306,6 +322,8 @@ class OllamaProvider:
             num_ctx = self.config.model_moe.num_ctx
         elif model_tier == "coder":
             num_ctx = self.config.model_coder.num_ctx
+        elif model_tier == "dispatcher":
+            num_ctx = self.config.model_dispatcher.num_ctx
         else:
             num_ctx = self.config.model_quick.num_ctx
 
@@ -315,50 +333,63 @@ class OllamaProvider:
         else:
             temp_value = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
 
-        options: dict[str, float | int] = {
+        options: dict[str, Any] = {
             "temperature": temp_value,
             "num_ctx": num_ctx,
         }
+        
+        # CRITICAL: Force Dispatcher to CPU to save VRAM for 30B models
+        if model_tier == "dispatcher":
+            options["num_gpu"] = 0
+            log.debug("forcing_cpu_for_dispatcher", model=model)
+            
         if max_tokens:
             options["num_predict"] = max_tokens
 
-        # Determine endpoint and payload format based on whether tools are provided
-        # /api/chat supports tools, /api/generate does not
-        use_chat_endpoint = tools is not None
+        # Determine endpoint and payload format based on whether messages or tools are provided
+        # /api/chat supports tools and message history, /api/generate is for single completions
+        use_chat_endpoint = (tools is not None) or (messages is not None)
         is_function_gemma = "functiongemma" in model.lower()
 
         if use_chat_endpoint:
             if is_function_gemma:
-                # FunctionGemma requires tools injected into the system prompt with special tags
-                tool_declarations = _format_function_gemma_tools(tools)
-                gemma_system = (
-                    f"You are a model that can do function calling with the following functions"
-                    f"{tool_declarations}"
-                )
+                # FunctionGemma logic (stays the same, handles messages internally)
+                tool_declarations = _format_function_gemma_tools(tools) if tools else ""
+                gemma_system = ""
+                if tool_declarations:
+                    gemma_system = (
+                        f"You are a model that can do function calling with the following functions\n"
+                        f"{tool_declarations}"
+                    )
                 if system:
-                    gemma_system = f"{system}\n\n{gemma_system}"
+                    gemma_system = f"{system}\n\n{gemma_system}" if gemma_system else system
                 
-                # For FunctionGemma, we use /api/chat but we don't pass 'tools' array 
-                # because we manually injected them into the system prompt for better reliability
-                chat_messages = []
-                chat_messages.append({"role": "system", "content": gemma_system})
+                full_prompt = f"<start_of_turn>developer\n{gemma_system}\n<end_of_turn>\n"
+                
                 if messages:
-                    # Filter out existing system messages to avoid duplication
-                    chat_messages.extend([m for m in messages if m.get("role") != "system"])
+                    for msg in messages:
+                        role = msg.get("role")
+                        content = msg.get("content")
+                        if role == "system": continue 
+                        full_prompt += f"<start_of_turn>{role}\n{content}\n<end_of_turn>\n"
                 else:
-                    chat_messages.append({"role": "user", "content": prompt})
+                    full_prompt += f"<start_of_turn>user\n{prompt}\n<end_of_turn>\n"
+                
+                full_prompt += "<start_of_turn>model\n"
                 
                 payload: dict[str, Any] = {
                     "model": model,
-                    "messages": chat_messages,
+                    "prompt": full_prompt,
                     "stream": False,
+                    "raw": True,
                     "options": options,
                 }
-                endpoint = "/api/chat"
+                endpoint = "/api/generate"
             else:
-                # Standard OpenAI-compatible tool calling
+                # Standard /api/chat endpoint
                 if messages:
                     chat_messages = messages.copy()
+                    # Ensure system prompt is present in history
                     if system and not any(m.get("role") == "system" for m in chat_messages):
                         chat_messages.insert(0, {"role": "system", "content": system})
                 else:
@@ -372,13 +403,14 @@ class OllamaProvider:
                     "messages": chat_messages,
                     "stream": False,
                     "options": options,
-                    "tools": tools,
                 }
+                if tools:
+                    payload["tools"] = tools
                 if tool_choice:
                     payload["tool_choice"] = tool_choice
                 endpoint = "/api/chat"
         else:
-            # Use generate endpoint for standard completions
+            # Standard single completion
             payload = {
                 "model": model,
                 "prompt": prompt,
@@ -423,73 +455,67 @@ class OllamaProvider:
 
                 # Handle response based on endpoint used
                 tool_calls = None
-                if use_chat_endpoint:
+                if endpoint == "/api/chat":
                     # Chat endpoint response format
                     message = data.get("message", {})
                     response_text = message.get("content", "")
                     tool_calls = message.get("tool_calls")
-                    
-                    # If it's FunctionGemma and we don't have tool_calls yet, parse them from text
-                    if is_function_gemma and not tool_calls and "<start_function_call>" in response_text:
-                        tool_calls = []
-                        # Regex for <start_function_call>call:name{args}<end_function_call>
-                        pattern = r"<start_function_call>call:(\w+)\{(.*?)\}<end_function_call>"
-                        for match in re.finditer(pattern, response_text, re.DOTALL):
-                            func_name = match.group(1)
-                            args_str = match.group(2)
-                            
-                            # Clean up args string - FunctionGemma sometimes outputs key=value instead of JSON
-                            # but unsloth usually outputs JSON. Let's try JSON first.
-                            try:
-                                # Ensure it's valid JSON by wrapping in {} if it looks like key/value pairs
-                                if ":" not in args_str and "=" in args_str:
-                                    # Handle key=value format if needed, but standard is JSON-like
-                                    pass
-                                
-                                # Most models output JSON-like structure inside the {}
-                                args = json.loads(f"{{{args_str}}}")
-                            except:
-                                # Fallback: simple split if JSON fails
-                                args = {"raw_args": args_str}
-                                
-                            tool_calls.append({
-                                "id": f"call_{int(time.time())}_{len(tool_calls)}",
-                                "type": "function",
-                                "function": {
-                                    "name": func_name,
-                                    "arguments": json.dumps(args)
-                                }
-                            })
-                        
-                        # Strip tool calls from the text for a cleaner response
-                        response_text = re.sub(pattern, "", response_text, flags=re.DOTALL).strip()
-
                     # Token counts in chat response
                     tokens = data.get("eval_count", 0)
                     if tokens == 0:
                         tokens = data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
                 else:
                     # Generate endpoint response format
-                    try:
-                        validated = OllamaResponse.model_validate(data)
-                        tokens = validated.eval_count
-                        response_text = validated.response
-                    except ValidationError as e:
-                        log.warning("ollama_validation_failed", error=str(e))
-                        tokens = data.get("eval_count", 0)
-                        response_text = data.get("response", "")
+                    response_text = data.get("response", "")
+                    tokens = data.get("eval_count", 0)
+                    if tokens == 0:
+                        tokens = data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
+
+                # If it's FunctionGemma and we don't have tool_calls yet, parse them from text
+                if is_function_gemma and not tool_calls and "<start_function_call>" in response_text:
+                    tool_calls = []
+                    # Regex for <start_function_call>call:name{args}<end_function_call>
+                    pattern = r"<start_function_call>call:(\w+)\{(.*?)\}<end_function_call>"
+                    for match in re.finditer(pattern, response_text, re.DOTALL):
+                        func_name = match.group(1)
+                        args_str = match.group(2)
+                        
+                        try:
+                            # Clean up the string to make it valid JSON
+                            # FunctionGemma output is often: path:<escape>val<escape>
+                            # We need to convert it to "path":"val"
+                            cleaned_args = args_str.replace("<escape>", '"')
+                            # Handle unquoted keys: key:value -> "key":value
+                            cleaned_args = re.sub(r'(\w+):', r'"\1":', cleaned_args)
+                            
+                            args = json.loads(f"{{{cleaned_args}}}")
+                        except Exception as e:
+                            log.debug("gemma_parse_args_failed", error=str(e), raw=args_str)
+                            args = {"raw_args": args_str}
+                            
+                        tool_calls.append({
+                            "id": f"call_{int(time.time())}_{len(tool_calls)}",
+                            "type": "function",
+                            "function": {
+                                "name": func_name,
+                                "arguments": json.dumps(args)
+                            }
+                        })
+                    
+                    # Strip tool calls from the text for a cleaner response
+                    response_text = re.sub(pattern, "", response_text, flags=re.DOTALL).strip()
 
                 # Stats tracking
                 if self.stats_callback:
                     self.stats_callback(
-                        model_tier,
-                        task_type,
-                        original_task,
-                        tokens,
-                        elapsed_ms,
-                        content_preview,
-                        enable_thinking,
-                        "ollama",
+                        model_tier=model_tier,
+                        task_type=task_type,
+                        original_task=original_task,
+                        tokens=tokens,
+                        elapsed_ms=elapsed_ms,
+                        content_preview=content_preview,
+                        enable_thinking=enable_thinking,
+                        backend="ollama",
                     )
 
                 log_thinking_and_response(response_text, model_tier, tokens)
@@ -566,8 +592,14 @@ class OllamaProvider:
 
                             if self.stats_callback:
                                 self.stats_callback(
-                                    model_tier, task_type, original_task, tokens,
-                                    retry_elapsed_ms, content_preview, enable_thinking, "ollama",
+                                    model_tier=model_tier,
+                                    task_type=task_type,
+                                    original_task=original_task,
+                                    tokens=tokens,
+                                    elapsed_ms=retry_elapsed_ms,
+                                    content_preview=content_preview,
+                                    enable_thinking=enable_thinking,
+                                    backend="ollama",
                                 )
 
                             log_thinking_and_response(response_text, model_tier, tokens)
@@ -694,26 +726,51 @@ class OllamaProvider:
             num_ctx = self.config.model_moe.num_ctx
         elif model_tier == "coder":
             num_ctx = self.config.model_coder.num_ctx
+        elif model_tier == "dispatcher":
+            num_ctx = self.config.model_dispatcher.num_ctx
         else:
             num_ctx = self.config.model_quick.num_ctx
 
         temperature = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
 
-        options: dict[str, float | int] = {
+        options: dict[str, Any] = {
             "temperature": temperature,
             "num_ctx": num_ctx,
         }
+
+        # Force Dispatcher to CPU
+        if model_tier == "dispatcher":
+            options["num_gpu"] = 0
+
         if max_tokens:
             options["num_predict"] = max_tokens
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "prompt": prompt,
-            "stream": True,  # Enable streaming
-            "options": options,
-        }
-        if system:
-            payload["system"] = system
+        is_function_gemma = "functiongemma" in model.lower()
+        
+        if is_function_gemma:
+            # Wrap in strict Gemma turn markers for streaming too
+            full_prompt = ""
+            if system:
+                full_prompt += f"<start_of_turn>developer\n{system}\n<end_of_turn>\n"
+            full_prompt += f"<start_of_turn>user\n{prompt}\n<end_of_turn>\n"
+            full_prompt += "<start_of_turn>model\n"
+            
+            payload: dict[str, Any] = {
+                "model": model,
+                "prompt": full_prompt,
+                "stream": True,
+                "raw": True, # Exact control
+                "options": options,
+            }
+        else:
+            payload: dict[str, Any] = {
+                "model": model,
+                "prompt": prompt,
+                "stream": True,  # Enable streaming
+                "options": options,
+            }
+            if system:
+                payload["system"] = system
 
         client = backend_obj.get_client()
 
@@ -746,6 +803,7 @@ class OllamaProvider:
                     )
                     return
 
+                last_emitted_thinking_len = 0
                 async for line in response.aiter_lines():
                     if not line.strip():
                         continue
@@ -759,7 +817,46 @@ class OllamaProvider:
                     text_chunk = data.get("response", "")
                     if text_chunk:
                         full_response += text_chunk
-                        yield StreamChunk(text=text_chunk)
+                        
+                        # Detect thinking in real-time
+                        from ..text_utils import extract_thinking, extract_answer
+                        current_thinking = extract_thinking(full_response)
+                        
+                        if current_thinking:
+                            # If thinking has grown, emit the NEW part as a thinking event
+                            new_thinking = current_thinking[last_emitted_thinking_len:]
+                            if new_thinking:
+                                yield StreamChunk(text="", thinking=new_thinking)
+                                last_emitted_thinking_len = len(current_thinking)
+                        
+                        # Only yield actual answer text to the UI
+                        # extract_answer returns "" if only thinking is present
+                        current_answer = extract_answer(full_response)
+                        if current_answer:
+                            # We only want to yield the NEW part of the answer
+                            # full_response includes thinking + answer.
+                            # text_chunk is just the latest delta.
+                            # If current_answer is shorter than text_chunk, it means
+                            # text_chunk was part of thinking.
+                            # If current_answer exists, we yield the delta of the answer.
+                            
+                            # Logic: find where the answer starts in full_response
+                            answer_start_idx = full_response.rfind("</think>")
+                            if answer_start_idx != -1:
+                                answer_start_idx += 8 # len("</think>")
+                                # If the latest chunk crossed the </think> boundary:
+                                if len(full_response) - len(text_chunk) < answer_start_idx:
+                                    # Yield only the part of text_chunk that is answer
+                                    offset = answer_start_idx - (len(full_response) - len(text_chunk))
+                                    answer_delta = text_chunk[offset:]
+                                    if answer_delta:
+                                        yield StreamChunk(text=answer_delta)
+                                else:
+                                    # Latest chunk is entirely answer
+                                    yield StreamChunk(text=text_chunk)
+                            else:
+                                # No thinking tags at all, whole chunk is answer
+                                yield StreamChunk(text=text_chunk)
 
                     # Check if done
                     if data.get("done", False):
@@ -769,14 +866,14 @@ class OllamaProvider:
                         # Stats tracking
                         if self.stats_callback:
                             self.stats_callback(
-                                model_tier,
-                                task_type,
-                                original_task,
-                                total_tokens,
-                                elapsed_ms,
-                                content_preview,
-                                enable_thinking,
-                                "ollama",
+                                model_tier=model_tier,
+                                task_type=task_type,
+                                original_task=original_task,
+                                tokens=total_tokens,
+                                elapsed_ms=elapsed_ms,
+                                content_preview=content_preview,
+                                enable_thinking=enable_thinking,
+                                backend="ollama",
                             )
 
                         health.record_success(content_size)

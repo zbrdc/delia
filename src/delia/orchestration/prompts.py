@@ -14,10 +14,9 @@ from ..prompts import (
     ModelRole,
     OrchestrationMode,
     build_system_prompt,
-    detect_language,
-    get_role_for_task,
     ROLE_PROMPTS,
 )
+from ..language import detect_language
 from .result import DetectedIntent
 
 
@@ -56,15 +55,25 @@ class SystemPromptGenerator:
         # Map orchestration mode
         orch_mode = self._map_orchestration_mode(intent.orchestration_mode)
         
-        return build_system_prompt(
-            task_type=intent.task_type,
+        # Use new signature for build_system_prompt
+        prompt = build_system_prompt(
             role=intent.model_role,
-            orchestration_mode=orch_mode,
-            model_name=model_name,
-            language=language,
-            include_capabilities=True,
-            k_votes=getattr(intent, 'k_votes', None),
+            orchestration_mode=orch_mode.value,
+            include_persona=True,
         )
+
+        # Add additional metadata that used to be in build_system_prompt but isn't legacy/bloat
+        if model_name:
+            prompt += f"\n\nCurrently running as: {model_name}"
+        
+        if language:
+            prompt += f"\nPrimary language: {language}"
+
+        # Add voting context if applicable
+        if orch_mode == OrchestrationMode.VOTING and getattr(intent, 'k_votes', None):
+            prompt += f"\n\nNote: Your response will be validated for consistency. Target consensus: {intent.k_votes} matching responses needed."
+
+        return prompt
     
     def _map_orchestration_mode(self, mode) -> OrchestrationMode:
         """Map from result.OrchestrationMode to prompts.OrchestrationMode."""

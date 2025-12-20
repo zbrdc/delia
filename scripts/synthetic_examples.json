@@ -1,0 +1,181 @@
+[
+  {
+    "user": "Review this Python code for bugs:\n```python\ndef add(a, b):\n    return a + b\n```",
+    "tool": "delegate",
+    "args": {
+      "task": "review",
+      "content": "def add(a, b):\n    return a + b",
+      "language": "python"
+    }
+  },
+  {
+    "user": "Generate a function to calculate fibonacci numbers",
+    "tool": "delegate",
+    "args": {
+      "task": "generate",
+      "content": "Write a function to calculate fibonacci numbers",
+      "language": "python"
+    }
+  },
+  {
+    "user": "Analyze this code and explain what it does:\n```python\nmap(lambda x: x**2, range(10))\n```",
+    "tool": "delegate",
+    "args": {
+      "task": "analyze",
+      "content": "map(lambda x: x**2, range(10))"
+    }
+  },
+  {
+    "user": "Summarize this document briefly",
+    "tool": "delegate",
+    "args": {
+      "task": "summarize",
+      "content": "This is a long document about machine learning..."
+    }
+  },
+  {
+    "user": "Plan the architecture for a REST API",
+    "tool": "delegate",
+    "args": {
+      "task": "plan",
+      "content": "Design a REST API for a user management system"
+    }
+  },
+  {
+    "user": "I need to think through how to implement caching in our system",
+    "tool": "think",
+    "args": {
+      "problem": "How should we implement caching?",
+      "depth": "deep"
+    }
+  },
+  {
+    "user": "Quick question: what's the best sort algorithm for small arrays?",
+    "tool": "think",
+    "args": {
+      "problem": "Best sort algorithm for small arrays?",
+      "depth": "quick"
+    }
+  },
+  {
+    "user": "Review all three config files: app.json, db.json, and auth.json",
+    "tool": "batch",
+    "args": {
+      "tasks": "[{\"task\": \"review\", \"content\": \"app.json\"}, {\"task\": \"review\", \"content\": \"db.json\"}, {\"task\": \"review\", \"content\": \"auth.json\"}]"
+    }
+  },
+  {
+    "user": "Show me the contents of config.py",
+    "tool": "read_file",
+    "args": {
+      "path": "config.py"
+    }
+  },
+  {
+    "user": "Read lines 10-50 from main.py",
+    "tool": "read_file",
+    "args": {
+      "path": "main.py",
+      "start_line": 10,
+      "end_line": 50
+    }
+  },
+  {
+    "user": "What files are in the src folder?",
+    "tool": "list_directory",
+    "args": {
+      "path": "src"
+    }
+  },
+  {
+    "user": "List all Python files in the project",
+    "tool": "list_directory",
+    "args": {
+      "path": ".",
+      "recursive": true,
+      "pattern": "*.py"
+    }
+  },
+  {
+    "user": "Find all usages of 'async def' in Python files",
+    "tool": "search_code",
+    "args": {
+      "pattern": "async def",
+      "file_pattern": "*.py"
+    }
+  },
+  {
+    "user": "Search for TODO comments",
+    "tool": "search_code",
+    "args": {
+      "pattern": "TODO",
+      "context_lines": 3
+    }
+  },
+  {
+    "user": "Search for Python asyncio best practices",
+    "tool": "web_search",
+    "args": {
+      "query": "Python asyncio best practices",
+      "max_results": 5
+    }
+  },
+  {
+    "user": "Fetch the Python documentation page",
+    "tool": "web_fetch",
+    "args": {
+      "url": "https://docs.python.org/3/",
+      "extract_text": true
+    }
+  },
+  {
+    "user": "Check if all backends are healthy",
+    "tool": "health",
+    "args": {}
+  },
+  {
+    "user": "What's the status of the LLM backends?",
+    "tool": "health",
+    "args": {}
+  },
+  {
+    "user": "What models are available?",
+    "tool": "models",
+    "args": {}
+  },
+  {
+    "user": "List configured models",
+    "tool": "models",
+    "args": {}
+  },
+  {
+    "user": "Use the agent to explore the codebase and find all error handling patterns",
+    "tool": "agent",
+    "args": {
+      "prompt": "Explore this codebase and identify error handling patterns",
+      "max_iterations": 5
+    }
+  },
+  {
+    "user": "Switch to the local backend",
+    "tool": "switch_backend",
+    "args": {
+      "backend_id": "local"
+    }
+  },
+  {
+    "user": "Change the coder model to qwen2.5:14b",
+    "tool": "switch_model",
+    "args": {
+      "tier": "coder",
+      "model_name": "qwen2.5:14b"
+    }
+  },
+  {
+    "user": "Generate code, then review it, then generate tests",
+    "tool": "chain",
+    "args": {
+      "steps": "[{\"id\": \"gen\", \"task\": \"generate\", \"content\": \"Write hello world\"}, {\"id\": \"review\", \"task\": \"review\", \"content\": \"${gen}\"}]"
+    }
+  }
+]

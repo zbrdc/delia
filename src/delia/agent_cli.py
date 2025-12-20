@@ -37,7 +37,12 @@ from .tools.registry import ToolRegistry
 from .types import Workspace
 from .delegation import DelegateContext, delegate_impl
 from .multi_user_tracking import tracker
-from .tui import RichAgentUI
+from .tui import RichAgentUI, RICH_AVAILABLE, console
+
+try:
+    from rich.panel import Panel
+except ImportError:
+    Panel = None  # type: ignore
 
 log = structlog.get_logger()
 
@@ -98,7 +103,9 @@ async def run_agent_cli(
         AgentCLIResult with response and metadata
     """
     # Import here to avoid circular imports
-    from .mcp_server import call_llm, select_model, _select_optimal_backend_v2, get_active_backend
+    from .llm import call_llm
+    from .routing import select_model, get_router
+    from .mcp_server import get_active_backend
 
     start_time = time.time()
 
@@ -106,7 +113,7 @@ async def run_agent_cli(
     ui.print_header(task)
 
     try:
-        backend_provider, backend_obj = await _select_optimal_backend_v2(
+        _, backend_obj = await get_router().select_optimal_backend(
             task, None, "analyze", config.backend_type
         )
     except Exception as e:
@@ -130,6 +137,10 @@ async def run_agent_cli(
             model_override=config.model,
             content=task,
         )
+        # Safety fix: Handle list if routing returns multiple models
+        if isinstance(selected_model, list):
+            selected_model = selected_model[0] if selected_model else "unknown"
+            
     except Exception as e:
         return AgentCLIResult(
             success=False,
@@ -140,6 +151,18 @@ async def run_agent_cli(
             model="unknown",
             backend=backend_name,
         )
+
+    # ACE Layer 2: Inject Learned Strategies (Global Strategy)
+    from .playbook import playbook_manager
+    playbook_context = playbook_manager.format_for_prompt("agent")
+    
+    # ACE Layer 1: Inject Constitution (Aspirations)
+    constitution_path = Path("data/constitution.md")
+    constitution = ""
+    if constitution_path.exists():
+        constitution = f"\n\n## System Constitution\n{constitution_path.read_text()}"
+
+    task_context = f"{task}\n\n{playbook_context}{constitution}"
 
     # Generate Plan (if enabled)
     initial_plan = ""
@@ -338,7 +361,7 @@ Instructions:
         
         result = await run_agent_loop(
             call_llm=agent_llm_call,
-            prompt=task,
+            prompt=task_context,  # Use enriched context with Playbook & Constitution
             system_prompt=None,
             registry=registry,
             model=selected_model,
@@ -393,6 +416,220 @@ Instructions:
     )
 
     return cli_result
+
+
+async def run_chat_cli(config: AgentCLIConfig) -> None:
+    """
+    Run an interactive chat session using the Native Python TUI.
+    
+    This replaces the legacy TypeScript 'delia-cli' by running the
+    agent loop in a persistent conversation context.
+    """
+    from .llm import call_llm
+    from .routing import select_model, get_router
+    from .mcp_server import get_active_backend
+    from .playbook import playbook_manager
+    from rich.prompt import Prompt
+
+    if RICH_AVAILABLE and console:
+        console.clear()
+        ui.print_header("Delia Native Chat", subtitle="Type 'exit' to quit, Ctrl+\\ to pause agent")
+
+    # Select backend (once)
+    try:
+        _, backend_obj = await get_router().select_optimal_backend(
+            "setup", None, "analyze", config.backend_type
+        )
+    except Exception:
+        backend_obj = None
+    
+    backend_name = backend_obj.name if backend_obj else "unknown"
+    messages: list[dict[str, Any]] = []
+    
+    # Pre-load context
+    playbook_context = playbook_manager.format_for_prompt("agent")
+    constitution_path = Path("data/constitution.md")
+    constitution = ""
+    if constitution_path.exists():
+        constitution = f"\n\n## System Constitution\n{constitution_path.read_text()}"
+    
+    system_base = f"{playbook_context}{constitution}"
+
+    # Setup tools
+    workspace_obj = Workspace(root=config.workspace) if config.workspace else None
+    registry = get_default_tools(workspace=workspace_obj)
+    if config.tools:
+        registry = registry.filter(config.tools)
+    use_native = backend_obj.supports_native_tool_calling if backend_obj else False
+
+    # Create config for loop
+    agent_config = AgentConfig(
+        max_iterations=config.max_iterations,
+        parallel_tools=True,
+        native_tool_calling=use_native,
+        reflection_enabled=config.reflection_enabled,
+    )
+
+    # Callbacks
+    async def chat_llm_call(msgs: list[dict], sys: str | None) -> str:
+        # Get the latest user prompt for model selection
+        latest_prompt = msgs[-1]["content"] if msgs else ""
+        
+        # Select model dynamically based on latest prompt
+        current_model = await select_model(
+            task_type="analyze",
+            content_size=len(latest_prompt),
+            model_override=config.model,
+            content=latest_prompt,
+        )
+        if isinstance(current_model, list):
+            current_model = current_model[0]
+
+        # Update UI metadata
+        ui.update_metadata(current_model, backend_name)
+
+        # Call LLM with native messages support
+        result = await call_llm(
+            model=current_model,
+            prompt=latest_prompt, # Still pass for fallback
+            system=sys,
+            messages=msgs, # Direct history support
+            task_type="chat",
+            backend_obj=backend_obj,
+        )
+        return result.get("response", "") if result.get("success") else "Error"
+
+    # UI Callbacks
+    def on_tool_call(tc: Any):
+        ui.print_tool_call(tc.name, tc.arguments)
+
+    def on_tool_result(res: Any):
+        ui.print_tool_result(res.name, res.output, res.success)
+
+    # Interruption handling
+    import signal
+    interrupt_flag = False
+
+    def signal_handler(sig, frame):
+        nonlocal interrupt_flag
+        interrupt_flag = True
+
+    # Register signal handler for SIGQUIT (Ctrl+\)
+    # We leave SIGINT (Ctrl+C) alone so it can terminate the program
+    original_handler = None
+    if hasattr(signal, "SIGQUIT"):
+        original_handler = signal.getsignal(signal.SIGQUIT)
+        signal.signal(signal.SIGQUIT, signal_handler)
+
+    async def check_interruption() -> str | None:
+        nonlocal interrupt_flag
+        if interrupt_flag:
+            interrupt_flag = False
+            # Pause UI to allow input
+            ui.stop()
+            try:
+                if RICH_AVAILABLE:
+                    from rich.prompt import Prompt
+                    print()
+                    choice = Prompt.ask(
+                        "[bold red]Agent Paused.[/bold red] (c)ontinue, (s)top, or enter instruction",
+                        default="c"
+                    )
+                else:
+                    choice = input("\nAgent Paused. (c)ontinue, (s)top, or enter instruction: ")
+                
+                if choice.lower() in ('s', 'stop'):
+                    return "STOP"
+                if choice.lower() in ('c', 'continue'):
+                    ui.start()
+                    return None
+                
+                # Treat as new instruction
+                ui.start()
+                return choice
+            except KeyboardInterrupt:
+                return "STOP"
+        return None
+
+    # Main Chat Loop
+    while True:
+        try:
+            # Use prompt_toolkit for robust input and large pastes
+            from prompt_toolkit import PromptSession
+            from prompt_toolkit.formatted_text import HTML
+            from prompt_toolkit.key_binding import KeyBindings
+            
+            session = PromptSession()
+            
+            # Simple keybinding for multi-line submission (Alt+Enter)
+            kb = KeyBindings()
+            @kb.add('escape', 'enter')
+            def _(event):
+                event.current_buffer.validate_and_handle()
+
+            user_input = session.prompt(
+                HTML('<b><ansigreen>You</ansigreen></b> > '),
+                multiline=True,
+                key_bindings=kb,
+            ).strip()
+            
+            if user_input.lower() in ("exit", "quit", "/bye"):
+                break
+                
+            if not user_input:
+                continue
+
+            # Detect and show [Lines] for large input
+            line_count = user_input.count('\n') + 1
+            if line_count > 5:
+                if RICH_AVAILABLE and console:
+                    console.print(f"[dim]Pasted {line_count} lines of text.[/dim]")
+
+            # Start Agent UI
+            ui.start()
+            ui.update_metadata("Thinking...", backend_name)
+            
+            # Reset interrupt flag before starting
+            interrupt_flag = False
+
+            # Run Agent Loop with History
+            result = await run_agent_loop(
+                call_llm=chat_llm_call,
+                prompt=user_input,
+                system_prompt=system_base,
+                registry=registry,
+                model="auto",
+                config=agent_config,
+                on_tool_call=on_tool_call,
+                on_tool_result=on_tool_result,
+                messages=messages, # Pass persistent history
+                interruption_callback=check_interruption,
+            )
+            
+            ui.stop()
+            
+            # Print response
+            ui.print_final_response(result.response)
+            
+            # Note: run_agent_loop automatically appends new messages to the list we passed
+            # So 'messages' is updated in-place. We don't need to manually append.
+
+        except KeyboardInterrupt:
+            # Standard Ctrl+C termination
+            ui.stop()
+            print("\nExiting...")
+            break
+        except Exception as e:
+            ui.stop()
+            log.error("chat_loop_error", error=str(e))
+            if RICH_AVAILABLE and console:
+                console.print(f"[red]Error: {e}[/red]")
+            else:
+                print(f"Error: {e}")
+    
+    # Restore signal handler
+    if hasattr(signal, "SIGQUIT") and original_handler:
+        signal.signal(signal.SIGQUIT, original_handler)
 
 
 def run_agent_sync(task: str, config: AgentCLIConfig) -> AgentCLIResult:

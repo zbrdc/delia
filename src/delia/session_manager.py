@@ -144,8 +144,17 @@ class SessionState:
             self.total_tokens += tokens
         if role == "assistant":
             self.total_calls += 1
-        if model:
+        
+        # Defensive check: only add strings to models_used set
+        if model and isinstance(model, str):
             self.models_used.add(model)
+        elif model:
+            # Handle cases where model might be a list or other object
+            log.warning("session_add_message_invalid_model_type", type=type(model).__name__, value=str(model))
+            if isinstance(model, list) and model:
+                self.models_used.add(str(model[0]))
+            else:
+                self.models_used.add(str(model))
 
     def get_context_window(self, max_tokens: int = 8000) -> str:
         """
@@ -179,6 +188,7 @@ class SessionState:
             line_chars = len(line)
 
             # Check if adding this message would exceed limit
+            # Always allow at least one message even if it exceeds the limit
             if total_chars + line_chars > max_chars and lines:
                 break
 
@@ -214,9 +224,19 @@ class SessionState:
         # Convert messages list to SessionMessage objects
         if "messages" in data:
             data["messages"] = [SessionMessage.from_dict(msg) for msg in data["messages"]]
-        # Convert models_used list back to set
+        
+        # Convert models_used list back to set, ensuring all items are strings
         if "models_used" in data:
-            data["models_used"] = set(data["models_used"])
+            raw_models = data["models_used"]
+            clean_models = []
+            for m in raw_models:
+                if isinstance(m, list):
+                    # Flatten list if present
+                    clean_models.extend([str(item) for item in m if item])
+                elif m:
+                    clean_models.append(str(m))
+            data["models_used"] = set(clean_models)
+            
         return cls(**data)
 
 

@@ -215,8 +215,8 @@ class TestTieScenarios:
         assert not r1.consensus_reached
         assert r1.total_votes == 1
 
-        # Vote 2: Response B (different)
-        r2 = consensus.add_vote("The answer is 43.")
+        # Vote 2: Response B (different enough to be < 0.90 similarity)
+        r2 = consensus.add_vote("A completely different response 43.")
         assert not r2.consensus_reached
         assert r2.total_votes == 2
 

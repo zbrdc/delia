@@ -118,7 +118,7 @@ class TestToolRegistry:
         # All tools: read_file, list_directory, search_code, web_fetch, web_search, web_news,
         # write_file, delete_file, shell_exec, replace_in_file, insert_into_file
         # (ask_user is disabled)
-        assert len(schemas) == 11
+        assert len(schemas) == 14
         assert all(s["type"] == "function" for s in schemas)
 
     def test_filter_registry(self):
@@ -775,7 +775,7 @@ class TestAgentLoop:
         assert "tools" in captured_payload
         # All tools: read_file, list_directory, search_code, web_fetch, web_search, web_news,
         # write_file, delete_file, shell_exec, replace_in_file, insert_into_file
-        assert len(captured_payload["tools"]) == 11
+        assert len(captured_payload["tools"]) == 14
         assert all(t["type"] == "function" for t in captured_payload["tools"])
 
         # Verify expected tool names

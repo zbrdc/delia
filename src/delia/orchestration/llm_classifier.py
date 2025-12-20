@@ -106,11 +106,10 @@ class LLMIntentClassifier:
         try:
             # Import here to avoid circular imports
             from ..llm import call_llm
-            from ..routing import select_model
-            from ..mcp_server import _select_optimal_backend_v2
+            from ..routing import select_model, get_router
             
             # Select quick model for classification
-            _, backend_obj = await _select_optimal_backend_v2(
+            _, backend_obj = await get_router().select_optimal_backend(
                 message, None, "quick", backend_type
             )
             

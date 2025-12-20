@@ -24,17 +24,19 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 import structlog
 
 from pydantic import BaseModel
 
-from .intent import detect_intent
+from .intent import detect_intent, get_intent_detector
 from .executor import get_orchestration_executor, OrchestrationExecutor
-from .result import DetectedIntent, OrchestrationMode, OrchestrationResult
+from .result import DetectedIntent, OrchestrationMode, OrchestrationResult, StreamEvent
 from .context import ContextEngine
 from ..tracing import trace, add_event
+from ..frustration import FrustrationLevel
+from ..melons import get_reward_collector
 
 if TYPE_CHECKING:
     from ..config import AffinityTracker, PrewarmTracker
@@ -135,6 +137,26 @@ class OrchestrationService:
             frustration=get_frustration_tracker(),
         )
     
+    async def save_state(self) -> None:
+        """
+        Persist service state to disk.
+        
+        Saves:
+        - Affinity scores
+        - Prewarm EMA data
+        - Melon leaderboard stats
+        """
+        from ..config import save_affinity, save_prewarm
+        
+        log.debug("orchestration_service_saving_state")
+        
+        # Save each sub-component
+        save_affinity()
+        save_prewarm()
+        self.melons.save()
+        
+        log.info("orchestration_service_state_saved")
+
     async def process(
         self,
         message: str,
@@ -148,19 +170,7 @@ class OrchestrationService:
         include_references: bool = False,
     ) -> ProcessingResult:
         """
-        Process a message through the full orchestration pipeline.
-        
-        This is the main entry point for all orchestration.
-        
-        Pipeline:
-        1. Context Preparation - assemble files, memories, and history
-        2. Frustration check - detect repeated questions, penalize bad models
-        3. Intent detection - NLP-based determination of orchestration mode
-        4. Auto-upgrade - promote to VOTING on repeated frustration
-        5. Prewarm update - learn usage patterns for this task type
-        6. Execute - run the orchestration (voting, comparison, etc.)
-        7. Quality validation - score the response
-        8. Rewards - update affinity, award melons
+        Process a message through the full orchestration pipeline (Static).
         """
         # Wrap entire pipeline in a trace for observability
         with trace(
@@ -173,7 +183,139 @@ class OrchestrationService:
                 span, message, session_id, backend_type, model_override, output_type,
                 files=files, context=context, symbols=symbols, include_references=include_references
             )
-    
+
+    async def process_stream(
+        self,
+        message: str,
+        session_id: str | None = None,
+        backend_type: str | None = None,
+        model_override: str | None = None,
+        files: str | None = None,
+        context: str | None = None,
+        symbols: str | None = None,
+        include_references: bool = False,
+        include_file_tools: bool = True,
+    ) -> AsyncIterator[StreamEvent]:
+        """
+        Process a message through the full pipeline with real-time SSE events.
+        
+        This is the primary engine for the 'delia chat' command.
+        """
+        # 1. Context Preparation (Shared logic)
+        session_context = None
+        if session_id:
+            from ..session_manager import get_session_manager
+            session_manager = get_session_manager()
+            session = session_manager.get_session(session_id)
+            if session:
+                session_context = session.get_context_window(max_tokens=6000)
+                session_manager.add_to_session(session_id, "user", message)
+
+        prepared_content = await ContextEngine.prepare_content(
+            content=message,
+            context=context,
+            symbols=symbols,
+            include_references=include_references,
+            files=files,
+            session_context=session_context,
+            include_project_overview=True, # Chat always gets repo awareness
+        )
+
+        # 2. Intent Detection
+        intent = await get_intent_detector().detect_async(message)
+        yield StreamEvent(
+            event_type="intent",
+            message=f"Detected Intent: {intent.task_type}",
+            details={"mode": intent.orchestration_mode.value, "role": intent.model_role.value}
+        )
+
+        # 3. Orchestrated Execution (Streaming)
+        async for event in self.executor.execute_stream(
+            intent=intent,
+            message=prepared_content,
+            original_message=message,
+            session_id=session_id,
+            backend_type=backend_type,
+            model_override=model_override,
+        ):
+            yield event
+
+        # 4. Learning (Update prewarm)
+        self.prewarm.update(intent.task_type)            
+    async def process_chain(
+        self,
+        steps_json: str,
+        session_id: str | None = None,
+    ) -> ProcessingResult:
+        """Explicitly process a task chain."""
+        intent = DetectedIntent(
+            task_type="coder",
+            orchestration_mode=OrchestrationMode.CHAIN,
+            reasoning="explicit chain tool call",
+        )
+        # Use a trace
+        with trace("orchestration_chain", steps_len=len(steps_json)) as span:
+            return await self._process_traced_direct(
+                span, steps_json, intent, session_id
+            )
+
+    async def process_workflow(
+        self,
+        workflow_json: str,
+        session_id: str | None = None,
+    ) -> ProcessingResult:
+        """Explicitly process a workflow DAG."""
+        intent = DetectedIntent(
+            task_type="moe",
+            orchestration_mode=OrchestrationMode.WORKFLOW,
+            reasoning="explicit workflow tool call",
+        )
+        with trace("orchestration_workflow", workflow_len=len(workflow_json)) as span:
+            return await self._process_traced_direct(
+                span, workflow_json, intent, session_id
+            )
+
+    async def _process_traced_direct(
+        self,
+        span,
+        message: str,
+        intent: DetectedIntent,
+        session_id: str | None = None,
+    ) -> ProcessingResult:
+        """Internal implementation for direct (non-detected) processing."""
+        start_time = time.time()
+        
+        # Skip frustration and intent detection for direct calls
+        # but record to session history
+        if session_id:
+            from ..session_manager import get_session_manager
+            session_manager = get_session_manager()
+            session_manager.add_to_session(
+                session_id, "user", message[:100] + "...", tokens=0, model="", task_type=intent.task_type
+            )
+
+        # Execute orchestration
+        result = await self.executor.execute(
+            intent=intent,
+            message=message,
+            original_message=message, # Same for direct calls
+            session_id=session_id,
+        )
+        
+        # Rewards and validation
+        quality_score = 0.8 # Default for complex multi-step
+        if result.success:
+             self.prewarm.update(intent.task_type)
+        
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        
+        return ProcessingResult(
+            result=result,
+            intent=intent,
+            quality_score=quality_score,
+            elapsed_ms=elapsed_ms,
+        )
+
     async def _process_traced(
         self,
         span,
@@ -204,6 +346,25 @@ class OrchestrationService:
                     session_id, "user", message, tokens=0, model="", task_type="orchestration"
                 )
 
+        # STEP 2: Intent detection (3-tier NLP)
+        from .intent import get_intent_detector
+        detector = get_intent_detector()
+        intent = await detector.detect_async(message)
+        
+        span.event(
+            "intent_detected",
+            task_type=intent.task_type,
+            mode=intent.orchestration_mode.value,
+            confidence=round(intent.confidence, 2),
+        )
+
+        # Decide if we need repo-wide context based on intent
+        needs_repo_context = intent.orchestration_mode in [
+            OrchestrationMode.WORKFLOW, 
+            OrchestrationMode.AGENTIC,
+            OrchestrationMode.DEEP_THINKING
+        ]
+
         # Assemble full content (Files + Memories + History + Task)
         prepared_content = await ContextEngine.prepare_content(
             content=message,
@@ -212,11 +373,12 @@ class OrchestrationService:
             include_references=include_references,
             files=files,
             session_context=session_context,
+            include_project_overview=needs_repo_context,
         )
 
         span.event("context_prepared", length=len(prepared_content))
 
-        # STEP 2: Frustration detection
+        # STEP 3: Frustration detection
         repeat_info = None
         if session_id:
             repeat_info = self.frustration.check_repeat(session_id, message)
@@ -311,14 +473,31 @@ class OrchestrationService:
         # STEP 5: Execute orchestration
         span.event("execute_start", mode=intent.orchestration_mode.value)
         
-        result = await self.executor.execute(
-            intent=intent,
-            message=prepared_content,  # Use the fully assembled context
-            session_id=session_id,
-            backend_type=backend_type,
-            model_override=model_override,
-            output_type=output_type,
-        )
+        # FAST PATH: Skip Model-Dispatcher for non-complex intents
+        # This saves 2-3s of latency for basic chat/status.
+        fast_path_tasks = ["status", "quick"]
+        if intent.task_type in fast_path_tasks and intent.orchestration_mode == OrchestrationMode.NONE:
+            log.info("orchestration_fast_path_triggered", task=intent.task_type)
+            result = await self.executor.execute(
+                intent=intent,
+                message=prepared_content,
+                original_message=message,
+                session_id=session_id,
+                backend_type=backend_type,
+                model_override=model_override,
+                output_type=output_type,
+            )
+        else:
+            # NORMAL PATH: Use Dispatcher -> Planner -> Executor
+            result = await self.executor.execute(
+                intent=intent,
+                message=prepared_content,
+                original_message=message,
+                session_id=session_id,
+                backend_type=backend_type,
+                model_override=model_override,
+                output_type=output_type,
+            )
         
         span.event(
             "execute_complete",
@@ -348,6 +527,15 @@ class OrchestrationService:
             # Award melons! 🍈
             from ..melons import award_melons_for_quality
             melons_awarded = award_melons_for_quality(
+                model_id=result.model_used,
+                task_type=intent.task_type,
+                quality_score=quality_score,
+            )
+            
+            # Record winning pair for local RL dataset 🏆
+            get_reward_collector().record_winning_pair(
+                prompt=message,
+                response=result.response,
                 model_id=result.model_used,
                 task_type=intent.task_type,
                 quality_score=quality_score,

@@ -26,10 +26,18 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .routing import ScoringWeights
 
 import httpx
 import structlog
+import warnings
+
+# Suppress Google Generative AI FutureWarning until migration
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
+warnings.filterwarnings("ignore", category=FutureWarning, module="delia.backend_manager")
 
 # Optional dependency - imported lazily in check_health()
 genai: Any = None
@@ -701,13 +709,71 @@ class BackendManager:
             "routing": self.routing_config,
         }
 
-    def add_backend(self, backend_data: dict[str, Any]) -> BackendConfig:
-        """Add a new backend from the WebGUI."""
-        backend = BackendConfig.from_dict(backend_data)
+    def add_backend(self, backend_data: dict[str, Any] | BackendConfig) -> BackendConfig:
+        """Add a new backend."""
+        if isinstance(backend_data, BackendConfig):
+            backend = backend_data
+        else:
+            backend = BackendConfig.from_dict(backend_data)
+            
         self.backends[backend.id] = backend
-        self.save_settings()
+        
+        # Only save to disk if it's a persistent backend (usually from WebGUI)
+        # Discovered backends are in-memory only by default.
+        if not backend.id.startswith("remote-"):
+            self.save_settings()
+            
         _get_log().info("backend_added", backend_id=backend.id, name=backend.name)
         return backend
+
+    async def probe_backend(self, backend_id: str) -> bool:
+        """Probe a backend to discover its available models and assign tiers."""
+        backend = self.backends.get(backend_id)
+        if not backend:
+            return False
+
+        # Build endpoint info for probing
+        endpoint = {
+            "url": backend.url,
+            "provider": backend.provider,
+            "health": backend.health_endpoint if backend.health_endpoint else "/health",
+            "models": backend.models_endpoint if backend.models_endpoint else "/v1/models",
+        }
+        
+        # For Ollama, use specialized endpoints if defaults not set
+        if backend.provider == "ollama":
+            endpoint["health"] = "/api/tags"
+            endpoint["models"] = "/api/tags"
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # Check health
+                try:
+                    resp = await client.get(f"{backend.url}{endpoint['health']}")
+                    if resp.status_code != 200:
+                        return False
+                except Exception:
+                    return False
+
+                # Get models
+                resp = await client.get(f"{backend.url}{endpoint['models']}")
+                if resp.status_code != 200:
+                    return False
+
+                data = resp.json()
+                available_models = self._parse_models_response(data, backend.provider)
+
+                if available_models:
+                    # Assign models to tiers
+                    from .model_detection import assign_models_to_tiers
+                    backend.models = assign_models_to_tiers(available_models)
+                    _get_log().info("backend_probed", id=backend_id, models=len(available_models))
+                    return True
+
+        except Exception as e:
+            _get_log().debug("backend_probe_failed", id=backend_id, error=str(e))
+        
+        return False
 
     async def update_backend(self, backend_id: str, updates: dict[str, Any]) -> BackendConfig | None:
         """

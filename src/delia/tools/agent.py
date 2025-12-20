@@ -160,41 +160,15 @@ async def run_agent_loop(
     critique_callback: Callable[[str, str], Awaitable[tuple[bool, str]]] | None = None,
     on_tool_call: Callable[[ParsedToolCall], None] | None = None,
     on_tool_result: Callable[[ToolResult], None] | None = None,
+    messages: list[dict[str, Any]] | None = None,
+    interruption_callback: Callable[[], Awaitable[str | None]] | None = None,
 ) -> AgentResult:
     """Run an agentic loop with tool calling.
 
-    The agent repeatedly:
-    1. Calls the LLM with the current conversation
-    2. Checks if response contains tool calls
-    3. If yes: executes tools, appends results, loops
-    4. If no: optionally reflects/critiques, then returns
-
     Args:
-        call_llm: Async function to call the LLM. Signature:
-                  (messages: list[dict], system: str | None) -> str | dict
-        prompt: Initial user prompt/task
-        system_prompt: System prompt (tool info added automatically)
-        registry: Tool registry with available tools
-        model: Model name (for logging)
-        config: Agent configuration (uses defaults if None)
-        critique_callback: Optional async function (response, original_prompt) -> (is_valid, feedback)
-        on_tool_call: Optional callback when a tool is called
-        on_tool_result: Optional callback when a tool execution completes
-
-    Returns:
-        AgentResult with final response and execution details
-
-    Example:
-        async def my_llm(messages, system):
-            return await call_ollama(messages, system, model="qwen2.5:14b")
-
-        result = await run_agent_loop(
-            call_llm=my_llm,
-            prompt="Read config.py and summarize its purpose",
-            system_prompt="You are a code assistant.",
-            registry=get_default_tools(),
-            model="qwen2.5:14b",
-        )
+        ...
+        interruption_callback: Async function called before each step. 
+                               Returns None (continue), "STOP", or new instruction string.
     """
     config = config or AgentConfig()
     start_time = time.time()
@@ -203,7 +177,12 @@ async def run_agent_loop(
     full_system = build_system_prompt(system_prompt, registry, config.native_tool_calling)
 
     # Initialize conversation
-    messages = build_messages(prompt)
+    if messages is None:
+        messages = build_messages(prompt)
+    else:
+        # If history exists, append the new user prompt if not empty
+        if prompt:
+            messages.append({"role": "user", "content": prompt})
 
     all_tool_calls: list[ParsedToolCall] = []
     all_tool_results: list[ToolResult] = []
@@ -219,6 +198,25 @@ async def run_agent_loop(
     )
 
     for iteration in range(config.max_iterations):
+        # Check for interruption/injection
+        if interruption_callback:
+            instruction = await interruption_callback()
+            if instruction == "STOP":
+                log.info("agent_interrupted_by_user")
+                return AgentResult(
+                    success=False,
+                    response="Agent stopped by user.",
+                    iterations=iteration,
+                    tool_calls=all_tool_calls,
+                    tool_results=all_tool_results,
+                    elapsed_ms=int((time.time() - start_time) * 1000),
+                    tokens=total_tokens,
+                    stopped_reason="user_stop",
+                )
+            elif instruction:
+                log.info("agent_instruction_injected", instruction=instruction)
+                messages.append({"role": "user", "content": f"[User Intervention]: {instruction}"})
+
         # Check total timeout
         elapsed = time.time() - start_time
         if elapsed > config.total_timeout:

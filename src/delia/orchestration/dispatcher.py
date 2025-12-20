@@ -46,6 +46,7 @@ class ModelDispatcher:
         Use the dispatcher model to select the next model in the chain.
         """
         from ..config import config
+        from ..routing import select_model
         
         # Tools available to the Dispatcher
         tools = [
@@ -74,44 +75,87 @@ class ModelDispatcher:
                         }
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_status",
+                    "description": "Use for checking melon leaderboard, system health, or stats.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Status query"}
+                        }
+                    }
+                }
             }
         ]
 
-        # 1. Select Dispatcher Model
-        # We prefer the 'dispatcher' tier if available
-        dispatcher_model = config.model_dispatcher.default_model
+        # 1. Select Dispatcher Model Dynamically
+        # Prefer 7B Instruct (Quick tier) for nuanced dispatching if resources allow,
+        # otherwise fallback to FunctionGemma (Dispatcher tier) on CPU.
+        dispatcher_model = await select_model(
+            task_type="dispatcher",
+            content=message,
+        )
         
-        # 2. Call Dispatcher
+        # Final safety check for model name
+        if not dispatcher_model or dispatcher_model == "current":
+            dispatcher_model = config.model_dispatcher.default_model
+
         system_prompt = build_system_prompt(ModelRole.DISPATCHER)
         
-        log.info("dispatcher_call", model=dispatcher_model, message_len=len(message))
-        
+        # 2. Call Dispatcher
         result = await self.call_llm(
             model=dispatcher_model,
             prompt=message,
             system=system_prompt,
-            task_type="dispatch",
+            task_type="dispatcher",
+            original_task=intent.task_type,
+            language="unknown",
+            content_preview=message[:100],
             backend_obj=backend_obj,
             tools=tools,
-            temperature=0.0, # Deterministic routing
+            tool_choice="auto",
         )
 
         if not result.get("success"):
             log.warning("dispatcher_failed_falling_back", error=result.get("error"))
             return "executor" # Safe fallback
 
-        # 3. Parse Tool Call
+        # 3. Parse Response & Check for Refusals
         metadata = result.get("metadata", {})
         tool_calls = metadata.get("tool_calls", [])
+        response_text = result.get("response", "").lower()
         
+        # If the tiny model gives a canned refusal (e.g. "I am sorry, I cannot..."),
+        # we must ignore it and just use the Executor.
+        refusal_keywords = [
+            "i cannot assist", "i am sorry", "i'm sorry", "i am unable", 
+            "capabilities are limited", "i am a model", "cannot assist with this"
+        ]
+        if any(k in response_text for k in refusal_keywords):
+            log.info("dispatcher_refusal_detected", reason="model_claimed_inability")
+            return "executor"
+
         if tool_calls:
             tool_name = tool_calls[0]["function"]["name"]
             if tool_name == "call_planner":
                 return "planner"
             elif tool_name == "call_executor":
                 return "executor"
+            elif tool_name == "call_status":
+                return "status"
         
-        # 4. Fallback to intent-based selection if no tool call
+        # 4. Keyword Fallback (if model outputs text instead of tool)
+        if "planner" in response_text or "plan" in response_text:
+            return "planner"
+        if "status" in response_text or "melon" in response_text:
+            return "status"
+        if "executor" in response_text or "code" in response_text:
+            return "executor"
+
+        # 5. Intent-based selection as final safety net
         log.debug("dispatcher_no_tool_call_using_intent")
         if intent.task_type in config.moe_tasks or intent.orchestration_mode != OrchestrationMode.NONE:
             return "planner"

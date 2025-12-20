@@ -396,18 +396,18 @@ class BackendScorer:
 
         # Apply task-specific affinity boost if task_type provided
         affinity = None
-        melon_boost = 0.0
+        boost_multiplier = 1.0
+        
         if task_type:
             tracker = get_affinity_tracker()
             affinity = tracker.get_affinity(backend.id, task_type)
-            total = tracker.boost_score(total, backend.id, task_type)
+            # Affinity modifier: 0.5 -> 1.0, 1.0 -> 1.2, 0.0 -> 0.8
+            boost_multiplier *= (1.0 + (affinity - 0.5) * 0.4)
             
             # Apply melon boost - models earn trust through helpful responses 🍈
-            # Look up the model for this task type on this backend
             tier = _task_to_tier(task_type)
             models = backend.models.get(tier) or backend.models.get("quick")
             
-            # Handle list of models (pick first for scoring)
             model_id = None
             if isinstance(models, list) and models:
                 model_id = models[0]
@@ -417,32 +417,39 @@ class BackendScorer:
             if model_id:
                 from .melons import get_melon_tracker
                 melon_tracker = get_melon_tracker()
-                melon_boost = melon_tracker.get_melon_boost(model_id, task_type)
-                total += melon_boost
+                # Multiplicative melon boost: sqrt(total_melon_value) * 0.02
+                # 100 melons -> +20%, 400 melons -> +40%
+                melon_stats = melon_tracker.get_stats(model_id, task_type)
+                total_melon_value = melon_stats.total_melon_value
+                if total_melon_value > 0:
+                    melon_modifier = math.sqrt(total_melon_value) * 0.02
+                    boost_multiplier *= (1.0 + melon_modifier)
 
         # Exploration Bonus (Curiosity) 🧪
-        # Give unproven models a chance to earn melons.
-        # Starts at +0.25 for fresh models, decays as we gather data.
-        # After ~50 requests, the model must stand on its own merits (Performance + Melons).
-        exploration_bonus = 0.25 / (1.0 + (metrics.total_requests * 0.1))
-        total += exploration_bonus
+        # Standardized as a multiplicative boost that decays as we gather data.
+        # Starts at +25% for fresh models, decays toward 1.0.
+        exploration_modifier = 1.0 + (0.25 / (1.0 + (metrics.total_requests * 0.1)))
+        
+        # Apply all boosts multiplicatively to the base performance score
+        final_score = total * boost_multiplier * exploration_modifier
 
         log.debug(
             "backend_scored",
             backend=backend.id,
-            score=round(total, 3),
+            score=round(final_score, 3),
+            base_score=round(total, 3),
             latency=round(latency_score, 3),
             throughput=round(throughput_score, 3),
             reliability=round(reliability_score, 3),
             availability=availability_score,
             cost=round(cost_score, 3),
             affinity=round(affinity, 3) if affinity is not None else None,
-            melon_boost=round(melon_boost, 3) if melon_boost else None,
-            exploration=round(exploration_bonus, 3),
+            boost_multiplier=round(boost_multiplier, 3),
+            exploration_modifier=round(exploration_modifier, 3),
             task_type=task_type,
         )
 
-        return total
+        return final_score
 
     def _score_latency(self, latency_ms: float) -> float:
         """Convert latency to 0-1 score (lower latency = higher score).
@@ -466,10 +473,13 @@ class BackendScorer:
     def _score_throughput(self, tps: float) -> float:
         """Convert tokens per second to 0-1 score (higher = better).
 
-        Linear scaling capped at reference throughput.
+        Uses a saturation curve to avoid 'cliffs' for slow/new models.
+        Score = TPS / (TPS + K) where K=20 (midpoint).
         - 0 tok/s = 0.5 (neutral for no data)
-        - 50 tok/s = 0.5
-        - 100+ tok/s = 1.0
+        - 1 tok/s = 0.047
+        - 20 tok/s = 0.5
+        - 100 tok/s = 0.83
+        - 500 tok/s = 0.96
 
         Args:
             tps: Tokens per second (0 = no data)
@@ -479,7 +489,8 @@ class BackendScorer:
         """
         if tps <= 0:
             return 0.5  # No data = neutral
-        return min(tps / self._REFERENCE_THROUGHPUT_TPS, 1.0)
+        # Saturation curve: TPS / (TPS + 20)
+        return tps / (tps + 20.0)
 
     def _score_cost(self, provider: str) -> float:
         """Convert provider cost to 0-1 score (lower cost = higher score).
@@ -738,6 +749,7 @@ class ModelRouter:
         model_coder = get_model("coder")
         model_moe = get_model("moe")
         model_thinking = get_model("thinking")
+        model_dispatcher = get_model("dispatcher")
 
         # Helper to resolve tier name to model name
         def resolve_tier(tier_name):
@@ -749,6 +761,10 @@ class ModelRouter:
                 return model_moe
             if tier_name == "thinking":
                 return model_thinking
+            if tier_name == "dispatcher":
+                # Special logic for dispatcher: 
+                # If no dedicated dispatcher, use quick (7B Instruct) for better nuance.
+                return model_dispatcher if model_dispatcher != "current" else model_quick
             return tier_name  # Assume it's a model name if not a tier
 
         # Priority 1: Explicit override
@@ -848,16 +864,9 @@ class ModelRouter:
         Select optimal backend using performance-based scoring.
 
         Uses BackendScorer to select the best backend based on:
-        - Latency (lower is better)
-        - Throughput (higher is better)
-        - Reliability (success rate)
-        - Availability (circuit breaker status)
-
-        Args:
-            content: The content to process (for future content-based routing)
-            file_path: Optional file path for context
-            task_type: Type of task being performed
-            backend_type: Optional backend type constraint ("local" or "remote")
+        - Latency, Throughput, Reliability, Availability, Cost
+        - Task-specific affinity and melon boosts
+        - Load balancing (weighted random)
 
         Returns:
             Tuple of (None, backend_obj) where backend_obj is the selected backend
@@ -867,16 +876,76 @@ class ModelRouter:
         if not enabled_backends:
             return (None, None)
 
-        # Use BackendScorer for intelligent selection
-        scorer = BackendScorer()
-        selected = scorer.select_best(enabled_backends, backend_type=backend_type)
+        # Use BackendScorer for intelligent selection with configured weights
+        weights = self.backend_manager.get_scoring_weights()
+        scorer = BackendScorer(weights=weights)
+
+        # Use weighted random selection if load balancing is enabled
+        load_balance = self.backend_manager.routing_config.get("load_balance", False)
+        if load_balance:
+            selected = scorer.select_weighted(
+                enabled_backends, backend_type=backend_type, task_type=task_type
+            )
+        else:
+            selected = scorer.select_best(
+                enabled_backends, backend_type=backend_type, task_type=task_type
+            )
 
         if selected:
+            log.debug(
+                "selected_backend_by_score",
+                backend_id=selected.id,
+                backend_type=selected.type,
+                requested_type=backend_type,
+                load_balanced=load_balance,
+            )
             return (None, selected)
 
         # Fallback to active backend if no matching type found
         active_backend = self.backend_manager.get_active_backend()
+        if active_backend:
+            log.debug(
+                "fallback_to_active_backend",
+                backend_id=active_backend.id,
+                requested_type=backend_type,
+            )
         return (None, active_backend)
+
+    @staticmethod
+    def assign_backends_to_tasks(
+        task_list: list[dict], 
+        available: dict[str, bool],
+        backend_manager: Any
+    ) -> list[str]:
+        """
+        Assign backends to tasks using round-robin load balancing across enabled backends.
+
+        Args:
+            task_list: List of tasks to assign
+            available: Dict of backend_id -> bool availability
+            backend_manager: The backend manager instance
+
+        Returns:
+            List of backend IDs matching task_list order
+        """
+        # Get enabled backends that are available
+        enabled_backends = backend_manager.get_enabled_backends()
+        candidate_backends = [b.id for b in enabled_backends if available.get(b.id, False)]
+
+        if not candidate_backends:
+            # Fallback to active backend even if status unknown, or just return empty/error
+            active = backend_manager.get_active_backend()
+            return [active.id] * len(task_list) if active else ["none"] * len(task_list)
+
+        assignments = []
+        backend_count = len(candidate_backends)
+
+        for i, _ in enumerate(task_list):
+            # Round-robin assignment
+            backend_id = candidate_backends[i % backend_count]
+            assignments.append(backend_id)
+
+        return assignments
 
 
 # Module-level singleton for convenience
