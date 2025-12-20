@@ -20,6 +20,7 @@ from ..config import config
 from ..file_helpers import list_memories, read_memory
 from ..llm import call_llm
 from ..playbook import playbook_manager
+from .tuning import TuningAdvisor, get_tuning_advisor
 from ..prompts import (
     ACE_CURATOR_PROMPT,
     ACE_REFLECTOR_PROMPT,
@@ -51,6 +52,7 @@ class OrchestrationExecutor:
         self.dispatcher = ModelDispatcher(call_llm)
         self.planner = StrategicPlanner(call_llm)
         self.critic = ResponseCritic(call_llm)
+        self.tuning_advisor = get_tuning_advisor()
 
     async def execute(
         self,
@@ -81,6 +83,8 @@ class OrchestrationExecutor:
                 result = await self._execute_comparison(intent, message, backend_type, model_override, messages=messages)
             elif intent.orchestration_mode == OrchestrationMode.DEEP_THINKING:
                 result = await self._execute_deep_thinking(intent, message, backend_type, model_override, messages=messages)
+            elif intent.orchestration_mode == OrchestrationMode.TREE_OF_THOUGHTS:
+                result = await self._execute_tree_of_thoughts(intent, message, backend_type, model_override, messages=messages)
             else:
                 result = await self._execute_simple(intent, message, backend_type, model_override, original_message, session_id, messages=messages)
 
@@ -198,9 +202,10 @@ class OrchestrationExecutor:
                 on_tool_call=on_tool_call or security_gate
             )
             return OrchestrationResult(
-                response=res.response, 
-                success=res.success, 
-                model_used=selected_model, 
+                response=res.response,
+                success=res.success,
+                model_used=selected_model,
+                backend_used=backend_obj.id if backend_obj else None,  # FIX: Track backend for affinity
                 mode=OrchestrationMode.AGENTIC,
                 tool_calls=res.tool_calls,
                 tokens=res.tokens
@@ -258,24 +263,50 @@ class OrchestrationExecutor:
     async def _execute_voting(self, intent: DetectedIntent, message: str, backend_type: str | None, model_override: str | None, messages: list[dict[str, Any]] | None = None) -> OrchestrationResult:
         from ..voting import VotingConsensus
         from ..quality import ResponseQualityValidator
+        from ..routing import get_router
+
         selected_model = model_override or await select_model(task_type=intent.task_type, content_size=len(message), content=message)
+        _, backend_obj = await get_router().select_optimal_backend(message, None, intent.task_type, backend_type)
+
+        # Get tuning for voting with model-specific quirks
+        tuning = self.tuning_advisor.advise(
+            task_type=intent.task_type,
+            content_length=len(message),
+            orchestration_mode="voting",
+            tier="coder",
+            model_name=selected_model,
+        )
+        # Voting uses higher temp for diversity in responses
+        voting_temp = min(tuning.temperature + 0.2, 1.0)
+
         consensus = VotingConsensus(k=intent.k_votes, quality_validator=ResponseQualityValidator())
         total_tokens = 0
         for i in range(intent.k_votes * 3):
-            res = await call_llm(model=selected_model, prompt=message, messages=messages, task_type=intent.task_type, temperature=0.7)
+            res = await call_llm(
+                model=selected_model,
+                prompt=message,
+                messages=messages,
+                task_type=intent.task_type,
+                temperature=voting_temp,
+                max_tokens=tuning.max_tokens,
+                backend_obj=backend_obj,
+            )
             if res.get("success"):
                 total_tokens += res.get("tokens", 0)
                 vote = consensus.add_vote(strip_thinking_tags(res["response"]))
                 if vote.consensus_reached:
                     return OrchestrationResult(
-                        response=vote.winning_response, success=True, model_used=selected_model, 
+                        response=vote.winning_response, success=True, model_used=selected_model,
+                        backend_used=backend_obj.id if backend_obj else None,  # FIX: Track backend
                         mode=OrchestrationMode.VOTING, votes_cast=i+1, consensus_reached=True, tokens=total_tokens
                     )
-        
+
         best, meta = consensus.get_best_response()
         return OrchestrationResult(
-            response=f"Partial consensus: {best}" if best else "Consensus failed", 
-            success=best is not None, model_used=selected_model, mode=OrchestrationMode.VOTING,
+            response=f"Partial consensus: {best}" if best else "Consensus failed",
+            success=best is not None, model_used=selected_model,
+            backend_used=backend_obj.id if backend_obj else None,  # FIX: Track backend
+            mode=OrchestrationMode.VOTING,
             votes_cast=meta.total_votes, consensus_reached=False, tokens=total_tokens
         )
 
@@ -291,7 +322,13 @@ class OrchestrationExecutor:
             if r.get("success"):
                 actual_models.append(m)
                 res_parts.append(f"## {m}\n{strip_thinking_tags(r.get('response', ''))}\n")
-        return OrchestrationResult(response="\n".join(res_parts), success=len(actual_models) > 0, mode=OrchestrationMode.COMPARISON, models_compared=actual_models)
+        return OrchestrationResult(
+            response="\n".join(res_parts),
+            success=len(actual_models) > 0,
+            mode=OrchestrationMode.COMPARISON,
+            models_compared=actual_models,
+            backend_used=backend.id if backend else None,  # FIX: Track backend for affinity
+        )
 
     async def _execute_simple(
         self,
@@ -307,25 +344,72 @@ class OrchestrationExecutor:
         _, backend_obj = await get_router().select_optimal_backend(message, None, intent.task_type, backend_type)
         if not backend_obj:
             raise RuntimeError("No backend configured. Please configure at least one backend in settings.json.")
-            
+
         target_role_str = await self.dispatcher.dispatch(original_message or message, intent, backend_obj)
         target_role = ModelRole.PLANNER if target_role_str == "planner" else ModelRole.EXECUTOR
         selected_model = model_override or backend_obj.models.get("coder" if target_role_str != "assistant" else "quick")
-        
+
         # Ensure selected_model is a string and not None
         if isinstance(selected_model, list):
             selected_model = selected_model[0] if selected_model else "auto"
         if not selected_model:
             selected_model = "auto"
-        
+
+        # Determine model tier for tuning
+        tier = "coder" if target_role_str != "assistant" else "quick"
+
+        # Assess stakes for tuning adjustments (sync version for speed)
+        stakes = None
+        try:
+            from .stakes import analyze_stakes_sync
+            stakes = analyze_stakes_sync(original_message or message)
+        except Exception as e:
+            log.debug("stakes_analysis_skipped", error=str(e))
+
+        # Get optimal tuning parameters from advisor (with model-specific quirks)
+        tuning = self.tuning_advisor.advise(
+            task_type=intent.task_type,
+            content_length=len(message),
+            stakes=stakes,
+            orchestration_mode=intent.orchestration_mode.value,
+            tier=tier,
+            model_name=selected_model,
+        )
+
+        log.debug(
+            "tuning_applied",
+            task=intent.task_type,
+            tier=tier,
+            stakes=stakes.score if stakes else None,
+            temperature=tuning.temperature,
+            max_tokens=tuning.max_tokens,
+            reasoning_count=len(tuning.reasoning),
+        )
+
         system = build_system_prompt(target_role)
         pb = playbook_manager.format_for_prompt(intent.task_type)
         if pb: system += f"\n\n{pb}"
-        
-        res = await call_llm(model=selected_model, prompt=message, system=system, messages=messages, backend_obj=backend_obj)
+
+        # Apply tuning parameters to LLM call
+        res = await call_llm(
+            model=selected_model,
+            prompt=message,
+            system=system,
+            messages=messages,
+            backend_obj=backend_obj,
+            temperature=tuning.temperature,
+            max_tokens=tuning.max_tokens,
+        )
         from ..quality import validate_response
         qual = validate_response(res.get("response", ""), intent.task_type)
-        return OrchestrationResult(response=strip_thinking_tags(res.get("response", "")), success=res.get("success", False), model_used=selected_model, quality_score=qual.overall)
+        return OrchestrationResult(
+            response=strip_thinking_tags(res.get("response", "")),
+            success=res.get("success", False),
+            model_used=selected_model,
+            backend_used=backend_obj.id,  # FIX: Pass actual backend ID for affinity tracking
+            quality_score=qual.overall,
+            tokens=res.get("tokens", 0),  # FIX: Track tokens for economics
+        )
 
     async def _execute_status_query(self, intent: DetectedIntent, message: str) -> OrchestrationResult:
         from ..melons import get_melon_tracker
@@ -336,8 +420,36 @@ class OrchestrationExecutor:
 
     async def _execute_deep_thinking(self, intent: DetectedIntent, message: str, backend_type: str | None, model_override: str | None, messages: list[dict[str, Any]] | None = None) -> OrchestrationResult:
         selected_model = model_override or await select_model(task_type="moe", content_size=len(message), content=message)
-        res = await call_llm(model=selected_model, prompt=message, messages=messages, enable_thinking=True)
-        return OrchestrationResult(response=strip_thinking_tags(res.get("response", "")), success=res.get("success", False), model_used=selected_model, mode=OrchestrationMode.DEEP_THINKING)
+
+        # Get tuning for deep thinking with model-specific quirks
+        tuning = self.tuning_advisor.advise(
+            task_type=intent.task_type,
+            content_length=len(message),
+            orchestration_mode="deep_thinking",
+            tier="thinking",
+            model_name=selected_model,
+        )
+
+        from ..routing import get_router
+        _, backend_obj = await get_router().select_optimal_backend(message, None, "moe", backend_type)
+
+        res = await call_llm(
+            model=selected_model,
+            prompt=message,
+            messages=messages,
+            enable_thinking=tuning.enable_thinking or True,
+            temperature=tuning.temperature,
+            max_tokens=tuning.max_tokens,
+            backend_obj=backend_obj,
+        )
+        return OrchestrationResult(
+            response=strip_thinking_tags(res.get("response", "")),
+            success=res.get("success", False),
+            model_used=selected_model,
+            backend_used=backend_obj.id if backend_obj else None,  # FIX: Track backend
+            mode=OrchestrationMode.DEEP_THINKING,
+            tokens=res.get("tokens", 0),  # FIX: Track tokens for economics
+        )
 
     async def _execute_tree_of_thoughts(
         self,
@@ -482,6 +594,7 @@ class OrchestrationExecutor:
             response=winner_result.response,
             success=True,
             model_used=winner_result.model_used,
+            backend_used=winner_result.backend_used,  # FIX: Propagate from winning branch
             mode=OrchestrationMode.TREE_OF_THOUGHTS,
             quality_score=quality_score,
             elapsed_ms=elapsed_ms,
@@ -550,7 +663,19 @@ class OrchestrationExecutor:
     def _award_melons(self, result: OrchestrationResult, intent: DetectedIntent) -> None:
         from ..melons import award_melons_for_quality
         if result.model_used and result.quality_score is not None:
-            award_melons_for_quality(result.model_used, intent.task_type, result.quality_score)
+            # Pass tokens so economics can calculate real savings
+            # Rough split: 80% input tokens, 20% output tokens for estimation
+            total_tokens = result.tokens or 0
+            input_tokens = int(total_tokens * 0.8)
+            output_tokens = total_tokens - input_tokens
+            award_melons_for_quality(
+                model_id=result.model_used,
+                task_type=intent.task_type,
+                quality_score=result.quality_score,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=result.elapsed_ms or 0,
+            )
 
     async def _retrieve_context(self, message: str) -> str:
         available = list_memories()
@@ -567,8 +692,11 @@ class OrchestrationExecutor:
             if res.get("success"):
                 data = json.loads(strip_thinking_tags(res["response"]))
                 lesson = data.get("playbook_update")
-                if lesson: await self._curate_playbook(task_type, lesson, backend_obj)
-        except Exception: pass
+                if lesson:
+                    await self._curate_playbook(task_type, lesson, backend_obj)
+                    log.info("ace_reflection_complete", task_type=task_type, lesson_len=len(lesson))
+        except Exception as e:
+            log.warning("ace_reflection_failed", task_type=task_type, error=str(e))
 
     async def _curate_playbook(self, task_type: str, lesson: str, backend_obj: Any | None = None) -> None:
         try:
@@ -577,9 +705,15 @@ class OrchestrationExecutor:
             res = await call_llm(model=config.model_moe.default_model, prompt=f"Current: {pb_text}\nNew: {lesson}", system=ACE_CURATOR_PROMPT, task_type="curation", backend_obj=backend_obj)
             if res.get("success"):
                 data = json.loads(strip_thinking_tags(res["response"]))
+                operations_applied = 0
                 for op in data.get("operations", []):
-                    if op.get("type") == "ADD": playbook_manager.add_bullet(task_type, op["content"], op.get("section", "strategies"))
-        except Exception: pass
+                    if op.get("type") == "ADD":
+                        playbook_manager.add_bullet(task_type, op["content"], op.get("section", "strategies"))
+                        operations_applied += 1
+                if operations_applied > 0:
+                    log.info("playbook_curated", task_type=task_type, operations=operations_applied)
+        except Exception as e:
+            log.warning("playbook_curation_failed", task_type=task_type, error=str(e))
 
 _executor: OrchestrationExecutor | None = None
 

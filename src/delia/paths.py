@@ -138,6 +138,10 @@ def __getattr__(name: str) -> Path:
         return get_data_dir() / "cache" / "prewarm.json"
     elif name == "USER_DB_FILE":
         return get_data_dir() / "users" / "users.db"
+    elif name == "PLAYBOOKS_DIR":
+        return get_data_dir() / "playbooks"
+    elif name == "ORCHESTRATION_DIR":
+        return get_data_dir() / "orchestration"
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -148,6 +152,8 @@ def ensure_directories() -> None:
     user_data_dir = data_dir / "users"
     memories_dir = data_dir / "memories"
     sessions_dir = data_dir / "sessions"
+    playbooks_dir = data_dir / "playbooks"
+    orchestration_dir = data_dir / "orchestration"
 
     # Ensure base global dir exists if we are using it
     if USER_DELIA_DIR in data_dir.parents or USER_DELIA_DIR == data_dir.parent:
@@ -157,3 +163,5 @@ def ensure_directories() -> None:
     user_data_dir.mkdir(parents=True, exist_ok=True)
     memories_dir.mkdir(parents=True, exist_ok=True)
     sessions_dir.mkdir(parents=True, exist_ok=True)
+    playbooks_dir.mkdir(parents=True, exist_ok=True)
+    orchestration_dir.mkdir(parents=True, exist_ok=True)
