@@ -38,14 +38,6 @@ TOOL_CALL_PATTERN = re.compile(
     re.DOTALL
 )
 
-# Fallback pattern for raw JSON tool calls without XML wrapper
-# Matches: {"name": "tool_name", "arguments": {...}}
-# Requires "name" key to avoid false positives on arbitrary JSON
-RAW_JSON_TOOL_PATTERN = re.compile(
-    r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})\s*\}',
-    re.DOTALL
-)
-
 
 @dataclass
 class ParsedToolCall:
@@ -239,45 +231,48 @@ def _parse_raw_json_tools(text: str) -> list[ParsedToolCall]:
     This is a fallback for models that output tool calls as plain JSON
     without the <tool_call> wrapper tags.
 
-    Args:
-        text: Raw text potentially containing JSON tool calls
-
-    Returns:
-        List of parsed tool calls
+    Uses a robust approach by searching for '{' and attempting to decode
+    valid JSON objects that look like tool calls.
     """
     tool_calls = []
-
-    # Find all potential raw JSON tool calls
-    for match in RAW_JSON_TOOL_PATTERN.finditer(text):
+    decoder = json.JSONDecoder()
+    pos = 0
+    
+    while True:
+        pos = text.find('{', pos)
+        if pos == -1:
+            break
+            
         try:
-            # Reconstruct the full JSON from captured groups
-            full_match = match.group(0)
-            data = json.loads(full_match)
-            name = data.get("name", "")
-            arguments = data.get("arguments", {})
+            # Attempt to decode a JSON object starting at this position
+            obj, end = decoder.raw_decode(text[pos:])
+            
+            # Check if it looks like a tool call
+            if isinstance(obj, dict) and "name" in obj and "arguments" in obj:
+                name = obj.get("name")
+                arguments = obj.get("arguments")
+                
+                if isinstance(name, str) and name:
+                    # Arguments can be dict or JSON string
+                    if isinstance(arguments, str):
+                        try:
+                            arguments = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            pass # Keep as string if not valid JSON
 
-            # Validate name is a string (fuzzing found this bug)
-            if not isinstance(name, str):
-                log.warning("tool_call_invalid_name_type", name_type=type(name).__name__)
-                continue
-
-            if isinstance(arguments, str):
-                arguments = json.loads(arguments)
-
-            # Validate arguments is a dict
-            if not isinstance(arguments, dict):
-                log.warning("tool_call_invalid_arguments_type", args_type=type(arguments).__name__)
-                arguments = {}
-
-            if name:
-                tool_calls.append(ParsedToolCall(
-                    id=f"call_{uuid.uuid4().hex[:8]}",
-                    name=name,
-                    arguments=arguments,
-                ))
-                log.debug("raw_json_tool_parsed", name=name)
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            log.debug("raw_json_tool_parse_skip", match=match.group(0)[:50], error=str(e))
+                    if isinstance(arguments, dict):
+                        tool_calls.append(ParsedToolCall(
+                            id=f"call_{uuid.uuid4().hex[:8]}",
+                            name=name,
+                            arguments=arguments,
+                        ))
+                        log.debug("raw_json_tool_parsed", name=name)
+            
+            # Move position forward to after this object
+            pos += end
+        except json.JSONDecodeError:
+            # Not a valid JSON object starting here, move to next '{'
+            pos += 1
 
     return tool_calls
 
@@ -318,16 +313,16 @@ def has_tool_calls(response: str | dict[str, Any]) -> bool:
             if "<tool_call>" in response_text:
                 return True
             if '"name"' in response_text and '"arguments"' in response_text:
-                if RAW_JSON_TOOL_PATTERN.search(response_text):
+                if _parse_raw_json_tools(response_text):
                     return True
 
     if isinstance(response, str):
         # Check XML-wrapped format first (fast string check)
         if "<tool_call>" in response:
             return True
-        # Check raw JSON format (quick heuristic then regex)
+        # Check raw JSON format (quick heuristic then robust parser)
         if '"name"' in response and '"arguments"' in response:
-            return bool(RAW_JSON_TOOL_PATTERN.search(response))
+            return bool(_parse_raw_json_tools(response))
 
     return False
 

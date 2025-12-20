@@ -15,6 +15,7 @@
 
 """Content detection and routing utilities for Delia."""
 
+import math
 import os
 import random
 import re
@@ -316,13 +317,13 @@ class ScoringWeights:
 
 
 
-# Task-to-tier mapping for melon rewards
+# Task-to-tier mapping for economic tracking
 _MOE_TASKS = frozenset({"plan", "critique"})
 _CODER_TASKS = frozenset({"generate", "review", "analyze", "coder"})
 
 
 def _task_to_tier(task_type: str) -> str:
-    """Map task type to model tier for melon lookups.
+    """Map task type to model tier for economic lookups.
     
     Args:
         task_type: The task type (e.g., "generate", "plan", "quick")
@@ -373,15 +374,20 @@ class BackendScorer:
             task_type: Optional task type for affinity-based scoring boost
 
         Returns:
-            Score from 0.0 to 1.0 (may exceed 1.0 with affinity/melon boosts)
+            Score from 0.0 to 1.0 (may exceed 1.0 with affinity/economic boosts)
         """
         metrics = get_backend_metrics(backend.id)
         health = get_backend_health(backend.id)
 
         # Calculate component scores (all 0.0 to 1.0)
-        latency_score = self._score_latency(metrics.latency_p50)
-        throughput_score = self._score_throughput(metrics.tokens_per_second)
-        reliability_score = metrics.success_rate
+        # Ensure metrics are finite to avoid NaN/Inf propagating
+        latency_p50 = metrics.latency_p50 if math.isfinite(metrics.latency_p50) else 0.0
+        tps = metrics.tokens_per_second if math.isfinite(metrics.tokens_per_second) else 0.0
+        success_rate = metrics.success_rate if math.isfinite(metrics.success_rate) else 0.0
+        
+        latency_score = self._score_latency(latency_p50)
+        throughput_score = self._score_throughput(tps)
+        reliability_score = max(0.0, min(1.0, success_rate))
         availability_score = 1.0 if health.is_available() else 0.0
         cost_score = self._score_cost(backend.provider)
 
@@ -401,13 +407,17 @@ class BackendScorer:
         if task_type:
             tracker = get_affinity_tracker()
             affinity = tracker.get_affinity(backend.id, task_type)
+            # Ensure affinity is finite
+            if not math.isfinite(affinity):
+                affinity = 0.5
+                
             # Affinity modifier: 0.5 -> 1.0, 1.0 -> 1.2, 0.0 -> 0.8
             boost_multiplier *= (1.0 + (affinity - 0.5) * 0.4)
             
-            # Apply melon boost - models earn trust through helpful responses 🍈
+            # Apply economic boost - based on real metrics (quality, cost, success rate)
             tier = _task_to_tier(task_type)
             models = backend.models.get(tier) or backend.models.get("quick")
-            
+
             model_id = None
             if isinstance(models, list) and models:
                 model_id = models[0]
@@ -415,23 +425,40 @@ class BackendScorer:
                 model_id = models
 
             if model_id:
-                from .melons import get_melon_tracker
-                melon_tracker = get_melon_tracker()
-                # Multiplicative melon boost: sqrt(total_melon_value) * 0.02
-                # 100 melons -> +20%, 400 melons -> +40%
-                melon_stats = melon_tracker.get_stats(model_id, task_type)
-                total_melon_value = melon_stats.total_melon_value
-                if total_melon_value > 0:
-                    melon_modifier = math.sqrt(total_melon_value) * 0.02
-                    boost_multiplier *= (1.0 + melon_modifier)
+                from .economics import get_economic_tracker
+                economics = get_economic_tracker()
+                econ_stats = economics.get_economics(model_id, task_type)
+
+                # Economic boost based on REAL metrics:
+                # - Success rate: reliable models get preference
+                # - Quality: higher quality = higher score
+                # - Cost efficiency: free/cheap models get bonus
+                if econ_stats.total_calls >= 3:
+                    # Success rate boost: 80% success = 1.0x, 100% = 1.1x, 60% = 0.9x
+                    success_modifier = 0.9 + (econ_stats.success_rate * 0.2)
+
+                    # Quality boost: 0.7 quality = 1.0x, 0.9 = 1.1x
+                    quality_modifier = 0.9 + (econ_stats.avg_quality * 0.2) if econ_stats.avg_quality > 0 else 1.0
+
+                    # Cost efficiency: free models get 1.2x, expensive get 0.9x
+                    cost_modifier = 1.0 / (1.0 + econ_stats.cost_per_1k_tokens * 0.5)
+                    cost_modifier = max(0.8, min(1.2, cost_modifier))
+
+                    economic_boost = success_modifier * quality_modifier * cost_modifier
+                    boost_multiplier *= economic_boost
 
         # Exploration Bonus (Curiosity) 🧪
         # Standardized as a multiplicative boost that decays as we gather data.
         # Starts at +25% for fresh models, decays toward 1.0.
-        exploration_modifier = 1.0 + (0.25 / (1.0 + (metrics.total_requests * 0.1)))
+        total_requests = metrics.total_requests if math.isfinite(metrics.total_requests) else 0
+        exploration_modifier = 1.0 + (0.25 / (1.0 + (max(0, total_requests) * 0.1)))
         
         # Apply all boosts multiplicatively to the base performance score
         final_score = total * boost_multiplier * exploration_modifier
+        
+        # Final sanity check - never return NaN or Inf
+        if not math.isfinite(final_score):
+            final_score = 0.0
 
         log.debug(
             "backend_scored",
@@ -617,12 +644,17 @@ class BackendScorer:
 
         # Weighted random selection
         selected = random.choices(available, weights=scores, k=1)[0]
+        
+        # Ensure score is finite before rounding for log
+        raw_score = self.score(selected, task_type)
+        log_score = round(raw_score, 3) if math.isfinite(raw_score) else 0.0
+        
         log.info(
             "backend_selected_weighted",
             backend=selected.id,
-            score=round(self.score(selected, task_type), 3),
+            score=log_score,
             candidates=len(available),
-            weights=[round(s, 3) for s in scores],
+            weights=[round(s, 3) if math.isfinite(s) else 0.0 for s in scores],
             task_type=task_type,
         )
         return selected
@@ -865,7 +897,7 @@ class ModelRouter:
 
         Uses BackendScorer to select the best backend based on:
         - Latency, Throughput, Reliability, Availability, Cost
-        - Task-specific affinity and melon boosts
+        - Task-specific affinity and economic boosts (quality, success rate)
         - Load balancing (weighted random)
 
         Returns:

@@ -181,7 +181,7 @@ from .language import (
     optimize_prompt,
 )
 
-# Import file helpers (read_files, read_serena_memory, read_file_safe, MEMORY_DIR)
+# Import file helpers (read_files, read_memory, read_file_safe, MEMORY_DIR)
 from .file_helpers import MEMORY_DIR, read_file_safe
 from .text_utils import strip_thinking_tags
 from .types import Workspace
@@ -1098,7 +1098,7 @@ async def delegate(
         model: Force specific tier - "quick" | "coder" | "moe" | "thinking"
               OR natural language: "7b", "14b", "30b", "small", "large", "coder model", "fast", "complex", "thinking"
         language: Language hint for better prompts - python|c|cpp|java|csharp|javascript|sql|visualbasic|perl|r|delphi|fortran|matlab|ada|go|php|rust|kotlin|assembly|bash
-        context: Serena memory names to include (comma-separated: "architecture,decisions")
+        context: Delia memory names to include (comma-separated: "architecture,decisions")
         symbols: Code symbols to focus on (comma-separated: "Foo,Bar/calculate")
         include_references: True if content includes symbol usages from elsewhere
         backend_type: Force backend type (default: auto-select)
@@ -2800,7 +2800,7 @@ async def resource_file(path: str) -> str:
     Read a file from disk as an MCP resource.
 
     Enables other MCP servers/clients to read files through Delia.
-    Useful for cross-server workflows where Serena or other tools
+    Useful for cross-server workflows where external MCP tools
     need to pass file content to Delia without serialization overhead.
 
     Args:
@@ -2891,10 +2891,10 @@ async def resource_config() -> str:
     return json.dumps(config_data, indent=2)
 
 
-@mcp.resource("delia://memories", name="Available Memories", description="List of Serena memory files")
+@mcp.resource("delia://memories", name="Available Memories", description="List of Delia's memory files")
 async def resource_memories() -> str:
     """
-    List available Serena memory files.
+    List available Delia memory files.
 
     Returns a JSON list of memory names that can be loaded via
     the `context` parameter in delegate/plant tools.

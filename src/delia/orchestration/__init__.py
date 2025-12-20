@@ -114,6 +114,19 @@ from .exemplars import (
     get_all_exemplars,
 )
 
+from .meta_learning import (
+    OrchestrationPattern,
+    OrchestrationLearner,
+    get_orchestration_learner,
+    reset_orchestration_learner,
+)
+
+from .critic import (
+    BranchScore,
+    BranchEvaluation,
+    ResponseCritic,
+)
+
 
 __all__ = [
     # Result types
@@ -178,5 +191,16 @@ __all__ = [
     "get_default_output_type",
     "get_json_schema_prompt",
     "parse_structured_output",
+
+    # Meta-Learning (ToT + ACE)
+    "OrchestrationPattern",
+    "OrchestrationLearner",
+    "get_orchestration_learner",
+    "reset_orchestration_learner",
+
+    # Branch Evaluation (Critic)
+    "BranchScore",
+    "BranchEvaluation",
+    "ResponseCritic",
 ]
 

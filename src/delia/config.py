@@ -89,7 +89,7 @@ class Config:
     # ============================================================
     # LLAMA.CPP CONNECTION (OpenAI-compatible API)
     # ============================================================
-    llamacpp_base: str = field(default_factory=lambda: os.getenv("LLAMACPP_BASE", "http://localhost:8080"))
+    llamacpp_base: str = field(default_factory=lambda: os.getenv("LLAMACPP_BASE", ""))
     llamacpp_timeout_seconds: float = 300.0
     llamacpp_connect_timeout: float = 10.0
     # Default model name for llama.cpp (used when no specific model is loaded)

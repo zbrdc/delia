@@ -16,7 +16,7 @@ import structlog
 
 from ..types import Workspace
 from .registry import ToolDefinition
-from ..lsp_client import get_lsp_client
+from .. import lsp_client
 
 log = structlog.get_logger()
 
@@ -39,7 +39,7 @@ async def lsp_goto_definition(
         List of definitions found
     """
     root = workspace.root if workspace else Path.cwd()
-    client = get_lsp_client(root)
+    client = lsp_client.get_lsp_client(root)
     
     results = await client.goto_definition(path, line, character)
     if not results:
@@ -69,7 +69,7 @@ async def lsp_find_references(
         List of references found
     """
     root = workspace.root if workspace else Path.cwd()
-    client = get_lsp_client(root)
+    client = lsp_client.get_lsp_client(root)
     
     results = await client.find_references(path, line, character)
     if not results:
@@ -100,7 +100,7 @@ async def lsp_hover(
         Hover information (markdown)
     """
     root = workspace.root if workspace else Path.cwd()
-    client = get_lsp_client(root)
+    client = lsp_client.get_lsp_client(root)
     
     result = await client.hover(path, line, character)
     if not result:

@@ -109,22 +109,39 @@ class ModelQueue:
 
     def get_model_size(self, model_name: str) -> float:
         """Get estimated VRAM usage for a model."""
+        model_lower = model_name.lower()
+        
         # Try exact match first
         if model_name in self.model_sizes:
             return self.model_sizes[model_name]
 
+        # Handle MoE models (Mixtral, Nemotron MoE, etc.)
+        # These are often named like 8x7b or have 'moe' and 'a3b' (active params)
+        if "8x7b" in model_lower:
+            return 28.0  # Mixtral 8x7B (quantized)
+        if "a3b" in model_lower or "a2b" in model_lower:
+            # Active parameters vs total parameters
+            if "30b" in model_lower:
+                return 21.0  # Nemotron-3 30B MoE (quantized)
+            if "70b" in model_lower or "72b" in model_lower:
+                return 42.0
+
         # Try partial matches
         for key, size in self.model_sizes.items():
-            if key.lower() in model_name.lower():
+            if key.lower() in model_lower:
                 return size
 
         # Default estimate based on model name patterns
-        if "30b" in model_name.lower():
-            return 16.0  # Quantized 30B
-        elif "14b" in model_name.lower():
-            return 8.0  # Quantized 14B
+        if "70b" in model_lower or "72b" in model_lower:
+            return 40.0
+        elif "30b" in model_lower or "32b" in model_lower:
+            return 18.0
+        elif "14b" in model_lower:
+            return 9.0
+        elif "7b" in model_lower or "8b" in model_lower:
+            return 5.0
         else:
-            return 4.0  # Default 4B model
+            return 4.0  # Default small model
 
     def get_available_memory(self) -> float:
         """Calculate available GPU memory."""
@@ -186,17 +203,18 @@ class ModelQueue:
         The Future will be resolved when the model finishes loading and the request is processed.
         """
         async with self.lock:
+            log.debug("queue_acquire_attempt", model=model_name, loading=model_name in self.loading_models, loaded=model_name in self.loaded_models)
             # Model already loaded and not loading
             if model_name in self.loaded_models and model_name not in self.loading_models:
                 self.loaded_models[model_name]["last_used"] = datetime.now()
                 return (True, None)
 
-            # Model is currently loading
-            if model_name in self.loading_models:
-                # Check if queue is full before adding
-                if model_name not in self.request_queues:
-                    self.request_queues[model_name] = []
+            # Create queue if it doesn't exist
+            if model_name not in self.request_queues:
+                self.request_queues[model_name] = []
 
+            # Model is currently loading - queue the request
+            if model_name in self.loading_models:
                 current_queue_length = len(self.request_queues[model_name])
                 if current_queue_length >= MAX_QUEUE_DEPTH:
                     # Queue is full - reject the request
@@ -210,13 +228,11 @@ class ModelQueue:
                         status_msg="Queue full - request rejected",
                         log_type="QUEUE",
                     )
-                    # Return a future that's already resolved with an error
-                    error_future: asyncio.Future[tuple[bool, str | None]] = asyncio.Future()
+                    error_future: asyncio.Future[bool] = asyncio.Future()
                     error_future.set_exception(
                         RuntimeError(
                             f"Queue full for model {model_name}: "
-                            f"{current_queue_length}/{MAX_QUEUE_DEPTH} requests queued. "
-                            f"Please retry later."
+                            f"{current_queue_length}/{MAX_QUEUE_DEPTH} requests queued."
                         )
                     )
                     return (False, error_future)
@@ -226,7 +242,7 @@ class ModelQueue:
                 self.request_counter += 1
 
                 priority = self.calculate_priority(task_type, content_length, model_name)
-                request_future: asyncio.Future[tuple[bool, str | None]] = asyncio.Future()
+                request_future: asyncio.Future[bool] = asyncio.Future()
                 queued_request = QueuedRequest(
                     priority=priority,
                     timestamp=datetime.now(),
@@ -249,9 +265,7 @@ class ModelQueue:
                     model=model_name,
                     queue_length=queue_length,
                     priority=priority,
-                    task_type=task_type,
-                    request_id=request_id,
-                    status_msg=get_status_message(StatusEvent.REQUEST_RECEIVED),
+                    status_msg="Waiting for model to load...",
                     log_type="QUEUE",
                 )
 
@@ -260,126 +274,100 @@ class ModelQueue:
             # Model not loaded - check if we can load it
             if not self.can_load_model(model_name):
                 # Need to unload some models first
-                await self._make_room_for_model(model_name, provider_name)
+                models_to_unload = self._get_unload_candidates(model_name, provider_name)
+                if models_to_unload:
+                    log.info("memory_pressure_trigger_unload", to_unload=models_to_unload, for_model=model_name)
+                    # We release the lock because unloading takes time
+                    self.lock.release()
+                    try:
+                        await self._do_unload_models(models_to_unload)
+                    finally:
+                        await self.lock.acquire()
+                    
+                    # Re-check after unloading (in case something else loaded in between)
+                    if not self.can_load_model(model_name):
+                        log.warning("memory_still_insufficient_after_unload", model=model_name)
+
+            # Re-check if someone else started loading while we released the lock
+            if model_name in self.loading_models:
+                log.debug("queue_load_raced", model=model_name)
+                # Recurse or just handle as loading?
+                # Simplest is to just call acquire again (it will hit the loading check)
+                return await self.acquire_model(model_name, task_type, content_length, provider_name)
 
             # Start loading the model
             self.loading_models.add(model_name)
-
+            
             log.info(
                 get_display_event("model_loading_start"),
                 model=model_name,
                 provider=provider_name,
                 available_memory_gb=round(self.get_available_memory(), 1),
                 status_msg=get_status_message(StatusEvent.MODEL_LOADING),
+                log_type="QUEUE",
             )
 
-            # Trigger provider-specific model preloading if available
+            # Trigger provider-specific model preloading
+            # RELEASE LOCK during load to avoid blocking other requests
             if self._get_provider:
                 provider = self._get_provider(provider_name)
                 if provider and hasattr(provider, "load_model"):
+                    log.debug("queue_releasing_lock_for_preload", model=model_name)
+                    self.lock.release()
                     try:
-                        result = await provider.load_model(model_name)
-                        if not result.success:
-                            log.warning(
-                                "model_preload_failed",
-                                model=model_name,
-                                provider=provider_name,
-                                error=result.error,
-                                # Continue anyway - model may load on first request
-                            )
-                        else:
-                            log.info(
-                                "model_preload_success",
-                                model=model_name,
-                                provider=provider_name,
-                                elapsed_ms=result.elapsed_ms,
-                            )
-                    except Exception as e:
-                        log.warning(
-                            "model_preload_error",
-                            model=model_name,
-                            provider=provider_name,
-                            error=str(e),
-                        )
+                        await provider.load_model(model_name)
+                    finally:
+                        await self.lock.acquire()
+                        log.debug("queue_reacquired_lock_after_preload", model=model_name)
 
-            # Store provider name for later unloading
-            self._pending_provider = provider_name
-
+            # IMPORTANT: The request that triggered the load is NOT queued.
+            # We return True so it can proceed immediately.
+            # Subsequent requests for the same model will hit the 
+            # 'if model_name in self.loading_models' block and be queued.
             return (True, None)
 
-    async def _make_room_for_model(
-        self, new_model_name: str, provider_name: str = "ollama"
-    ) -> None:
-        """Unload least recently used models to make room for new model.
+            # IMPORTANT: The request that triggered the load is NOT queued.
+            # We return True so it can proceed immediately.
+            # Subsequent requests for the same model will hit the 
+            # 'if model_name in self.loading_models' block and be queued.
+            return (True, None)
 
-        Args:
-            new_model_name: Name of the model we need to make room for
-            provider_name: Provider to use for unload operations
-        """
+    def _get_unload_candidates(self, new_model_name: str, provider_name: str) -> list[tuple[str, str]]:
+        """Identify models that need to be unloaded. Returns list of (model_name, provider_name)."""
         new_model_size = self.get_model_size(new_model_name)
         available_memory = self.get_available_memory()
 
         if available_memory >= new_model_size:
-            return  # No need to unload
+            return []
 
-        # Sort loaded models by last used time (oldest first)
         unload_candidates = sorted(self.loaded_models.items(), key=lambda x: x[1]["last_used"])
+        freed_memory = 0.0
+        to_unload = []
 
-        freed_memory: float = 0.0
-        to_unload: list[str] = []
-
-        for model_name, _metadata in unload_candidates:
+        for model_name, metadata in unload_candidates:
             if freed_memory >= (new_model_size - available_memory):
                 break
             freed_memory += self.get_model_size(model_name)
-            to_unload.append(model_name)
+            to_unload.append((model_name, metadata.get("provider", provider_name)))
+            
+        return to_unload
 
-        # Actually unload the selected models via provider API
-        for model_name in to_unload:
-            model_meta = self.loaded_models.get(model_name, {})
-            # Use the provider that loaded this model, or fall back to the requested one
-            model_provider = model_meta.get("provider", provider_name)
-
-            # Call provider-specific unload if available
+    async def _do_unload_models(self, to_unload: list[tuple[str, str]]) -> None:
+        """Perform the actual unloading of models."""
+        for model_name, model_provider in to_unload:
             if self._get_provider:
                 provider = self._get_provider(model_provider)
                 if provider and hasattr(provider, "unload_model"):
                     try:
-                        result = await provider.unload_model(model_name)
-                        if result.success:
-                            log.info(
-                                get_display_event("model_unloaded"),
-                                model=model_name,
-                                provider=model_provider,
-                                reason="memory_pressure",
-                                elapsed_ms=result.elapsed_ms,
-                                status_msg=get_status_message(StatusEvent.CLEANUP),
-                            )
-                        else:
-                            log.warning(
-                                "model_unload_failed",
-                                model=model_name,
-                                provider=model_provider,
-                                error=result.error,
-                            )
+                        await provider.unload_model(model_name)
+                        log.info(get_display_event("model_unloaded"), model=model_name, provider=model_provider, reason="memory_pressure")
                     except Exception as e:
-                        log.warning(
-                            "model_unload_error",
-                            model=model_name,
-                            provider=model_provider,
-                            error=str(e),
-                        )
-            else:
-                # No provider getter - just log the soft unload
-                log.info(
-                    get_display_event("model_unloaded"),
-                    model=model_name,
-                    reason="memory_pressure",
-                    status_msg=get_status_message(StatusEvent.CLEANUP),
-                )
-
-            # Remove from tracking regardless (provider may have already unloaded)
-            del self.loaded_models[model_name]
+                        log.warning("model_unload_error", model=model_name, error=str(e))
+            
+            # Remove from tracking even if provider call failed
+            async with self.lock:
+                if model_name in self.loaded_models:
+                    del self.loaded_models[model_name]
 
     async def release_model(
         self, model_name: str, success: bool = True, provider_name: str = "ollama"
@@ -434,15 +422,15 @@ class ModelQueue:
             return
 
         queue = self.request_queues[model_name]
-        processed = 0
-
-        while queue and processed < 5:  # Process up to 5 requests at once
+        
+        # Wake up ALL requests waiting for this model
+        # They will then proceed to re-verify availability
+        while queue:
             queued_request = heapq.heappop(queue)
 
             if not queued_request.future.done():
                 # Wake up the waiting request
                 queued_request.future.set_result(True)
-                processed += 1
                 self.total_processed += 1
 
                 wait_time_ms = (datetime.now() - queued_request.timestamp).total_seconds() * 1000

@@ -5,17 +5,17 @@ import pytest
 import tempfile
 from unittest.mock import AsyncMock, patch
 from pathlib import Path
-from delia.tools.lsp import lsp_goto_definition, lsp_find_references, lsp_hover
 from delia.types import Workspace
 
 @pytest.mark.asyncio
 async def test_lsp_goto_definition_success():
     """Test successful goto definition."""
+    from delia.tools.lsp import lsp_goto_definition
     mock_results = [
         {"path": "src/delia/api.py", "line": 10, "character": 5}
     ]
     
-    with patch("delia.tools.lsp.get_lsp_client") as mock_get_client:
+    with patch("delia.lsp_client.get_lsp_client") as mock_get_client:
         mock_client = AsyncMock()
         mock_get_client.return_value = mock_client
         mock_client.goto_definition.return_value = mock_results
@@ -29,7 +29,8 @@ async def test_lsp_goto_definition_success():
 @pytest.mark.asyncio
 async def test_lsp_goto_definition_none():
     """Test goto definition with no results."""
-    with patch("delia.tools.lsp.get_lsp_client") as mock_get_client:
+    from delia.tools.lsp import lsp_goto_definition
+    with patch("delia.lsp_client.get_lsp_client") as mock_get_client:
         mock_client = AsyncMock()
         mock_get_client.return_value = mock_client
         mock_client.goto_definition.return_value = []
@@ -41,12 +42,13 @@ async def test_lsp_goto_definition_none():
 @pytest.mark.asyncio
 async def test_lsp_find_references():
     """Test finding references."""
+    from delia.tools.lsp import lsp_find_references
     mock_results = [
         {"path": "src/delia/api.py", "line": 10, "character": 5},
         {"path": "src/delia/orchestration/service.py", "line": 20, "character": 0}
     ]
     
-    with patch("delia.tools.lsp.get_lsp_client") as mock_get_client:
+    with patch("delia.lsp_client.get_lsp_client") as mock_get_client:
         mock_client = AsyncMock()
         mock_get_client.return_value = mock_client
         mock_client.find_references.return_value = mock_results
@@ -60,9 +62,10 @@ async def test_lsp_find_references():
 @pytest.mark.asyncio
 async def test_lsp_hover():
     """Test hover info."""
+    from delia.tools.lsp import lsp_hover
     mock_hover_text = "### function get_orchestration_service\nReturns the global service instance."
     
-    with patch("delia.tools.lsp.get_lsp_client") as mock_get_client:
+    with patch("delia.lsp_client.get_lsp_client") as mock_get_client:
         mock_client = AsyncMock()
         mock_get_client.return_value = mock_client
         mock_client.hover.return_value = mock_hover_text
@@ -75,10 +78,11 @@ async def test_lsp_hover():
 @pytest.mark.asyncio
 async def test_lsp_tools_with_workspace():
     """Test LSP tools respect workspace root."""
+    from delia.tools.lsp import lsp_goto_definition
     with tempfile.TemporaryDirectory() as tmpdir:
         workspace = Workspace(root=Path(tmpdir))
         
-        with patch("delia.tools.lsp.get_lsp_client") as mock_get_client:
+        with patch("delia.lsp_client.get_lsp_client") as mock_get_client:
             mock_client = AsyncMock()
             mock_get_client.return_value = mock_client
             mock_client.goto_definition.return_value = []

@@ -39,43 +39,43 @@ class IntentExemplar:
 
 VOTING_EXEMPLARS = [
     # Explicit verification requests
-    IntentExemplar("make sure this answer is correct", OrchestrationMode.VOTING),
-    IntentExemplar("verify this is accurate", OrchestrationMode.VOTING),
-    IntentExemplar("double check this for me", OrchestrationMode.VOTING),
-    IntentExemplar("confirm this is right", OrchestrationMode.VOTING),
-    IntentExemplar("I need a reliable response", OrchestrationMode.VOTING),
-    IntentExemplar("this is important, get it right", OrchestrationMode.VOTING),
-    IntentExemplar("can you validate this answer", OrchestrationMode.VOTING),
-    IntentExemplar("ensure this is accurate", OrchestrationMode.VOTING),
+    IntentExemplar("make sure this answer is correct", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
+    IntentExemplar("verify this is accurate", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
+    IntentExemplar("double check this for me", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
+    IntentExemplar("confirm this is right", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
+    IntentExemplar("I need a reliable response", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
+    IntentExemplar("this is important, get it right", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
+    IntentExemplar("can you validate this answer", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
+    IntentExemplar("ensure this is accurate", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
     
     # Implicit high-stakes signals
-    IntentExemplar("this is critical, don't mess it up", OrchestrationMode.VOTING),
-    IntentExemplar("I'm submitting this to production", OrchestrationMode.VOTING),
-    IntentExemplar("lives depend on this being correct", OrchestrationMode.VOTING),
-    IntentExemplar("this is going to a customer", OrchestrationMode.VOTING),
-    IntentExemplar("make absolutely certain", OrchestrationMode.VOTING),
-    IntentExemplar("I need 100% accuracy on this", OrchestrationMode.VOTING),
+    IntentExemplar("this is critical, don't mess it up", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
+    IntentExemplar("I'm submitting this to production", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("lives depend on this being correct", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "moe"),
+    IntentExemplar("this is going to a customer", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "moe"),
+    IntentExemplar("make absolutely certain", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
+    IntentExemplar("I need 100% accuracy on this", OrchestrationMode.VOTING, ModelRole.EXECUTOR, "quick"),
     
     # Mathematical/logical correctness
-    IntentExemplar("is this calculation correct", OrchestrationMode.VOTING),
-    IntentExemplar("verify my math", OrchestrationMode.VOTING),
-    IntentExemplar("check if this logic is sound", OrchestrationMode.VOTING),
+    IntentExemplar("is this calculation correct", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
+    IntentExemplar("verify my math", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
+    IntentExemplar("check if this logic is sound", OrchestrationMode.VOTING, ModelRole.CODE_REVIEWER, "coder"),
 ]
 
 COMPARISON_EXEMPLARS = [
     # Explicit comparison requests
-    IntentExemplar("what do different models think about this", OrchestrationMode.COMPARISON),
-    IntentExemplar("compare perspectives on this", OrchestrationMode.COMPARISON),
-    IntentExemplar("get me a second opinion", OrchestrationMode.COMPARISON),
-    IntentExemplar("I want multiple viewpoints", OrchestrationMode.COMPARISON),
-    IntentExemplar("ask different models", OrchestrationMode.COMPARISON),
-    IntentExemplar("compare qwen vs deepseek on this", OrchestrationMode.COMPARISON),
-    IntentExemplar("what would other models say", OrchestrationMode.COMPARISON),
+    IntentExemplar("what do different models think about this", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
+    IntentExemplar("compare perspectives on this", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
+    IntentExemplar("get me a second opinion", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
+    IntentExemplar("I want multiple viewpoints", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
+    IntentExemplar("ask different models", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
+    IntentExemplar("compare qwen vs deepseek on this", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
+    IntentExemplar("what would other models say", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
     
     # Implicit comparison signals
-    IntentExemplar("I'm not sure which approach is better", OrchestrationMode.COMPARISON),
-    IntentExemplar("there are multiple ways to do this", OrchestrationMode.COMPARISON),
-    IntentExemplar("I want to see different options", OrchestrationMode.COMPARISON),
+    IntentExemplar("I'm not sure which approach is better", OrchestrationMode.COMPARISON, ModelRole.ARCHITECT, "moe"),
+    IntentExemplar("there are multiple ways to do this", OrchestrationMode.COMPARISON, ModelRole.ARCHITECT, "moe"),
+    IntentExemplar("I want to see different options", OrchestrationMode.COMPARISON, ModelRole.ARCHITECT, "moe"),
 ]
 
 DEEP_THINKING_EXEMPLARS = [
@@ -97,44 +97,44 @@ DEEP_THINKING_EXEMPLARS = [
 
 AGENTIC_EXEMPLARS = [
     # File operations
-    IntentExemplar("read the file src/main.py", OrchestrationMode.AGENTIC),
-    IntentExemplar("show me what's in that file", OrchestrationMode.AGENTIC),
-    IntentExemplar("list the files in src directory", OrchestrationMode.AGENTIC),
-    IntentExemplar("create a new file called test.py", OrchestrationMode.AGENTIC),
-    IntentExemplar("write this code to utils.py", OrchestrationMode.AGENTIC),
-    IntentExemplar("delete the temp files", OrchestrationMode.AGENTIC),
+    IntentExemplar("read the file src/main.py", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("show me what's in that file", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("list the files in src directory", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("create a new file called test.py", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("write this code to utils.py", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("delete the temp files", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
     
     # Shell commands
-    IntentExemplar("run npm install", OrchestrationMode.AGENTIC),
-    IntentExemplar("execute pip install requests", OrchestrationMode.AGENTIC),
-    IntentExemplar("run the tests", OrchestrationMode.AGENTIC),
-    IntentExemplar("compile the project", OrchestrationMode.AGENTIC),
-    IntentExemplar("start the server", OrchestrationMode.AGENTIC),
-    IntentExemplar("run ls -la", OrchestrationMode.AGENTIC),
-    IntentExemplar("git status", OrchestrationMode.AGENTIC),
+    IntentExemplar("run npm install", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("execute pip install requests", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("run the tests", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("compile the project", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("start the server", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("run ls -la", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("git status", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
     
     # Code search
-    IntentExemplar("find all usages of this function", OrchestrationMode.AGENTIC),
-    IntentExemplar("search for TODO comments", OrchestrationMode.AGENTIC),
-    IntentExemplar("grep for error handling", OrchestrationMode.AGENTIC),
+    IntentExemplar("find all usages of this function", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("search for TODO comments", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("grep for error handling", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
 
     # LSP (Code Intelligence)
-    IntentExemplar("find the definition of this function", OrchestrationMode.AGENTIC),
-    IntentExemplar("go to definition of get_config", OrchestrationMode.AGENTIC),
-    IntentExemplar("where is this class defined", OrchestrationMode.AGENTIC),
-    IntentExemplar("find all references to this variable", OrchestrationMode.AGENTIC),
-    IntentExemplar("show me usages of this method", OrchestrationMode.AGENTIC),
-    IntentExemplar("what is the type of this object", OrchestrationMode.AGENTIC),
-    IntentExemplar("show documentation for this symbol", OrchestrationMode.AGENTIC),
-    IntentExemplar("lsp hover on this line", OrchestrationMode.AGENTIC),
+    IntentExemplar("find the definition of this function", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("go to definition of get_config", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("where is this class defined", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("find all references to this variable", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("show me usages of this method", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("what is the type of this object", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("show documentation for this symbol", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
+    IntentExemplar("lsp hover on this line", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "coder"),
 
     # Web search
-    IntentExemplar("search the web for python best practices", OrchestrationMode.AGENTIC),
-    IntentExemplar("look up the latest React documentation", OrchestrationMode.AGENTIC),
-    IntentExemplar("search online for how to fix this error", OrchestrationMode.AGENTIC),
-    IntentExemplar("what's the latest news about AI", OrchestrationMode.AGENTIC),
-    IntentExemplar("find information online about this library", OrchestrationMode.AGENTIC),
-    IntentExemplar("web search for rust async patterns", OrchestrationMode.AGENTIC),
+    IntentExemplar("search the web for python best practices", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "moe"),
+    IntentExemplar("look up the latest React documentation", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "moe"),
+    IntentExemplar("search online for how to fix this error", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "moe"),
+    IntentExemplar("what's the latest news about AI", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "moe"),
+    IntentExemplar("find information online about this library", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "moe"),
+    IntentExemplar("web search for rust async patterns", OrchestrationMode.AGENTIC, ModelRole.EXECUTOR, "moe"),
 ]
 
 
@@ -213,14 +213,14 @@ SUMMARIZER_EXEMPLARS = [
 # =============================================================================
 
 CODER_TASK_EXEMPLARS = [
-    IntentExemplar("python function to", task_type="coder"),
-    IntentExemplar("typescript class for", task_type="coder"),
-    IntentExemplar("javascript code that", task_type="coder"),
-    IntentExemplar("rust implementation of", task_type="coder"),
-    IntentExemplar("SQL query to", task_type="coder"),
-    IntentExemplar("regex pattern for", task_type="coder"),
-    IntentExemplar("API endpoint for", task_type="coder"),
-    IntentExemplar("async function that", task_type="coder"),
+    IntentExemplar("python function to", model_role=ModelRole.CODE_GENERATOR, task_type="coder"),
+    IntentExemplar("typescript class for", model_role=ModelRole.CODE_GENERATOR, task_type="coder"),
+    IntentExemplar("javascript code that", model_role=ModelRole.CODE_GENERATOR, task_type="coder"),
+    IntentExemplar("rust implementation of", model_role=ModelRole.CODE_GENERATOR, task_type="coder"),
+    IntentExemplar("SQL query to", model_role=ModelRole.CODE_GENERATOR, task_type="coder"),
+    IntentExemplar("regex pattern for", model_role=ModelRole.CODE_GENERATOR, task_type="coder"),
+    IntentExemplar("API endpoint for", model_role=ModelRole.CODE_GENERATOR, task_type="coder"),
+    IntentExemplar("async function that", model_role=ModelRole.CODE_GENERATOR, task_type="coder"),
 ]
 
 MOE_TASK_EXEMPLARS = [

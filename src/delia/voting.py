@@ -323,28 +323,43 @@ def estimate_task_complexity(prompt: str) -> int:
     Returns:
         Estimated number of reasoning steps (1-100)
     """
-    # Simple heuristics for step estimation
+    if not prompt or len(prompt.strip()) < 5:
+        return 1
+
+    prompt_lower = prompt.lower()
+    # Base steps
     steps = 1
 
-    # Count explicit step indicators
+    # 1. Count action verbs (implied steps)
+    actions = [
+        r"\b(write|create|implement|build|develop)\b",
+        r"\b(fix|debug|resolve|patch)\b",
+        r"\b(refactor|optimize|improve|clean)\b",
+        r"\b(test|verify|validate|check)\b",
+        r"\b(analyze|review|audit|examine)\b",
+        r"\b(search|find|grep|lookup)\b",
+    ]
+    for pattern in actions:
+        steps += len(re.findall(pattern, prompt_lower))
+
+    # 2. Count explicit step indicators
     step_patterns = [
         r"\b(first|second|third|then|next|after|finally)\b",
-        r"\b(step \d+|1\)|2\)|3\))",
+        r"\b(step \d+|[1-9]\)|[1-9]\.)",
         r"\b(and then|followed by|subsequently)\b",
     ]
-
     for pattern in step_patterns:
-        matches = re.findall(pattern, prompt.lower())
-        steps += len(matches)
+        steps += len(re.findall(pattern, prompt_lower))
 
-    # Estimate based on length (longer = more complex)
+    # 3. Boost for logical connectors
+    connectors = [r"\b(and|with|while|because|if|then|else)\b"]
+    for pattern in connectors:
+        steps += int(len(re.findall(pattern, prompt_lower)) * 0.5)
+
+    # 4. Boost for length (longer = more nuance)
     word_count = len(prompt.split())
-    if word_count > 500:
-        steps += 5
-    elif word_count > 200:
-        steps += 3
-    elif word_count > 100:
-        steps += 1
+    steps += word_count // 20
 
-    # Cap at reasonable max
-    return min(steps, 100)
+    # Cap at reasonable max (MDAP paper suggests complexity beyond 20-30 steps 
+    # rapidly approaches 1.0 kmin for typical models)
+    return max(1, min(steps, 100))

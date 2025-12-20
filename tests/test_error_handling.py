@@ -125,29 +125,27 @@ class TestInvalidInputHandling:
 
     @pytest.mark.asyncio
     async def test_delegate_empty_content(self):
-        """delegate() should handle empty content."""
+        """delegate() should handle empty content - raises error when no backend."""
         from delia import mcp_server
 
-        result = await mcp_server.delegate.fn(
-            task="summarize",
-            content=""
-        )
-
-        # Should return something (error message or handled response)
-        assert result is not None
+        # When no backend is configured, should raise RuntimeError
+        with pytest.raises(RuntimeError, match="No backend configured"):
+            await mcp_server.delegate.fn(
+                task="summarize",
+                content=""
+            )
 
     @pytest.mark.asyncio
     async def test_delegate_invalid_task(self):
-        """delegate() should handle invalid task type."""
+        """delegate() should handle invalid task type - raises error when no backend."""
         from delia import mcp_server
 
-        result = await mcp_server.delegate.fn(
-            task="invalid_task_type_that_does_not_exist",
-            content="Some content"
-        )
-
-        # Should not crash, may return error or handle gracefully
-        assert result is not None
+        # When no backend is configured, should raise RuntimeError
+        with pytest.raises(RuntimeError, match="No backend configured"):
+            await mcp_server.delegate.fn(
+                task="invalid_task_type_that_does_not_exist",
+                content="Some content"
+            )
 
     @pytest.mark.asyncio
     async def test_think_empty_problem(self):

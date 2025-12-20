@@ -23,30 +23,34 @@ by the agentic loop to execute tool calls from LLMs.
 from __future__ import annotations
 
 import json
+import functools
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from enum import IntEnum
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from ..types import Workspace
+
+class TrustLevel(IntEnum):
+    """Security trust levels for tool execution."""
+    READ_ONLY = 0      # Safe to execute (e.g., read_file)
+    MUTATION = 1       # Modifies state (e.g., write_file)
+    EXECUTION = 2      # Arbitrary code execution (e.g., shell_exec)
+    DANGEROUS = 3      # High-risk operations
 
 @dataclass
 class ToolDefinition:
-    """Definition of a tool available to the agent.
-
-    Attributes:
-        name: Unique tool identifier (e.g., "read_file")
-        description: Human-readable description for LLM
-        parameters: JSON Schema for parameters
-        handler: Async function to execute the tool
-        permission_level: Required permission ("read", "write", "exec")
-        dangerous: If True, requires user confirmation before execution
-    """
+    """Definition of a tool available to Delia."""
     name: str
     description: str
     parameters: dict[str, Any]
-    handler: Callable[..., Awaitable[str]]
-    permission_level: str = "read"  # "read" | "write" | "exec"
-    dangerous: bool = False  # Requires confirmation prompt
+    handler: Callable[..., Awaitable[Any]]
+    dangerous: bool = False  # If True, requires explicit user confirmation
+    permission_level: str = "read" # 'read', 'write', or 'exec'
+    requires_session: bool = False
+    requires_workspace: bool = False
 
-    def to_openai_schema(self) -> dict[str, Any]:
+    def to_openai_schema(self) -> Dict[str, Any]:
         """Convert to OpenAI function calling format.
 
         This format is supported by Ollama, llama.cpp, and most
@@ -85,8 +89,9 @@ class ToolRegistry:
         result = await tool.handler(path="/some/file.py")
     """
 
-    def __init__(self) -> None:
+    def __init__(self, workspace: Workspace | None = None) -> None:
         self._tools: dict[str, ToolDefinition] = {}
+        self.workspace = workspace
 
     def register(self, tool: ToolDefinition) -> None:
         """Register a tool.
@@ -99,6 +104,12 @@ class ToolRegistry:
         """
         if tool.name in self._tools:
             raise ValueError(f"Tool '{tool.name}' already registered")
+        
+        # If registry has a workspace and tool requires it, wrap handler
+        if self.workspace and tool.requires_workspace:
+            original_handler = tool.handler
+            tool.handler = functools.partial(original_handler, workspace=self.workspace)
+            
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> ToolDefinition | None:

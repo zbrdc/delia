@@ -104,7 +104,7 @@ class TestE2EChatTooling:
             }
         ]
         
-        with patch("delia.llm.call_llm", new_callable=AsyncMock) as mock_call, \
+        with patch("delia.orchestration.executor.call_llm", new_callable=AsyncMock) as mock_call, \
              patch("delia.tools.agent.AgentConfig") as mock_config_class:
             
             # Setup mock config to disable reflection and provide valid timeouts
@@ -130,8 +130,8 @@ class TestE2EChatTooling:
             
             assert result.success is True
             assert "secret" in result.response.lower()
-            assert len(result.debug_info["tool_calls"]) >= 1
-            assert result.debug_info["tool_calls"][0] == "read_file"
+            assert len(result.tool_calls) >= 1
+            assert result.tool_calls[0].name == "read_file"
 
     async def test_directory_listing_intent(self, mock_env):
         """Test that asking for directory contents triggers AGENTIC mode."""
@@ -180,12 +180,11 @@ class TestE2EChatTooling:
         registry = get_default_tools()
         
         expected_tools = [
-            "read_file", "list_directory", "search_code", 
-            "web_fetch", "web_search", "web_news",
+            "read_file", "list_directory", "search_code",
+            "web_fetch", "web_search",
             "write_file", "delete_file", "shell_exec",
             "replace_in_file", "insert_into_file"
         ]
-        
         for tool_name in expected_tools:
             assert tool_name in registry, f"Tool {tool_name} missing from registry"
             assert registry.get(tool_name).handler is not None

@@ -307,9 +307,9 @@ class TestQueueModuleEdgeCases:
         queue = ModelQueue()
 
         # Known patterns
-        assert queue.get_model_size("some-30b-model") == 16.0
-        assert queue.get_model_size("qwen-14b-instruct") == 8.0
-        assert queue.get_model_size("tiny-7b") == 4.0  # Default
+        assert queue.get_model_size("some-30b-model") == 18.0
+        assert queue.get_model_size("qwen-14b-instruct") == 9.0
+        assert queue.get_model_size("tiny-7b") == 5.0  # Default for 7b
 
     def test_model_queue_priority_calculation(self):
         """Priority calculated correctly for different task types."""
@@ -335,9 +335,9 @@ class TestQueueModuleEdgeCases:
         assert available == 24.0 - 2.0  # 22 GB
 
         # Simulate loading a model
-        queue.loaded_models["test-14b"] = {"size_gb": 8.0}
+        queue.loaded_models["test-14b"] = {"size_gb": 9.0}
         available = queue.get_available_memory()
-        assert available == 24.0 - 2.0 - 8.0  # 14 GB
+        assert available == 24.0 - 2.0 - 9.0  # 13 GB
 
     @pytest.mark.asyncio
     async def test_model_queue_acquire_release_cycle(self):

@@ -287,7 +287,7 @@ class TestDangerousToolDetection:
         # All tools should be present
         expected_tools = [
             "read_file", "list_directory", "search_code",
-            "web_fetch", "web_search", "web_news",
+            "web_fetch", "web_search",
             "write_file", "delete_file", "shell_exec"
         ]
         for tool_name in expected_tools:

@@ -34,7 +34,7 @@ import structlog
 from .config import config, get_affinity_tracker, get_prewarm_tracker
 from .backend_manager import backend_manager
 from .routing import BackendScorer
-from .file_helpers import read_files, read_serena_memory
+from .file_helpers import read_files, read_memory
 from .language import detect_language, get_system_prompt
 from .text_utils import strip_thinking_tags
 from .tokens import count_tokens
@@ -125,7 +125,7 @@ async def prepare_delegate_content(
 
     Args:
         content: The main task content/prompt
-        context: Comma-separated Serena memory names to include
+        context: Comma-separated Delia memory names to include
         symbols: Comma-separated symbol names to focus on
         include_references: Whether references to symbols are included
         files: Comma-separated file paths to read and include (Delia reads directly)
@@ -151,11 +151,11 @@ async def prepare_delegate_content(
                 parts.append(f"### File: `{path}`\n```{lang_hint}\n{file_content}\n```")
             log.info("files_loaded", count=len(file_contents), paths=[p for p, _ in file_contents])
 
-    # Load Serena memory context if specified
+    # Load Delia memory context if specified
     if context:
         memory_names = [m.strip() for m in context.split(",")]
         for mem_name in memory_names:
-            mem_content = read_serena_memory(mem_name)
+            mem_content = read_memory(mem_name)
             if mem_content:
                 parts.append(f"### Context from '{mem_name}':\n{mem_content}")
                 log.info("context_memory_loaded", memory=mem_name)
@@ -865,7 +865,7 @@ async def delegate_impl(
         file: Optional file path for context
         model: Optional model tier override
         language: Optional language hint
-        context: Comma-separated Serena memory names
+        context: Comma-separated Delia memory names
         symbols: Comma-separated symbol names to focus on
         include_references: If True, indicates that references to symbols are included
         backend: Override backend ID
@@ -1171,7 +1171,7 @@ async def get_delegate_signals(
         file: Optional file path for context
         model: Optional model tier override
         language: Optional language hint
-        context: Comma-separated Serena memory names
+        context: Comma-separated Delia memory names
         symbols: Comma-separated symbol names to focus on
         include_references: If True, indicates references are included
         files: Comma-separated file paths

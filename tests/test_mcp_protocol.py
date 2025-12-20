@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pytest
 import httpx
+from unittest.mock import MagicMock, patch, AsyncMock
 
 
 @pytest.fixture(autouse=True)
@@ -336,36 +337,70 @@ class TestMCPInitializeFlow:
 class TestMCPToolCallFlow:
     """Test full tool call flow."""
 
+    @pytest.fixture
+    def mock_env(self):
+        """Setup mock environment for MCP tests."""
+        from delia.backend_manager import BackendConfig
+        from unittest.mock import MagicMock, patch
+        
+        # Mock backend
+        mock_backend = BackendConfig(
+            id="test-backend",
+            name="Test Backend",
+            provider="ollama",
+            type="local",
+            url="http://localhost",
+            models={
+                "quick": "qwen-quick",
+                "coder": "qwen-coder",
+                "moe": "qwen-moe",
+                "thinking": "qwen-think"
+            }
+        )
+        
+        with patch("delia.backend_manager.BackendManager.get_active_backend", return_value=mock_backend), \
+             patch("delia.backend_manager.BackendManager.get_enabled_backends", return_value=[mock_backend]), \
+             patch("delia.routing.BackendScorer.score", return_value=1.0), \
+             patch("delia.routing.get_backend_metrics", return_value=MagicMock(total_requests=0)), \
+             patch("delia.routing.get_backend_health", return_value=MagicMock(is_available=lambda: True)):
+            yield mock_backend
+
     @pytest.mark.asyncio
-    async def test_delegate_flow(self):
+    async def test_delegate_flow(self, mock_env):
         """Test complete delegate tool call flow."""
         from delia import mcp_server
 
         # Simulate MCP tool call
-        result = await mcp_server.delegate.fn(
-            task="summarize",
-            content="This is a test document that needs summarization."
-        )
+        with patch("delia.orchestration.executor.call_llm", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = {"success": True, "response": "Summary text", "model": "test"}
+            result = await mcp_server.delegate.fn(
+                task="summarize",
+                content="This is a test document that needs summarization."
+            )
 
-        # Should return something (even if error due to no backend)
+        # Should return something
         assert result is not None
         assert isinstance(result, str)
+        assert "Summary" in result
 
     @pytest.mark.asyncio
-    async def test_think_flow(self):
+    async def test_think_flow(self, mock_env):
         """Test complete think tool call flow."""
         from delia import mcp_server
 
-        result = await mcp_server.think.fn(
-            problem="What is 2 + 2?",
-            depth="quick"
-        )
+        with patch("delia.orchestration.executor.call_llm", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = {"success": True, "response": "Thinking result", "model": "test"}
+            result = await mcp_server.think.fn(
+                problem="What is 2 + 2?",
+                depth="quick"
+            )
 
         assert result is not None
         assert isinstance(result, str)
+        assert "Thinking" in result
 
     @pytest.mark.asyncio
-    async def test_batch_flow(self):
+    async def test_batch_flow(self, mock_env):
         """Test complete batch tool call flow."""
         from delia import mcp_server
 
@@ -374,10 +409,13 @@ class TestMCPToolCallFlow:
             {"task": "quick", "content": "What is JavaScript?"}
         ])
 
-        result = await mcp_server.batch.fn(tasks=tasks)
+        with patch("delia.orchestration.executor.call_llm", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = {"success": True, "response": "Python is a language.", "model": "test"}
+            result = await mcp_server.batch.fn(tasks=tasks)
 
         assert result is not None
         assert isinstance(result, str)
+        assert "Python" in result
 
 
 class TestMCPErrorHandling:

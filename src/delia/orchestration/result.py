@@ -14,9 +14,12 @@ prompts module to avoid duplication.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, TYPE_CHECKING
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from .parser import ParsedToolCall
 
 # Import from unified prompt system - single source of truth
 from ..prompts import ModelRole, OrchestrationMode
@@ -116,6 +119,9 @@ class OrchestrationResult:
     
     # Debug info for logging
     debug_info: dict[str, Any] = field(default_factory=dict)
+    
+    # Tool calls executed (for AGENTIC mode)
+    tool_calls: list[ParsedToolCall] = field(default_factory=list)
 
 
 @dataclass

@@ -332,25 +332,20 @@ class OrchestrationService:
         """Internal traced implementation of process()."""
         start_time = time.time()
         frustration_penalty = 0
-        
-        # STEP 1: Context Preparation & Session Handling
         session_context = None
-        if session_id:
-            from ..session_manager import get_session_manager
-            session_manager = get_session_manager()
-            session = session_manager.get_session(session_id)
-            if session:
-                session_context = session.get_context_window(max_tokens=6000)
-                # Record user's message to session history immediately
-                session_manager.add_to_session(
-                    session_id, "user", message, tokens=0, model="", task_type="orchestration"
-                )
-
-        # STEP 2: Intent detection (3-tier NLP)
+        
+        # STEP 1: Intent detection (3-tier NLP)
         from .intent import get_intent_detector
         detector = get_intent_detector()
         intent = await detector.detect_async(message)
         
+        # Check if we even have a backend before starting heavy lifting.
+        # Only 'status' task is safe without a backend as it returns local leaderboard.
+        if intent.task_type != "status" or intent.orchestration_mode != OrchestrationMode.NONE:
+            from ..backend_manager import backend_manager
+            if not backend_manager.get_active_backend():
+                raise RuntimeError("No backend configured. Please configure at least one backend in settings.json.")
+
         span.event(
             "intent_detected",
             task_type=intent.task_type,
@@ -378,7 +373,7 @@ class OrchestrationService:
 
         span.event("context_prepared", length=len(prepared_content))
 
-        # STEP 3: Frustration detection
+        # STEP 2: Frustration detection
         repeat_info = None
         if session_id:
             repeat_info = self.frustration.check_repeat(session_id, message)
@@ -415,19 +410,6 @@ class OrchestrationService:
                     model=repeat_info.previous_model,
                     penalty=frustration_penalty,
                 )
-        
-        # STEP 2: Intent detection (3-tier NLP)
-        # We use detect_async to allow Layer 3 (LLM classifier) to run if needed
-        from .intent import get_intent_detector
-        detector = get_intent_detector()
-        intent = await detector.detect_async(message)
-        
-        span.event(
-            "intent_detected",
-            task_type=intent.task_type,
-            mode=intent.orchestration_mode.value,
-            confidence=round(intent.confidence, 2),
-        )
         
         # STEP 3: Auto-upgrade orchestration based on frustration level
         if repeat_info and repeat_info.level != FrustrationLevel.NONE:
@@ -488,6 +470,11 @@ class OrchestrationService:
                 output_type=output_type,
             )
         else:
+            # Check if we even have a backend before continuing (NORMAL PATH)
+            from ..backend_manager import backend_manager
+            if not backend_manager.get_active_backend():
+                raise RuntimeError("No backend configured. Please configure at least one backend in settings.json.")
+
             # NORMAL PATH: Use Dispatcher -> Planner -> Executor
             result = await self.executor.execute(
                 intent=intent,
@@ -606,7 +593,7 @@ class OrchestrationService:
         """Get current service statistics."""
         return {
             "affinity_entries": len(self.affinity._scores),
-            "prewarm_entries": len(self.prewarm._scores),
+            "total_prewarm_points": sum(len(points) for points in self.prewarm._scores.values()),
             "melon_models": len(self.melons._stats),
             "frustration_sessions": len(self.frustration._records),
         }
@@ -658,4 +645,3 @@ def reset_orchestration_service() -> None:
     global _SERVICE
     _SERVICE = None
     log.info("orchestration_service_reset")
-

@@ -269,6 +269,7 @@ async def call_llm_stream(
     backend: str | BackendConfig | None = None,
     backend_obj: BackendConfig | None = None,
     max_tokens: int | None = None,
+    messages: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[StreamChunk]:
     """
     Unified LLM streaming dispatcher that routes to the appropriate backend.
@@ -286,6 +287,7 @@ async def call_llm_stream(
         backend: Override backend ID or provider name
         backend_obj: Optional BackendConfig object to use directly
         max_tokens: Maximum response tokens
+        messages: Optional conversation history
 
     Yields:
         StreamChunk objects with incremental text and final metadata
@@ -332,6 +334,7 @@ async def call_llm_stream(
             content_preview=content_preview,
             backend_obj=active_backend,
             max_tokens=max_tokens,
+            messages=messages,
         ):
             yield chunk
     else:
@@ -347,6 +350,7 @@ async def call_llm_stream(
             content_preview=content_preview,
             backend_obj=active_backend,
             max_tokens=max_tokens,
+            messages=messages,
         )
         if response.success:
             yield StreamChunk(

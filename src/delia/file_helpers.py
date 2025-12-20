@@ -14,10 +14,10 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-File helper functions for reading files and Serena memories.
+File helper functions for reading files and Delia's memory system.
 
 This module provides utilities for safely reading files from disk,
-including size limits, error handling, and Serena memory integration.
+including size limits, error handling, and Delia's native memory integration.
 """
 
 import re
@@ -30,7 +30,7 @@ from .config import config
 
 log = structlog.get_logger()
 
-# Directory for Serena memory files
+# Directory for Delia's memory files
 MEMORY_DIR = paths.MEMORIES_DIR
 
 
@@ -58,9 +58,9 @@ def read_file_safe(file_path: str, max_size: int | None = None) -> tuple[str | N
         return None, f"Error reading file: {e}"
 
 
-def read_serena_memory(name: str) -> str | None:
+def read_memory(name: str) -> str | None:
     """
-    Read a Serena memory file.
+    Read a Delia memory file.
 
     Memory files are markdown files stored in the memories directory.
     Names are sanitized to prevent path traversal.
@@ -79,16 +79,16 @@ def read_serena_memory(name: str) -> str | None:
     return None
 
 
-def list_serena_memories() -> list[str]:
+def list_memories() -> list[str]:
     """
-    List all available Serena memories.
+    List all available Delia memories.
 
     Returns:
         List of memory names (without extension) sorted alphabetically.
     """
     if not MEMORY_DIR.exists():
         return []
-    
+
     memories = [f.stem for f in MEMORY_DIR.glob("*.md")]
     return sorted(memories)
 

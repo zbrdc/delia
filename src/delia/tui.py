@@ -33,6 +33,7 @@ try:
     from rich.theme import Theme
     from rich.status import Status
     from rich.padding import Padding
+    from rich.rule import Rule
     
     # Custom theme for Delia
     delia_theme = Theme({
@@ -60,8 +61,8 @@ class RichAgentUI:
     def __init__(self):
         self.console = console
         self._status: Status | None = None
-        self.model: str = "Unknown"
-        self.backend: str = "Unknown"
+        self.model: str = "auto"
+        self.backend: str = "local"
 
     def is_available(self) -> bool:
         return RICH_AVAILABLE and self.console is not None
@@ -82,132 +83,133 @@ class RichAgentUI:
             print(f"Status: {message}")
             return
 
+        # Modern status: message followed by a subtle model tag
+        full_msg = f"{message} [dim]({self.model})[/dim]"
+
         if self._status:
-            self._status.update(message, spinner=spinner)
+            self._status.update(full_msg, spinner=spinner)
         else:
-            self._status = self.console.status(message, spinner=spinner)
+            self._status = self.console.status(full_msg, spinner=spinner)
             self._status.start()
 
     # --- Public API ---
 
-    def print_header(self, task: str, subtitle: str = "") -> None:
+    def print_header(self, task: str, subtitle: str = "", console_override: Any = None) -> None:
         """Print the task header."""
-        if not self.is_available():
+        con = console_override or self.console
+        if not con:
             print(f"\nTask: {task}\n{'='*40}")
             return
 
-        self.console.print()
-        title = Text(" 🍈 DELIA ", style="bold magenta reverse")
-        title.append(f" {task}", style="bold white")
+        con.print()
+        # Sleek top-aligned header
+        header = Text(" 🍈 ", style="green")
+        header.append("DELIA", style="bold white")
+        header.append(" │ ", style="dim")
+        header.append(task, style="bold cyan")
         
+        con.print(header)
         if subtitle:
-            self.console.print(Panel(
-                Text(subtitle, style="dim italic", justify="center"),
-                title=title,
-                border_style="magenta",
-                padding=(0, 2)
-            ))
-        else:
-            self.console.print(Panel(
-                Text("Processing...", style="dim"),
-                title=title,
-                border_style="magenta"
-            ))
+            con.print(f" [dim italic]{subtitle}[/dim italic]")
+        con.print(Rule(style="dim"))
 
     def update_metadata(self, model: str, backend: str) -> None:
-        """Update model info (displayed in footer/logs)."""
+        """Update model info (displayed in status line)."""
         self.model = model
         self.backend = backend
+        # Refresh status if active
+        if self._status:
+            current = self._status.status
+            if " [dim]" in str(current):
+                base = str(current).split(" [dim]")[0]
+                self._set_status(base)
 
     def print_planning_start(self) -> None:
         """Indicate planning phase."""
-        self._set_status("[bold blue]Generating execution plan...[/bold blue]", spinner="earth")
+        self._set_status("[bold blue]Planning...[/bold blue]", spinner="simpleDots")
 
-    def print_plan(self, plan: str) -> None:
+    def print_plan(self, plan: str, console_override: Any = None) -> None:
         """Display the plan."""
         self.stop()
-        if not self.is_available():
+        con = console_override or self.console
+        if not con:
             print(f"Plan: {plan}")
             return
             
-        self.console.print(Panel(
+        con.print(Panel(
             Markdown(plan),
-            title="[bold blue]Execution Plan[/bold blue]",
+            title="[bold blue]Strategic Plan[/bold blue]",
             border_style="blue",
-            padding=(1, 2)
+            padding=(0, 2)
         ))
 
-    def print_tool_call(self, name: str, args: dict[str, Any]) -> None:
+    def print_tool_call(self, name: str, args: dict[str, Any], console_override: Any = None) -> None:
         """Log a tool call."""
-        self.stop() # Stop previous spinner
+        self.stop() 
+        con = console_override or self.console
         
         # Format args for display
         import json
         args_str = json.dumps(args)
-        if len(args_str) > 120:
-            args_str = args_str[:117] + "..."
+        if len(args_str) > 100:
+            args_str = args_str[:97] + "..."
             
-        if self.is_available():
-            self.console.print(f"[bold magenta]🛠️  {name}[/bold magenta] [dim]{args_str}[/dim]")
-            self._set_status(f"Running {name}...", spinner="bouncingBall")
+        if con:
+            con.print(f" [magenta]⚙[/magenta] [white]{name}[/white] [dim]{args_str}[/dim]")
+            self._set_status(f"Running {name}", spinner="simpleDotsScrolling")
         else:
             print(f"[Tool] {name}: {args_str}")
 
-    def print_tool_result(self, name: str, result: str, success: bool = True) -> None:
+    def print_tool_result(self, name: str, result: str, success: bool = True, console_override: Any = None) -> None:
         """Log a tool result."""
         self.stop()
+        con = console_override or self.console
         
-        # Truncate long results for display
-        preview = result.strip()
+        preview = str(result).strip()
         lines = preview.split('\n')
-        if len(lines) > 5:
-            preview = "\n".join(lines[:5]) + f"\n... ({len(lines)-5} more lines)"
-        elif len(preview) > 300:
-            preview = preview[:300] + "..."
+        if len(lines) > 3:
+            preview = "\n".join(lines[:3]) + f" [dim](+{len(lines)-3} more)[/dim]"
+        elif len(preview) > 200:
+            preview = preview[:200] + "..."
 
-        if not self.is_available():
-            status = "OK" if success else "FAIL"
-            print(f"[{status}] {preview}")
+        if not con:
             return
 
         if success:
-            self.console.print(Padding(Text(f"✓ {preview}", style="dim green"), (0, 2)))
+            con.print(Padding(Text(f"✓ {preview}", style="dim green"), (0, 4)))
         else:
-            self.console.print(Padding(Text(f"✗ {preview}", style="red"), (0, 2)))
+            con.print(Padding(Text(f"✗ {preview}", style="bold red"), (0, 4)))
 
     def print_reflection_start(self) -> None:
         """Indicate reflection."""
-        self._set_status("[italic purple]Reflecting on results...[/italic purple]", spinner="moon")
+        self._set_status("[italic purple]Refining...[/italic purple]", spinner="point")
 
-    def print_reflection_feedback(self, feedback: str) -> None:
+    def print_reflection_feedback(self, feedback: str, console_override: Any = None) -> None:
         """Log critique."""
         self.stop()
-        if self.is_available():
-            self.console.print(f"[yellow]⚠️  Critique:[/yellow] [dim yellow]{feedback}[/dim yellow]")
-        else:
-            print(f"Critique: {feedback}")
+        con = console_override or self.console
+        if con:
+            con.print(f" [yellow]![/yellow] [dim yellow]Self-Correction:[/dim yellow] [yellow]{feedback}[/yellow]")
 
-    def print_reflection_success(self) -> None:
+    def print_reflection_success(self, console_override: Any = None) -> None:
         """Log verification."""
         self.stop()
-        if self.is_available():
-            self.console.print("[bold green]✨ Verified.[/bold green]")
+        con = console_override or self.console
+        if con:
+            con.print(" [green]✨ Output verified.[/green]")
 
-    def print_final_response(self, response: str) -> None:
+    def print_final_response(self, response: str, console_override: Any = None) -> None:
         """Display final response."""
         self.stop()
+        con = console_override or self.console
         
-        if not self.is_available():
+        if not con:
             print(f"\nResponse:\n{response}")
             return
 
-        self.console.print()
-        self.console.print(Panel(
-            Markdown(response),
-            title="[bold green]Final Response[/bold green]",
-            border_style="green",
-            padding=(1, 2),
-        ))
+        con.print()
+        con.print(Markdown(response))
+        con.print(Rule(style="dim"))
 
     def print_footer(self, model: str, backend: str, iterations: int, elapsed_ms: int) -> None:
         """Print final stats."""
@@ -216,5 +218,5 @@ class RichAgentUI:
             print(f"Stats: {model} | {iterations} steps | {elapsed_ms}ms")
             return
             
-        stats = f"[dim]Model:[/dim] [cyan]{model}[/cyan]  [dim]Time:[/dim] [cyan]{elapsed_ms}ms[/cyan]  [dim]Steps:[/dim] [cyan]{iterations}[/cyan]"
-        self.console.print(Padding(stats, (1, 0)))
+        stats = f"[dim]Model:[/dim] [cyan]{model}[/cyan] [dim]•[/dim] [dim]Time:[/dim] [cyan]{elapsed_ms}ms[/cyan] [dim]•[/dim] [dim]Steps:[/dim] [cyan]{iterations}[/cyan]"
+        self.console.print(Padding(stats, (0, 0)))

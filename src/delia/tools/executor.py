@@ -113,11 +113,30 @@ def validate_path(
     # CRITICAL SECURITY: Block sensitive directory patterns
     sensitive_patterns = [
         "/.ssh", "/.aws", "/.config/gcloud", "/etc/passwd", "/etc/shadow",
-        "/.bash_history", "/.zsh_history", "/.env"
+        "/.bash_history", "/.zsh_history", "/.env", "/.git",
+        "/bin/", "/usr/bin", "/dev/", "/proc/", "/sys/", "/boot/", "/lib",
+        "/var/log", 
+        "c:\\windows", "c:\\users", # Windows sensitive
     ]
     for pattern in sensitive_patterns:
         if pattern in path_str:
             return False, f"Access to sensitive pattern '{pattern}' is not allowed"
+
+    # Block dangerous extensions
+    dangerous_extensions = [
+        ".sql", ".db", ".sqlite", ".bin", ".py", ".sh", ".bash", ".exe", ".dll", ".so"
+    ]
+    if any(path_str.endswith(ext) for ext in dangerous_extensions):
+        return False, "Access to restricted file type not allowed"
+
+    # Check for command injection in path
+    if any(char in path for char in ["$", "`", "|", "&", ";", ">", "<"]):
+        return False, "Potential command injection in path"
+        
+    # Check for administrative keywords in path (shell injection)
+    admin_keywords = ["sudo ", "chmod ", "chown ", "rm -rf", "mkfs", "doas "]
+    if any(kw in path_str for kw in admin_keywords):
+        return False, "Potential command injection in path"
 
     # Check blocked paths (always blocked, even within workspace)
     for blocked in BLOCKED_PATHS:

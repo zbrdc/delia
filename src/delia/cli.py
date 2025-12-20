@@ -258,6 +258,15 @@ def detect_backends() -> list[DetectedBackend]:
                 if response.status_code != 200:
                     continue
 
+                # For llama.cpp, do a more specific check to avoid false positives
+                if provider == "llamacpp":
+                    try:
+                        props_resp = client.get(f"{base_url}/props")
+                        if props_resp.status_code != 200:
+                            continue
+                    except Exception:
+                        continue
+
                 # Get models
                 models: list[str] = []
                 if provider == "ollama":
@@ -838,26 +847,18 @@ def chat(
     model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model tier (quick/coder/moe) or specific model")] = None,
     backend: Annotated[Optional[str], typer.Option("--backend", "-b", help="Force backend type (local/remote)")] = None,
     session: Annotated[Optional[str], typer.Option("--session", "-s", help="Resume existing session by ID")] = None,
-    port: Annotated[Optional[int], typer.Option("--port", "-p", help="API server port (unused in native mode)")] = None,
     debug: Annotated[bool, typer.Option("--debug", help="Enable debug logging")] = False,
-    # New flags
-    web: Annotated[bool, typer.Option("--web", help="Use legacy web-style interface (TypeScript CLI)")] = False,
     workspace: Annotated[Optional[str], typer.Option("--workspace", "-w", help="Confine file operations to directory")] = None,
 ) -> None:
     """
-    Start an interactive chat session.
-
-    By default, this uses the Native Python TUI (same as 'delia agent').
-    To use the legacy TypeScript interface, pass --web.
+    Start an interactive chat session using the Native Python TUI.
 
     Examples:
         delia chat                    # Start native chat
         delia chat --model coder      # Use coder model tier
-        delia chat --web              # Use legacy web-style UI
     """
     
     # Safety check: If called from Python (main), default values might be OptionInfo objects
-    # This can happen if Typer's wrapping behavior leaks the default OptionInfo
     import typer.models
     if isinstance(workspace, typer.models.OptionInfo):
         workspace = None
@@ -867,181 +868,25 @@ def chat(
         backend = None
     if isinstance(session, typer.models.OptionInfo):
         session = None
-    if isinstance(web, typer.models.OptionInfo):
-        web = False
 
-    # 1. Native Chat Mode (Default)
-    if not web:
-        from .agent_cli import AgentCLIConfig, run_chat_cli
-        import asyncio
-        
-        config = AgentCLIConfig(
-            model=model,
-            backend_type=backend,
-            workspace=workspace,
-            verbose=debug,
-            # Enable agent capabilities by default in chat
-            planning_enabled=True,
-            reflection_enabled=True, 
-        )
-        
-        try:
-            asyncio.run(run_chat_cli(config))
-        except KeyboardInterrupt:
-            pass
-        return
-
-    # 2. Legacy Web/TS CLI Mode
-    import atexit
-    import signal
-    import socket
-    import sys
-    import time
-
-    delia_root = get_delia_root()
-
-    # Auto-select port if not specified
-    if port is None:
-        port = _find_free_port()
-
-    api_url = f"http://localhost:{port}"
-
-    # Check if API server is already running
-    def is_port_in_use(port: int) -> bool:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            return s.connect_ex(("localhost", port)) == 0
-
-    api_process = None
-
-    if not is_port_in_use(port):
-        print_info(f"Starting API server on port {port}...")
-
-        # Pass settings file to subprocess via environment variable
-        # This ensures the API uses the same settings as the CLI
-        env = os.environ.copy()
-        env["DELIA_SETTINGS_FILE"] = str(SETTINGS_FILE)
-        if debug:
-            env["DELIA_DEBUG"] = "true"
-
-        # Start API server in background
-        # Capture stderr for debugging startup failures
-        import tempfile
-        stderr_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.log')
-        api_process = subprocess.Popen(
-            [sys.executable, "-m", "delia.api", "--port", str(port)],
-            stdout=subprocess.DEVNULL,
-            stderr=stderr_file,
-            env=env,
-        )
-
-        # Register cleanup
-        def cleanup():
-            if api_process and api_process.poll() is None:
-                api_process.terminate()
-                try:
-                    api_process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    api_process.kill()
-
-        atexit.register(cleanup)
-
-        # Also handle signals
-        def signal_handler(sig, frame):
-            cleanup()
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-
-        # Wait for server to be ready
-        for _ in range(50):  # 5 second timeout (increased from 3s)
-            if is_port_in_use(port):
-                break
-            # Check if process died
-            if api_process.poll() is not None:
-                stderr_file.close()
-                with open(stderr_file.name) as f:
-                    stderr_content = f.read()
-                os.unlink(stderr_file.name)
-                print_error("API server process exited unexpectedly")
-                if stderr_content.strip():
-                    print_error(f"Error output:\n{stderr_content[:500]}")
-                raise typer.Exit(1)
-            time.sleep(0.1)
-        else:
-            # Timeout - server didn't respond
-            stderr_file.close()
-            with open(stderr_file.name) as f:
-                stderr_content = f.read()
-            os.unlink(stderr_file.name)
-            print_error("API server failed to start (timeout)")
-            if stderr_content.strip():
-                print_info(f"Server output:\n{stderr_content[:500]}")
-            if api_process:
-                api_process.terminate()
-            raise typer.Exit(1)
-        
-        # Clean up temp file on success
-        stderr_file.close()
-        os.unlink(stderr_file.name)
-
-        print_success("API server started")
-
-    # Build delia-cli command
-    cli_cmd = ["delia-cli", "chat", "--api-url", api_url]
-    if model:
-        cli_cmd.extend(["--model", model])
-    if backend:
-        cli_cmd.extend(["--backend", backend])
-    if session:
-        cli_cmd.extend(["--session", session])
-
-    # Check if delia-cli is available
-    if not shutil.which("delia-cli"):
-        print_warning("delia-cli not found in PATH")
-        
-        # Check if we are in a dev environment (have packages/cli)
-        cli_pkg_dir = delia_root / "packages" / "cli"
-        if cli_pkg_dir.exists():
-            print_info("Detected TypeScript CLI package. Attempting to build and link...")
-            
-            try:
-                # 1. npm install
-                print_info("  Running: npm install")
-                subprocess.run(["npm", "install"], cwd=str(cli_pkg_dir), check=True, stdout=subprocess.DEVNULL)
-                
-                # 2. npm run build
-                print_info("  Running: npm run build")
-                subprocess.run(["npm", "run", "build"], cwd=str(cli_pkg_dir), check=True, stdout=subprocess.DEVNULL)
-                
-                # 3. npm link
-                print_info("  Running: npm link")
-                subprocess.run(["npm", "link"], cwd=str(cli_pkg_dir), check=True, stdout=subprocess.DEVNULL)
-                
-                print_success("TypeScript CLI built and linked successfully")
-            except Exception as e:
-                print_error(f"Failed to build/link TypeScript CLI: {e}")
-                print_info("Please install it manually: cd packages/cli && npm install && npm run build && npm link")
-                if api_process:
-                    api_process.terminate()
-                raise typer.Exit(1)
-        else:
-            print_info("Please install it manually: cd packages/cli && npm install && npm link")
-            if api_process:
-                api_process.terminate()
-            raise typer.Exit(1)
-
-    print()
-    print_info("💡 Tip: Delia is agentic! Ask her to 'read files', 'run tests', or 'search the web'.")
-    print()
-
-    # Run the chat CLI
+    from .agent_cli import AgentCLIConfig, run_chat_cli
+    import asyncio
+    
+    config = AgentCLIConfig(
+        model=model,
+        backend_type=backend,
+        workspace=workspace,
+        verbose=debug,
+        # Enable agent capabilities by default in chat
+        planning_enabled=True,
+        reflection_enabled=True, 
+    )
+    
     try:
-        result = subprocess.run(cli_cmd, check=False)
-        raise typer.Exit(result.returncode)
-    finally:
-        if api_process and api_process.poll() is None:
-            api_process.terminate()
+        asyncio.run(run_chat_cli(config))
+    except KeyboardInterrupt:
+        pass
+    return
 
 
 @app.command()

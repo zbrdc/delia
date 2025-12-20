@@ -346,6 +346,7 @@ class GeminiProvider:
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        messages: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from Gemini API.
 
@@ -355,14 +356,6 @@ class GeminiProvider:
         tool calling with streaming is not currently supported.
         """
         start_time = time.time()
-
-        # Dependency Check
-        try:
-            import google.generativeai as genai
-            from google.api_core import exceptions as google_exceptions
-        except ImportError:
-            yield StreamChunk(done=True, error="Gemini dependency missing. Please run: uv add google-generativeai")
-            return
 
         # Resolve Backend
         if not backend_obj:
@@ -374,6 +367,15 @@ class GeminiProvider:
         if not backend_obj:
             yield StreamChunk(done=True, error="No enabled Gemini backend found")
             return
+
+        # Prepare Gemini-style messages
+        gemini_messages = []
+        if messages:
+            for m in messages:
+                role = "user" if m["role"] == "user" else "model"
+                gemini_messages.append({"role": role, "parts": [m["content"]]})
+        else:
+            gemini_messages = [{"role": "user", "parts": [prompt]}]
 
         # Circuit Breaker Check
         health = get_backend_health(backend_obj.id)
@@ -423,7 +425,7 @@ class GeminiProvider:
                 """Synchronous streaming generator."""
                 nonlocal full_response, total_tokens
                 response = gen_model.generate_content(
-                    prompt,
+                    gemini_messages,
                     generation_config=generation_config,
                     stream=True,
                 )

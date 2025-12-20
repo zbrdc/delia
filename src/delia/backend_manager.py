@@ -104,15 +104,15 @@ class BackendConfig:
             capabilities = cls.detect_capabilities(provider)
             supports_native = capabilities["supports_native_tool_calling"]
 
-        # Provider-specific default URLs (not hardcoded 8080!)
+        # Provider-specific default URLs
         default_urls = {
             "ollama": "http://localhost:11434",
-            "llamacpp": "http://localhost:8080",
+            "llamacpp": "",  # Don't default to 8080 if not specified
             "lmstudio": "http://localhost:1234",
             "openai": "https://api.openai.com",
             "anthropic": "https://api.anthropic.com",
         }
-        default_url = default_urls.get(provider, "http://localhost:11434")  # Ollama default
+        default_url = default_urls.get(provider, "") or "http://localhost:11434"  # Ollama default fallback
 
         # Handle models migration (str -> list[str])
         raw_models = data.get("models", {})
@@ -481,6 +481,17 @@ class BackendManager:
                 if health_resp.status_code != 200:
                     return None
 
+                # For llama.cpp, do a more specific check to avoid false positives on common ports
+                if endpoint["provider"] == "llamacpp":
+                    try:
+                        # llama.cpp server has a /props endpoint
+                        props_resp = client.get(f"{url}/props")
+                        if props_resp.status_code != 200:
+                            # Not a llama.cpp server
+                            return None
+                    except Exception:
+                        return None
+
                 # Get available models
                 models_resp = client.get(f"{url}{endpoint['models']}")
                 if models_resp.status_code != 200:
@@ -506,7 +517,7 @@ class BackendManager:
                     "type": "local",
                     "url": url,
                     "enabled": True,
-                    "priority": 0 if endpoint["provider"] == "llamacpp" else 1,
+                    "priority": 0 if endpoint["provider"] == "ollama" else 1,
                     "models": tier_assignments,
                     "health_endpoint": endpoint["health"],
                     "models_endpoint": endpoint["models"],

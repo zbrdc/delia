@@ -350,6 +350,7 @@ class LlamaCppProvider:
         content_preview: str = "",
         backend_obj: BackendConfig | None = None,
         max_tokens: int | None = None,
+        messages: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from OpenAI-compatible API token by token.
 
@@ -402,14 +403,19 @@ class LlamaCppProvider:
         temperature = self.config.temperature_thinking if enable_thinking else self.config.temperature_normal
 
         # Build messages for OpenAI-compatible API
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+        if messages:
+            built_messages = messages.copy()
+            if system and not any(m.get("role") == "system" for m in built_messages):
+                built_messages.insert(0, {"role": "system", "content": system})
+        else:
+            built_messages = []
+            if system:
+                built_messages.append({"role": "system", "content": system})
+            built_messages.append({"role": "user", "content": prompt})
 
         payload = {
             "model": model,
-            "messages": messages,
+            "messages": built_messages,
             "temperature": temperature,
             "max_tokens": max_tokens if max_tokens else num_ctx,
             "stream": True,  # Enable streaming

@@ -14,624 +14,250 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-Standalone Agent CLI for Delia.
-
-Provides `delia agent` command for running autonomous agents from the command line.
-Supports single-shot tasks and interactive chat mode with optional k-voting
-for mathematically-guaranteed reliability.
+Premium Agent CLI for Delia.
+High-fidelity TUI with pinned-bottom input and scrollable ANSI history.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+import io
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Awaitable
 
 import structlog
 
 from .tools.agent import AgentConfig, AgentResult, run_agent_loop
 from .tools.builtins import get_default_tools
-from .tools.registry import ToolRegistry
+from .tools.registry import ToolRegistry, TrustLevel
 from .types import Workspace
 from .delegation import DelegateContext, delegate_impl
 from .multi_user_tracking import tracker
 from .tui import RichAgentUI, RICH_AVAILABLE, console
 
+from prompt_toolkit.application import Application
+from prompt_toolkit.layout.containers import HSplit, Window, VSplit, ConditionalContainer, FloatContainer, Float
+from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
+from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.lexers import PygmentsLexer
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.formatted_text import HTML, ANSI
+from prompt_toolkit.widgets import Frame, TextArea, Dialog, Button, Label
+from prompt_toolkit.filters import Condition
+from pygments.lexers.markup import MarkdownLexer
+
 try:
     from rich.panel import Panel
+    from rich.markdown import Markdown
+    from rich.console import Console
+    from rich.text import Text
 except ImportError:
     Panel = None  # type: ignore
+    Markdown = None # type: ignore
+    Console = None # type: ignore
 
 log = structlog.get_logger()
 
 # Initialize UI
 ui = RichAgentUI()
 
-
 @dataclass
 class AgentCLIConfig:
-    """Configuration for agent CLI execution."""
-
     model: str | None = None
     workspace: str | None = None
     max_iterations: int = 10
     tools: list[str] | None = None
     backend_type: str | None = None
     verbose: bool = False
-    voting_enabled: bool = False
-    voting_k: int | None = None
-    allow_write: bool = False
-    allow_exec: bool = False
-    # Reflection settings
-    reflection_enabled: bool = False
-    max_reflections: int = 1
-    reflection_confidence: str = "normal"
-    # Planning settings
-    planning_enabled: bool = False
-    planning_model: str = "moe"  # Use MoE for planning by default
+    reflection_enabled: bool = True
+    planning_enabled: bool = True
 
-
-@dataclass
-class AgentCLIResult:
-    """Result from agent CLI execution."""
-
-    success: bool
-    response: str
-    iterations: int
-    tool_calls: list[str]
-    elapsed_ms: int
-    model: str
-    backend: str
-    voting_used: bool = False
-    voting_k: int | None = None
-
-
-async def run_agent_cli(
-    task: str,
-    config: AgentCLIConfig,
-) -> AgentCLIResult:
-    """
-    Run an autonomous agent from the CLI.
-
-    Args:
-        task: The task/prompt for the agent
-        config: Agent CLI configuration
-
-    Returns:
-        AgentCLIResult with response and metadata
-    """
-    # Import here to avoid circular imports
-    from .llm import call_llm
-    from .routing import select_model, get_router
-    from .mcp_server import get_active_backend
-
-    start_time = time.time()
-
-    # Print header
-    ui.print_header(task)
-
-    try:
-        _, backend_obj = await get_router().select_optimal_backend(
-            task, None, "analyze", config.backend_type
-        )
-    except Exception as e:
-        return AgentCLIResult(
-            success=False,
-            response=f"Failed to select backend: {e}",
-            iterations=0,
-            tool_calls=[],
-            elapsed_ms=int((time.time() - start_time) * 1000),
-            model="unknown",
-            backend="unknown",
-        )
-
-    backend_name = backend_obj.name if backend_obj else "unknown"
-
-    # Select model
-    try:
-        selected_model = await select_model(
-            task_type="analyze",
-            content_size=len(task),
-            model_override=config.model,
-            content=task,
-        )
-        # Safety fix: Handle list if routing returns multiple models
-        if isinstance(selected_model, list):
-            selected_model = selected_model[0] if selected_model else "unknown"
-            
-    except Exception as e:
-        return AgentCLIResult(
-            success=False,
-            response=f"Failed to select model: {e}",
-            iterations=0,
-            tool_calls=[],
-            elapsed_ms=int((time.time() - start_time) * 1000),
-            model="unknown",
-            backend=backend_name,
-        )
-
-    # ACE Layer 2: Inject Learned Strategies (Global Strategy)
-    from .playbook import playbook_manager
-    playbook_context = playbook_manager.format_for_prompt("agent")
-    
-    # ACE Layer 1: Inject Constitution (Aspirations)
-    constitution_path = Path("data/constitution.md")
-    constitution = ""
-    if constitution_path.exists():
-        constitution = f"\n\n## System Constitution\n{constitution_path.read_text()}"
-
-    task_context = f"{task}\n\n{playbook_context}{constitution}"
-
-    # Generate Plan (if enabled)
-    initial_plan = ""
-    if config.planning_enabled:
-        ui.print_planning_start()
-
-        # Construct planning context
-        plan_ctx = DelegateContext(
-            select_model=select_model,
-            get_active_backend=get_active_backend,
-            call_llm=call_llm,
-            get_client_id=lambda: None,
-            tracker=tracker,
-        )
-
-        plan_prompt = f"""You are a Senior Architect planning a task.
-
-Task:
-{task}
-
-Instructions:
-1. Break down the task into clear, sequential steps.
-2. Identify necessary information gathering steps first (e.g., read files, search).
-3. Outline the execution steps.
-4. Include verification steps at the end.
-5. Output ONLY the plan as a numbered list.
-"""
-
-        try:
-            initial_plan = await delegate_impl(
-                ctx=plan_ctx,
-                task="plan",
-                content=plan_prompt,
-                model=config.planning_model,
-                include_metadata=False,
-                backend=config.backend_type,
-            )
-            
-            ui.print_plan(initial_plan)
-                
-            # Append plan to the task for the agent
-            task = f"""{task}
-
----
-### Execution Plan
-Please follow this plan:
-{initial_plan}
-"""
-        except Exception as e:
-            log.warning("planning_failed", error=str(e))
-            if RICH_AVAILABLE and console:
-                console.print(f"[yellow]Warning: Planning failed: {e}. Proceeding without plan.[/yellow]")
-            else:
-                print(f"Warning: Planning failed: {e}")
-
-    # Set up workspace
-    workspace_obj = Workspace(root=config.workspace) if config.workspace else None
-
-    # Set up tool registry
-    registry = get_default_tools(workspace=workspace_obj)
-
-    # Filter tools if specified
-    if config.tools:
-        registry = registry.filter(config.tools)
-
-    # Detect native tool calling support
-    use_native = backend_obj.supports_native_tool_calling if backend_obj else False
-
-    # Track tool calls for result
-    tool_calls_made: list[str] = []
-
-    # Create LLM callable wrapper
-    async def agent_llm_call(
-        messages: list[dict[str, Any]],
-        system: str | None,
-    ) -> str:
-        # Convert messages to a single prompt
-        prompt_parts = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "user":
-                prompt_parts.append(f"User: {content}")
-            elif role == "assistant":
-                prompt_parts.append(f"Assistant: {content}")
-            elif role == "tool":
-                tool_name = msg.get("name", "tool")
-                prompt_parts.append(f"[Tool Result - {tool_name}]\n{content}")
-
-        combined_prompt = "\n\n".join(prompt_parts)
-
-        result = await call_llm(
-            model=selected_model,
-            prompt=combined_prompt,
-            system=system,
-            task_type="agent",
-            original_task="agent",
-            language="unknown",
-            backend_obj=backend_obj,
-        )
-
-        if result.get("success"):
-            return result.get("response", "")
-        else:
-            raise RuntimeError(result.get("error", "LLM call failed"))
-
-    # Critique callback for reflection loop
-    async def critique_callback(response: str, original_prompt: str) -> tuple[bool, str]:
-        if RICH_AVAILABLE and console:
-            console.print(Panel(
-                "[dim]Critiquing response...[/dim]",
-                title="[bold magenta]Reflection[/bold magenta]",
-                border_style="magenta",
-            ))
-        else:
-            print("\n[Reflection] Critiquing response...")
-
-        # Construct delegate context
-        ctx = DelegateContext(
-            select_model=select_model,
-            get_active_backend=get_active_backend,
-            call_llm=call_llm,
-            get_client_id=lambda: None,
-            tracker=tracker,
-        )
-
-        critique_prompt = f"""You are a QA Lead reviewing a response to a task.
-
-Original Task:
-{original_prompt}
-
-Response to Review:
-{response}
-
-Instructions:
-1. Verify if the response fully addresses the Original Task.
-2. Check for any logical errors, safety issues, or hallucinations.
-3. If the response is satisfactory, simply output "VERIFIED" (without quotes).
-4. If there are issues, provide concise, actionable feedback for the agent to fix them. Do not rewrite the response yourself.
-"""
-        
-        # Use high confidence (voting) if requested, otherwise normal delegation
-        # Note: We rely on the delegation system's internal voting logic if configured in settings.json
-        # or we could force it here. For now, we trust the delegate() tool's routing.
-        
-        # Use thinking model for critique if available/configured
-        model_tier = "thinking" if config.reflection_confidence == "high" else "moe"
-
-        result = await delegate_impl(
-            ctx=ctx,
-            task="critique",
-            content=critique_prompt,
-            model=model_tier,
-            include_metadata=False,
-        )
-        
-        # Check if verified
-        # Loose matching to handle "VERIFIED." or "Status: VERIFIED"
-        is_verified = "VERIFIED" in result or "verified" in result.lower() and len(result) < 50
-        
-        if is_verified:
-            ui.print_reflection_success()
-            return True, ""
-        else:
-            ui.print_reflection_feedback(result)
-            return False, result
-
-    # UI Callbacks
-    def on_tool_call(tc: Any):
-        # Unwrap ParsedToolCall
-        ui.print_tool_call(tc.name, tc.arguments)
-
-    def on_tool_result(res: Any):
-        # Unwrap ToolResult
-        ui.print_tool_result(res.name, res.output, res.success)
-
-    # Create agent config
-    agent_config = AgentConfig(
-        max_iterations=config.max_iterations,
-        timeout_per_tool=30.0,
-        total_timeout=300.0,
-        parallel_tools=True,
-        native_tool_calling=use_native,
-        reflection_enabled=config.reflection_enabled,
-        max_reflections=config.max_reflections,
-        reflection_confidence=config.reflection_confidence,
-    )
-
-    # Run the agent loop
-    try:
-        # Update metadata
-        ui.update_metadata(selected_model, backend_name)
-        
-        # Start Live Dashboard
-        ui.start()
-        
-        result = await run_agent_loop(
-            call_llm=agent_llm_call,
-            prompt=task_context,  # Use enriched context with Playbook & Constitution
-            system_prompt=None,
-            registry=registry,
-            model=selected_model,
-            config=agent_config,
-            critique_callback=critique_callback,
-            on_tool_call=on_tool_call,
-            on_tool_result=on_tool_result,
-        )
-    except Exception as e:
-        log.error("agent_cli_error", error=str(e))
-        return AgentCLIResult(
-            success=False,
-            response=f"Agent error: {e}",
-            iterations=0,
-            tool_calls=[],
-            elapsed_ms=int((time.time() - start_time) * 1000),
-            model=selected_model,
-            backend=backend_name,
-        )
-    finally:
-        # Ensure UI is stopped cleanly
-        ui.stop()
-
-    elapsed_ms = int((time.time() - start_time) * 1000)
-
-    # Extract tool call names
-    if result.tool_calls:
-        tool_calls_made = [tc.name for tc in result.tool_calls]
-
-    # Print response
-    ui.print_final_response(result.response)
-
-    # Build result
-    cli_result = AgentCLIResult(
-        success=result.success,
-        response=result.response,
-        iterations=result.iterations,
-        tool_calls=tool_calls_made,
-        elapsed_ms=elapsed_ms,
-        model=selected_model,
-        backend=backend_name,
-        voting_used=config.voting_enabled,
-        voting_k=config.voting_k,
-    )
-
-    # Print footer
-    ui.print_footer(
-        cli_result.model,
-        cli_result.backend,
-        cli_result.iterations,
-        cli_result.elapsed_ms
-    )
-
-    return cli_result
-
+class ChatState:
+    def __init__(self, backend_name: str):
+        self.messages: list[dict[str, Any]] = []
+        self.history_ansi = ""
+        self.plan_markdown = ""
+        self.show_plan = False
+        self.allow_all = False
+        self.backend_name = backend_name
+        self.current_model = "auto"
+        self.is_processing = False
+        self.pending_confirm = False
+        self.confirm_text = ""
+        self.confirm_future: asyncio.Future[str] | None = None
 
 async def run_chat_cli(config: AgentCLIConfig) -> None:
-    """
-    Run an interactive chat session using the Native Python TUI.
-    
-    This replaces the legacy TypeScript 'delia-cli' by running the
-    agent loop in a persistent conversation context.
-    """
-    from .llm import call_llm
-    from .routing import select_model, get_router
+    from .orchestration.executor import get_orchestration_executor
+    from .orchestration.intent import detect_intent
     from .mcp_server import get_active_backend
-    from .playbook import playbook_manager
-    from rich.prompt import Prompt
+    from .paths import DATA_DIR
 
-    if RICH_AVAILABLE and console:
-        console.clear()
-        ui.print_header("Delia Native Chat", subtitle="Type 'exit' to quit, Ctrl+\\ to pause agent")
+    # 1. Initialization
+    active_backend = get_active_backend()
+    state = ChatState(active_backend.name if active_backend else "local")
+    executor = get_orchestration_executor()
+    history_file = DATA_DIR / "chat_history.txt"
+    os.makedirs(DATA_DIR, exist_ok=True)
 
-    # Select backend (once)
-    try:
-        _, backend_obj = await get_router().select_optimal_backend(
-            "setup", None, "analyze", config.backend_type
-        )
-    except Exception:
-        backend_obj = None
-    
-    backend_name = backend_obj.name if backend_obj else "unknown"
-    messages: list[dict[str, Any]] = []
-    
-    # Pre-load context
-    playbook_context = playbook_manager.format_for_prompt("agent")
-    constitution_path = Path("data/constitution.md")
-    constitution = ""
-    if constitution_path.exists():
-        constitution = f"\n\n## System Constitution\n{constitution_path.read_text()}"
-    
-    system_base = f"{playbook_context}{constitution}"
+    # 2. Rendering Helpers
+    def render_rich(obj) -> str:
+        """Render a Rich object to ANSI string."""
+        with io.StringIO() as buf:
+            c = Console(file=buf, force_terminal=True, color_system="truecolor", width=100)
+            c.print(obj)
+            return buf.getvalue()
 
-    # Setup tools
-    workspace_obj = Workspace(root=config.workspace) if config.workspace else None
-    registry = get_default_tools(workspace=workspace_obj)
-    if config.tools:
-        registry = registry.filter(config.tools)
-    use_native = backend_obj.supports_native_tool_calling if backend_obj else False
+    def append_to_history(obj):
+        state.history_ansi += render_rich(obj)
+        # Update layout
+        history_window.content.text = ANSI(state.history_ansi)
+        # Scroll to bottom
+        history_window.vertical_scroll = 1000000 
 
-    # Create config for loop
-    agent_config = AgentConfig(
-        max_iterations=config.max_iterations,
-        parallel_tools=True,
-        native_tool_calling=use_native,
-        reflection_enabled=config.reflection_enabled,
+    # 3. Layout Components
+    history_window = Window(
+        content=FormattedTextControl(ANSI("")),
+        wrap_lines=True,
+        always_hide_cursor=True,
     )
 
-    # Callbacks
-    async def chat_llm_call(msgs: list[dict], sys: str | None) -> str:
-        # Get the latest user prompt for model selection
-        latest_prompt = msgs[-1]["content"] if msgs else ""
+    plan_window = Window(
+        content=FormattedTextControl(lambda: ANSI(render_rich(Panel(Markdown(state.plan_markdown or "No active plan."), title="Strategic Plan", border_style="blue")))),
+        width=40,
+    )
+
+    def get_status_text():
+        color = "cyan" if state.is_processing else "green"
+        status = "THINKING" if state.is_processing else "READY"
+        return HTML(
+            f' <{color}>● {status}</{color}> | ' 
+            f' <b>{state.backend_name}</b> | ' 
+            f' <b>{ui.model}</b> | ' 
+            f' <b>F2</b> Plan ' 
+        )
+
+    status_bar = Window(content=FormattedTextControl(get_status_text), height=1, style="reverse")
+
+    input_buffer = Buffer(history=FileHistory(str(history_file)))
+    input_field = Window(
+        content=BufferControl(buffer=input_buffer, lexer=PygmentsLexer(MarkdownLexer)),
+        height=3,
+    )
+
+    # 4. Security Gate (Inline)
+    async def gated_security(tc, reg):
+        tool_def = reg.get(tc.name)
+        if not tool_def or tool_def.trust_level == TrustLevel.READ_ONLY: return True
         
-        # Select model dynamically based on latest prompt
-        current_model = await select_model(
-            task_type="analyze",
-            content_size=len(latest_prompt),
-            model_override=config.model,
-            content=latest_prompt,
-        )
-        if isinstance(current_model, list):
-            current_model = current_model[0]
+        is_destructive = "delete" in tc.name or "rm" in str(tc.arguments)
+        if not is_destructive and state.allow_all: return True
+        
+        state.pending_confirm = True
+        state.confirm_text = f"Allow {tc.name}?"
+        state.confirm_future = asyncio.Future()
+        
+        append_to_history(Panel(
+            f"[bold yellow]Security Gate:[/bold yellow] Agent wants to run [cyan]{tc.name}[/cyan]\n"
+            f"[dim]Args: {str(tc.arguments)}[/dim]\n\n"
+            f"Press [bold green]y[/bold green] to allow, [bold red]n[/bold red] to deny, [bold blue]a[/bold blue] for all session",
+            border_style="yellow"
+        ))
+        
+        res = await state.confirm_future
+        state.pending_confirm = False
+        
+        if res == "a":
+            state.allow_all = True
+            return True
+        return res == "y"
 
-        # Update UI metadata
-        ui.update_metadata(current_model, backend_name)
+    # 5. Intent and Execution
+    async def process_input():
+        user_input = input_buffer.text.strip()
+        if not user_input: return
+        input_buffer.reset()
+        
+        if user_input.lower() in ("exit", "quit"):
+            app.exit()
+            return
 
-        # Call LLM with native messages support
-        result = await call_llm(
-            model=current_model,
-            prompt=latest_prompt, # Still pass for fallback
-            system=sys,
-            messages=msgs, # Direct history support
-            task_type="chat",
-            backend_obj=backend_obj,
-        )
-        return result.get("response", "") if result.get("success") else "Error"
-
-    # UI Callbacks
-    def on_tool_call(tc: Any):
-        ui.print_tool_call(tc.name, tc.arguments)
-
-    def on_tool_result(res: Any):
-        ui.print_tool_result(res.name, res.output, res.success)
-
-    # Interruption handling
-    import signal
-    interrupt_flag = False
-
-    def signal_handler(sig, frame):
-        nonlocal interrupt_flag
-        interrupt_flag = True
-
-    # Register signal handler for SIGQUIT (Ctrl+\)
-    # We leave SIGINT (Ctrl+C) alone so it can terminate the program
-    original_handler = None
-    if hasattr(signal, "SIGQUIT"):
-        original_handler = signal.getsignal(signal.SIGQUIT)
-        signal.signal(signal.SIGQUIT, signal_handler)
-
-    async def check_interruption() -> str | None:
-        nonlocal interrupt_flag
-        if interrupt_flag:
-            interrupt_flag = False
-            # Pause UI to allow input
-            ui.stop()
-            try:
-                if RICH_AVAILABLE:
-                    from rich.prompt import Prompt
-                    print()
-                    choice = Prompt.ask(
-                        "[bold red]Agent Paused.[/bold red] (c)ontinue, (s)top, or enter instruction",
-                        default="c"
-                    )
-                else:
-                    choice = input("\nAgent Paused. (c)ontinue, (s)top, or enter instruction: ")
-                
-                if choice.lower() in ('s', 'stop'):
-                    return "STOP"
-                if choice.lower() in ('c', 'continue'):
-                    ui.start()
-                    return None
-                
-                # Treat as new instruction
-                ui.start()
-                return choice
-            except KeyboardInterrupt:
-                return "STOP"
-        return None
-
-    # Main Chat Loop
-    while True:
+        append_to_history(Text(f"\n❯ {user_input}", style="bold green"))
+        
+        state.is_processing = True
+        intent = detect_intent(user_input)
+        
+        # Override UI methods to pipe to our history
+        original_print_plan = ui.print_plan
+        ui.print_plan = lambda p, **kw: setattr(state, 'plan_markdown', p) or setattr(state, 'show_plan', True)
+        
+        full_response = ""
         try:
-            # Use prompt_toolkit for robust input and large pastes
-            from prompt_toolkit import PromptSession
-            from prompt_toolkit.formatted_text import HTML
-            from prompt_toolkit.key_binding import KeyBindings
+            async for ev in executor.execute_stream(
+                intent=intent, message=user_input, messages=state.messages,
+                backend_type=config.backend_type, model_override=config.model,
+                on_tool_call=gated_security
+            ):
+                if ev.event_type == "status": ui.model = ev.message
+                elif ev.event_type == "thinking": pass
+                elif ev.event_type == "tool_call":
+                    append_to_history(f" [magenta]⚙[/magenta] [dim]Running {ev.details['name']}...[/dim]")
+                elif ev.event_type == "response":
+                    full_response = ev.message
             
-            session = PromptSession()
-            
-            # Simple keybinding for multi-line submission (Alt+Enter)
-            kb = KeyBindings()
-            @kb.add('escape', 'enter')
-            def _(event):
-                event.current_buffer.validate_and_handle()
-
-            user_input = session.prompt(
-                HTML('<b><ansigreen>You</ansigreen></b> > '),
-                multiline=True,
-                key_bindings=kb,
-            ).strip()
-            
-            if user_input.lower() in ("exit", "quit", "/bye"):
-                break
-                
-            if not user_input:
-                continue
-
-            # Detect and show [Lines] for large input
-            line_count = user_input.count('\n') + 1
-            if line_count > 5:
-                if RICH_AVAILABLE and console:
-                    console.print(f"[dim]Pasted {line_count} lines of text.[/dim]")
-
-            # Start Agent UI
-            ui.start()
-            ui.update_metadata("Thinking...", backend_name)
-            
-            # Reset interrupt flag before starting
-            interrupt_flag = False
-
-            # Run Agent Loop with History
-            result = await run_agent_loop(
-                call_llm=chat_llm_call,
-                prompt=user_input,
-                system_prompt=system_base,
-                registry=registry,
-                model="auto",
-                config=agent_config,
-                on_tool_call=on_tool_call,
-                on_tool_result=on_tool_result,
-                messages=messages, # Pass persistent history
-                interruption_callback=check_interruption,
-            )
-            
-            ui.stop()
-            
-            # Print response
-            ui.print_final_response(result.response)
-            
-            # Note: run_agent_loop automatically appends new messages to the list we passed
-            # So 'messages' is updated in-place. We don't need to manually append.
-
-        except KeyboardInterrupt:
-            # Standard Ctrl+C termination
-            ui.stop()
-            print("\nExiting...")
-            break
+            if full_response:
+                append_to_history(Panel(Markdown(full_response), title="Assistant", border_style="green"))
+                state.messages.append({"role": "user", "content": user_input})
+                state.messages.append({"role": "assistant", "content": full_response})
         except Exception as e:
-            ui.stop()
-            log.error("chat_loop_error", error=str(e))
-            if RICH_AVAILABLE and console:
-                console.print(f"[red]Error: {e}[/red]")
-            else:
-                print(f"Error: {e}")
-    
-    # Restore signal handler
-    if hasattr(signal, "SIGQUIT") and original_handler:
-        signal.signal(signal.SIGQUIT, original_handler)
+            append_to_history(f" [bold red]Error:[/bold red] {e}")
+        finally:
+            state.is_processing = False
+            ui.print_plan = original_print_plan
 
+    # 6. Key Bindings
+    kb = KeyBindings()
+    @kb.add("c-c")
+    def _(event): app.exit()
+    
+    @kb.add("f2")
+    def _(event): state.show_plan = not state.show_plan
+
+    @kb.add("y", filter=Condition(lambda: state.pending_confirm))
+    def _(event): state.confirm_future.set_result("y")
+
+    @kb.add("n", filter=Condition(lambda: state.pending_confirm))
+    def _(event): state.confirm_future.set_result("n")
+
+    @kb.add("a", filter=Condition(lambda: state.pending_confirm))
+    def _(event): state.confirm_future.set_result("a")
+
+    @kb.add("enter", filter=Condition(lambda: not state.pending_confirm))
+    def _(event):
+        asyncio.create_task(process_input())
+
+    # 7. Layout Assembler
+    root_container = HSplit([
+        VSplit([
+            history_window,
+            ConditionalContainer(content=plan_window, filter=Condition(lambda: state.show_plan)),
+        ]),
+        status_bar,
+        input_field,
+    ])
+
+    app = Application(
+        layout=Layout(root_container, focused_element=input_field),
+        key_bindings=kb, full_screen=True, mouse_support=True,
+    )
+
+    append_to_history(Text("🍈 DELIA Native Chat session started.", style="italic green"))
+    await app.run_async()
 
 def run_agent_sync(task: str, config: AgentCLIConfig) -> AgentCLIResult:
-    """Synchronous wrapper for run_agent_cli."""
     return asyncio.run(run_agent_cli(task, config))

@@ -5,7 +5,7 @@
 Unified Context Engine for Delia Orchestration.
 
 This module provides high-performance context assembly for LLMs,
-unifying file reads, Serena memory retrieval, and symbol focus
+unifying file reads, Delia's memory retrieval, and symbol focus
 into a single pipeline used by the OrchestrationService.
 """
 
@@ -16,7 +16,7 @@ from typing import Any
 
 import structlog
 
-from ..file_helpers import read_files, read_serena_memory
+from ..file_helpers import read_files, read_memory
 from ..language import detect_language
 from .summarizer import get_summarizer
 from .graph import get_symbol_graph
@@ -29,7 +29,7 @@ class ContextEngine:
     
     Handles:
     - Lazy-loading files from disk
-    - Retrieving Serena memories (Project Knowledge)
+    - Retrieving Delia's memories (Project Knowledge)
     - Formatting symbol focus for IDE-like behavior
     - Injecting session history for conversation continuity
     - Hierarchical project summarization (Infinite Context)
@@ -105,11 +105,11 @@ class ContextEngine:
             except Exception as e:
                 log.debug("graph_context_failed", error=str(e))
 
-        # 3. Serena Memories (Project Knowledge)
+        # 3. Delia's Memories (Project Knowledge)
         if context:
             memory_names = [m.strip() for m in context.split(",")]
             for mem_name in memory_names:
-                mem_content = read_serena_memory(mem_name)
+                mem_content = read_memory(mem_name)
                 if mem_content:
                     parts.append(f"### Project Context ({mem_name}):\n{mem_content}")
                     log.info("context_memory_loaded", memory=mem_name)

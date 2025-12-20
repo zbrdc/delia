@@ -34,8 +34,13 @@ settings.register_profile(
     max_examples=10,
 )
 settings.register_profile(
+    "deep",
+    max_examples=1000,
+    verbosity=Verbosity.verbose,
+)
+settings.register_profile(
     "overnight",
-    max_examples=2000,
+    max_examples=5000,
     verbosity=Verbosity.normal,
 )
 settings.register_profile(
@@ -47,6 +52,21 @@ settings.register_profile(
 profile = os.environ.get("HYPOTHESIS_PROFILE", "default")
 settings.load_profile(profile)
 
+
+@pytest.fixture(scope="session", autouse=True)
+def init_llm():
+    """Ensure LLM module is initialized for all tests."""
+    from delia.llm import init_llm_module
+    from delia.queue import ModelQueue
+    from unittest.mock import MagicMock
+    
+    mq = ModelQueue()
+    init_llm_module(
+        stats_callback=MagicMock(),
+        save_stats_callback=MagicMock(),
+        model_queue=mq
+    )
+    yield
 
 @pytest.fixture(scope="session", autouse=True)
 def isolated_data_dir():
