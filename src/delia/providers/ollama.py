@@ -115,6 +115,7 @@ class OllamaProvider:
         temperature: float | None = None,
         messages: list[dict[str, Any]] | None = None,
         grammar: str | None = None,
+        num_gpu: int | None = None,  # GPU layers: 0 = CPU only, None = auto
     ) -> LLMResponse:
         """Call Ollama /api/chat or /api/generate."""
         start_time = time.time()
@@ -132,7 +133,8 @@ class OllamaProvider:
             history = messages.copy() if messages else []
             if system and not any(m["role"] == "system" for m in history):
                 history.insert(0, {"role": "system", "content": system})
-            if not any(m["role"] == "user" for m in history) and prompt:
+            # Always add the current prompt as the latest user message
+            if prompt:
                 history.append({"role": "user", "content": prompt})
             payload["messages"] = history
             if tools: payload["tools"] = tools
@@ -142,7 +144,17 @@ class OllamaProvider:
 
         options = {"temperature": temperature or (self.config.temperature_thinking if enable_thinking else self.config.temperature_normal)}
         if max_tokens: options["num_predict"] = max_tokens
+        if num_gpu is not None: options["num_gpu"] = num_gpu  # 0 = CPU only
         payload["options"] = options
+        
+        # Plumb grammar into Ollama 'format' parameter for structural enforcement
+        if grammar:
+            try:
+                # If it's valid JSON (schema), Ollama expects the object, not a string
+                payload["format"] = json.loads(grammar)
+            except json.JSONDecodeError:
+                # Fallback for raw strings if Ollama supports them in future
+                payload["format"] = grammar
 
         try:
             client = backend_obj.get_client()
@@ -200,10 +212,19 @@ class OllamaProvider:
             history = messages.copy()
             if system and not any(m["role"] == "system" for m in history):
                 history.insert(0, {"role": "system", "content": system})
+            # Always add the current prompt as the latest user message
+            if prompt:
+                history.append({"role": "user", "content": prompt})
             payload["messages"] = history
         else:
             payload["prompt"] = prompt
             if system: payload["system"] = system
+
+        if grammar:
+            try:
+                payload["format"] = json.loads(grammar)
+            except json.JSONDecodeError:
+                payload["format"] = grammar
 
         try:
             client = backend_obj.get_client()

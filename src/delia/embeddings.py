@@ -39,17 +39,62 @@ log = structlog.get_logger()
 # Default embeddings settings
 EMBEDDINGS_ENDPOINT = "/v1/embeddings"
 
-# Ordered list of preferred models for auto-detection
-# BGE-M3 and MXBAI are top-tier for technical retrieval and RAG
-PREFERRED_MODELS = [
+# SINGLE embedding model for the entire system (fast, small, good quality)
+# all-MiniLM-L6-v2: 80MB, ~50ms inference, 384 dimensions
+SHARED_EMBEDDING_MODEL = os.getenv("DELIA_EMBEDDING_MODEL", "mxbai-embed-large")
+
+# Ordered list of preferred models for auto-detection (fallback only)
+PREFERRED_MODELS = ["mxbai-embed-large", "nomic-embed-text",
+    "mxbai-embed-large",
+    "BAAI/bge-m3",  # Default: fast, small, good quality
     "BAAI/bge-m3",
     "mxbai-embed-large",
     "BAAI/bge-large-en-v1.5",
     "nomic-embed-text",
-    "granite-embedding",
-    "all-minilm",
-    "qwen3:0.6b"
 ]
+
+# Shared model singleton - loaded once, used everywhere
+_shared_model: "SentenceTransformer | None" = None
+_shared_model_lock = asyncio.Lock() if asyncio else None
+
+
+def get_shared_model() -> "SentenceTransformer":
+    """
+    Get the shared embedding model (singleton).
+
+    Loads model on first call, reuses for all subsequent calls.
+    This ensures we only load ONE model across the entire system.
+    """
+    global _shared_model
+    if _shared_model is not None:
+        return _shared_model
+
+    if not SENTENCE_TRANSFORMERS_AVAILABLE:
+        raise ImportError("sentence-transformers not installed")
+
+    log.info("loading_shared_embedding_model", model=SHARED_EMBEDDING_MODEL)
+    _shared_model = SentenceTransformer(SHARED_EMBEDDING_MODEL)
+
+    # Keep on CPU to preserve VRAM for inference models
+    use_gpu = os.getenv("DELIA_EMBEDDINGS_GPU", "").lower() in ("1", "true", "yes")
+    if not use_gpu:
+        _shared_model = _shared_model.to("cpu")
+        log.info("shared_embedding_model_on_cpu", model=SHARED_EMBEDDING_MODEL)
+
+    return _shared_model
+
+
+async def get_shared_model_async() -> "SentenceTransformer":
+    """Async version that loads model in thread pool."""
+    global _shared_model
+    if _shared_model is not None:
+        return _shared_model
+
+    async with _shared_model_lock:
+        if _shared_model is not None:
+            return _shared_model
+        _shared_model = await asyncio.to_thread(get_shared_model)
+    return _shared_model
 
 # Reference embeddings file
 REFERENCE_EMBEDDINGS_FILE = "reference_embeddings.json"
@@ -122,7 +167,7 @@ class ExternalEmbeddingsProvider:
             raise RuntimeError("External embeddings URL not configured")
 
         client = await self._get_client()
-        model = await self.detect_model() or "nomic-embed-text"
+        model = await self.detect_model() or "mxbai-embed-large"
 
         try:
             # Try OpenAI compatible endpoint
@@ -169,33 +214,15 @@ class ExternalEmbeddingsProvider:
 
 
 class LocalEmbeddingsProvider:
-    """Provider using local sentence-transformers library."""
+    """Provider using the SHARED sentence-transformers model (loaded once, used everywhere)."""
 
-    def __init__(self, model_name: str | None = None):
-        self.model_name = model_name
-        self._model: Any = None
-        self._lock = asyncio.Lock()
+    def __init__(self, model_name: str | None = None, force_cpu: bool = True):
+        # Note: model_name is ignored - we always use the shared model
+        self.force_cpu = force_cpu
 
     async def _get_model(self) -> Any:
-        async with self._lock:
-            if self._model is None:
-                if not SENTENCE_TRANSFORMERS_AVAILABLE:
-                    raise ImportError("sentence-transformers not installed")
-                
-                # If no model provided, use the best available from preferred list
-                model_to_load = self.model_name or PREFERRED_MODELS[0]
-                
-                log.info("loading_local_embeddings_model", model=model_to_load)
-                # Load in thread to avoid blocking event loop
-                self._model = await asyncio.to_thread(SentenceTransformer, model_to_load)
-                
-                # Move to GPU if available
-                if torch.cuda.is_available():
-                    self._model = self._model.to("cuda")
-                elif torch.backends.mps.is_available():
-                    self._model = self._model.to("mps")
-                    
-            return self._model
+        """Get the shared model (loaded once for entire system)."""
+        return await get_shared_model_async()
 
     async def embed(self, text: str) -> np.ndarray:
         model = await self._get_model()
@@ -207,7 +234,8 @@ class LocalEmbeddingsProvider:
         return SENTENCE_TRANSFORMERS_AVAILABLE
 
     async def close(self) -> None:
-        self._model = None
+        # Don't clear the shared model - it's used by other components
+        pass
 
 
 class HybridEmbeddingsClient:
@@ -217,15 +245,23 @@ class HybridEmbeddingsClient:
     """
 
     def __init__(
-        self, 
-        base_url: str | None = None, 
+        self,
+        base_url: str | None = None,
         local_model: str | None = None,
-        timeout: float = 30.0
+        timeout: float = 30.0,
+        force_cpu: bool | None = None,  # None = auto from env
     ):
+        # Default to CPU to preserve VRAM for primary inference models
+        # Override with DELIA_EMBEDDINGS_GPU=1 to use GPU
+        if force_cpu is None:
+            use_gpu = os.getenv("DELIA_EMBEDDINGS_GPU", "").lower() in ("1", "true", "yes")
+            force_cpu = not use_gpu  # Default: CPU (force_cpu=True)
+
         self.external_provider = ExternalEmbeddingsProvider(base_url, timeout)
-        self.local_provider = LocalEmbeddingsProvider(local_model)
+        self.local_provider = LocalEmbeddingsProvider(local_model, force_cpu=force_cpu)
         self.active_provider: EmbeddingsProvider | None = None
         self._init_lock = asyncio.Lock()
+        self._force_cpu = force_cpu
 
     async def initialize(self) -> bool:
         """Initialize and determine the best provider."""
@@ -250,7 +286,7 @@ class HybridEmbeddingsClient:
                 return True
             elif await self.local_provider.health_check():
                 self.active_provider = self.local_provider
-                log.info("embeddings_client_using_local_fallback", model=self.local_provider.model_name)
+                log.info("embeddings_client_using_local_fallback", model=SHARED_EMBEDDING_MODEL)
                 return True
             else:
                 log.warning("embeddings_client_no_provider_available")

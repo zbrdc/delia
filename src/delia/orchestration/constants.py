@@ -13,6 +13,7 @@ CODE_EXTENSIONS = {
 
 # Directories to ignore
 IGNORE_DIRS = {
-    ".git", "__pycache__", "node_modules", "dist", "build", ".venv", "venv", 
-    ".next", "target", "vendor", ".idea", ".vscode"
+    ".git", "__pycache__", "node_modules", "dist", "build", ".venv", "venv",
+    ".next", "target", "vendor", ".idea", ".vscode",
+    "data", "outputs", ".delia", "logs", "cache"  # Runtime data dirs
 }

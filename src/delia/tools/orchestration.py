@@ -43,11 +43,17 @@ async def _delegate_handler(
     model: str | None = None,
     backend_type: str | None = None,
     language: str | None = None,
-) -> str:
+    final: bool = False,
+) -> str | dict[str, Any]:
     """
     Internal handler that calls the delegate implementation.
-    
+
     Wraps the MCP delegate tool for use within the agent loop.
+
+    Args:
+        final: If True, signals that this delegation's result should be
+               returned directly without reloading the orchestrating model.
+               Use when the delegated model's response IS the final answer.
     """
     from ..mcp_server import _delegate_impl
     from ..routing import get_router
@@ -59,13 +65,14 @@ async def _delegate_handler(
         backend_type=backend_type,
         language=language,
         content_len=len(content),
+        final=final,
     )
-    
+
     try:
         _, backend_obj = await get_router().select_optimal_backend(
             content, None, task, backend_type
         )
-        
+
         result = await _delegate_impl(
             task=task,
             content=content,
@@ -82,6 +89,12 @@ async def _delegate_handler(
             max_tokens=None,
             session_id=None,
         )
+
+        # If final=True, return dict that executor will recognize
+        # This signals the agent loop to return this result directly
+        # without reloading the orchestrating model
+        if final:
+            return {"__result__": result, "__is_final__": True}
         return result
     except Exception as e:
         log.error("orchestration_delegate_error", error=str(e))
@@ -152,23 +165,30 @@ async def _think_handler(
     problem: str,
     context: str = "",
     depth: str = "normal",
-) -> str:
+    final: bool = False,
+) -> str | dict[str, Any]:
     """
     Internal handler for deep thinking.
-    
+
     Uses extended thinking models for complex reasoning.
+
+    Args:
+        final: If True, return result directly without reloading orchestrator.
     """
     from ..mcp_server import think as mcp_think
-    
+
     log.info(
         "orchestration_think",
         depth=depth,
         problem_len=len(problem),
         context_len=len(context),
+        final=final,
     )
-    
+
     try:
         result = await mcp_think(problem, context, depth)
+        if final:
+            return {"__result__": result, "__is_final__": True}
         return result
     except Exception as e:
         log.error("orchestration_think_error", error=str(e))
@@ -559,6 +579,56 @@ async def _compute_handler(
         return f"Compute error: {e}"
 
 
+
+async def _session_compact_handler(
+    session_id: str,
+    force: bool = False,
+) -> str:
+    """Internal handler for session compaction."""
+    from ..session_manager import get_session_manager
+    log.info("orchestration_session_compact", session_id=session_id, force=force)
+    try:
+        sm = get_session_manager()
+        result = await sm.compact_session(session_id, force=force)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        log.error("orchestration_session_compact_error", error=str(e))
+        return f"Compaction error: {e}"
+
+
+async def _session_stats_handler(
+    session_id: str,
+) -> str:
+    """Internal handler for session stats."""
+    from ..session_manager import get_session_manager
+    log.info("orchestration_session_stats", session_id=session_id)
+    try:
+        sm = get_session_manager()
+        stats = sm.get_compaction_stats(session_id)
+        if stats is None:
+            return f"Error: Session not found: {session_id}"
+        return json.dumps(stats, indent=2)
+    except Exception as e:
+        log.error("orchestration_session_stats_error", error=str(e))
+        return f"Stats error: {e}"
+
+
+async def _project_memories_handler(
+    reload: bool = False,
+) -> str:
+    """Internal handler for project memories."""
+    from ..project_memory import list_project_memories, reload_project_memories
+    log.info("orchestration_project_memories", reload=reload)
+    try:
+        if reload:
+            reload_project_memories()
+        memories = list_project_memories()
+        return json.dumps(memories, indent=2)
+    except Exception as e:
+        log.error("orchestration_project_memories_error", error=str(e))
+        return f"Memories error: {e}"
+
+
 # =============================================================================
 # Registry Builder
 # =============================================================================
@@ -591,7 +661,7 @@ Use when:
 
 Model Tiers:
 - quick: Fast responses, simple tasks (7B-14B models)
-- coder: Code-specialized, technical tasks (14B code models)  
+- coder: Code-specialized, technical tasks (14B code models)
 - moe: Complex reasoning, deep analysis (30B+ MoE models)
 - thinking: Extended reasoning with thinking steps
 
@@ -599,7 +669,10 @@ Task Types:
 - quick, summarize: Simple/fast tasks
 - review, analyze: Code analysis tasks
 - generate: Code generation
-- plan, critique: Deep reasoning tasks""",
+- plan, critique: Deep reasoning tasks
+
+IMPORTANT: Use final=true when the delegated model's response IS the final answer.
+This skips reloading the orchestrating model, saving ~5-10 seconds of GPU swap time.""",
         parameters={
             "type": "object",
             "properties": {
@@ -624,6 +697,11 @@ Task Types:
                 "language": {
                     "type": "string",
                     "description": "Programming language hint: python, typescript, rust, go, etc."
+                },
+                "final": {
+                    "type": "boolean",
+                    "description": "If true, return delegated result directly without reloading orchestrator. Use when delegation IS the final answer.",
+                    "default": False
                 }
             },
             "required": ["task", "content"]
@@ -722,7 +800,10 @@ Use when:
 Depth Levels:
 - quick: Fast answer, minimal reasoning (14B model)
 - normal: Balanced reasoning with thinking (14B coder)
-- deep: Thorough multi-step analysis (30B+ MoE model)""",
+- deep: Thorough multi-step analysis (30B+ MoE model)
+
+IMPORTANT: Use final=true when the thinking result IS the final answer.
+This skips reloading the orchestrating model, saving ~5-10 seconds of GPU swap time.""",
         parameters={
             "type": "object",
             "properties": {
@@ -740,6 +821,11 @@ Depth Levels:
                     "enum": ["quick", "normal", "deep"],
                     "description": "Reasoning depth level",
                     "default": "normal"
+                },
+                "final": {
+                    "type": "boolean",
+                    "description": "If true, return result directly without reloading orchestrator. Use when thinking IS the final answer.",
+                    "default": False
                 }
             },
             "required": ["problem"]
@@ -921,4 +1007,47 @@ This gives EXACT CORRECT answers, not LLM guesses!""",
         handler=_compute_handler,
     ))
     
+
+    # Session Compaction
+    registry.register(ToolDefinition(
+        name="session_compact",
+        description="Compact a session's conversation history using LLM summarization. Reduces token count while preserving key info.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to compact"},
+                "force": {"type": "boolean", "description": "Force compaction even if below threshold", "default": False},
+            },
+            "required": ["session_id"]
+        },
+        handler=_session_compact_handler,
+    ))
+
+    # Session Stats
+    registry.register(ToolDefinition(
+        name="session_stats",
+        description="Get compaction statistics for a session, including current token usage and recommendations.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to check"},
+            },
+            "required": ["session_id"]
+        },
+        handler=_session_stats_handler,
+    ))
+
+    # Project Memories
+    registry.register(ToolDefinition(
+        name="project_memories",
+        description="List project memories (DELIA.md files) loaded into context. Shows instruction hierarchy and size.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "reload": {"type": "boolean", "description": "Force reload of all project memories", "default": False},
+            }
+        },
+        handler=_project_memories_handler,
+    ))
+
     return registry

@@ -169,6 +169,7 @@ class GeminiProvider:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         temperature: float | None = None,
+        grammar: str | None = None,
     ) -> LLMResponse:
         """Call Google Gemini API with stats tracking and circuit breaker.
 
@@ -347,6 +348,7 @@ class GeminiProvider:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         messages: list[dict[str, Any]] | None = None,
+        grammar: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from Gemini API.
 
@@ -374,6 +376,9 @@ class GeminiProvider:
             for m in messages:
                 role = "user" if m["role"] == "user" else "model"
                 gemini_messages.append({"role": role, "parts": [m["content"]]})
+            # Always add the current prompt as the latest user message
+            if prompt:
+                gemini_messages.append({"role": "user", "parts": [prompt]})
         else:
             gemini_messages = [{"role": "user", "parts": [prompt]}]
 

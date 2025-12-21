@@ -117,6 +117,7 @@ from .config import (
 from .voting import VotingConsensus
 from .voting_stats import get_voting_stats_tracker
 from .quality import ResponseQualityValidator
+from .profiles import register_common_profiles
 
 # Import status messages for logging and dashboard
 from .messages import (
@@ -811,6 +812,9 @@ _MCP_INSTRUCTIONS = _MCP_INSTRUCTIONS_FILE.read_text() if _MCP_INSTRUCTIONS_FILE
 
 mcp = FastMCP("delia", instructions=_MCP_INSTRUCTIONS)
 
+# Register common specialist profiles on startup
+register_common_profiles()
+
 # ============================================================
 # MULTI-USER TRACKING MIDDLEWARE
 # Extracts user from JWT and tracks requests per user
@@ -1030,17 +1034,39 @@ async def _delegate_impl(
     include_metadata: bool = True,
     max_tokens: int | None = None,
     session_id: str | None = None,
+    auto_context: bool = False,
 ) -> str:
     """Core implementation for delegate using the Unified Orchestration Service."""
     service = get_orchestration_service()
-    
+
+    # Auto-context: Find relevant files using semantic search if no files provided
+    effective_files = files or file
+    if auto_context and not effective_files:
+        try:
+            from .orchestration.summarizer import get_summarizer
+            summarizer = get_summarizer()
+            await summarizer.initialize()
+
+            results = await summarizer.search(content, top_k=3)
+            if results:
+                auto_paths = [r["path"] for r in results if r["score"] >= 0.3]
+                if auto_paths:
+                    effective_files = ",".join(auto_paths)
+                    log.info(
+                        "auto_context_fetched",
+                        count=len(auto_paths),
+                        paths=auto_paths,
+                    )
+        except Exception as e:
+            log.debug("auto_context_failed", error=str(e))
+
     # Process through unified pipeline
     result = await service.process(
         message=content,
         session_id=session_id,
-        backend_type=backend, # Map backend ID/type
+        backend_type=backend,  # Map backend ID/type
         model_override=model,
-        files=files or file,
+        files=effective_files,
         context=context,
         symbols=symbols,
         include_references=include_references,
@@ -1062,6 +1088,170 @@ async def _delegate_impl(
     return response
 
 
+async def _delegate_with_voting(
+    task: str,
+    content: str,
+    file: str | None,
+    model: str | None,
+    language: str | None,
+    context: str | None,
+    symbols: str | None,
+    include_references: bool,
+    backend_type: str | None,
+    files: str | None,
+    include_metadata: bool,
+    max_tokens: int | None,
+    session_id: str | None,
+    voting_k: int,
+) -> str:
+    """Execute delegate with k-voting consensus for higher reliability."""
+    import asyncio
+    from collections import Counter
+
+    from .voting import VotingConsensus
+    from .quality import ResponseQualityValidator
+
+    # Run k parallel calls
+    async def single_call(idx: int) -> dict | None:
+        try:
+            # Get backend
+            _, backend_obj = await get_router().select_optimal_backend(content, file, task, backend_type)
+            if not backend_obj:
+                return None
+
+            # Call delegate_impl directly
+            ctx = _get_delegate_context()
+            result = await delegate_impl(
+                ctx,
+                task,
+                content,
+                file,
+                model,
+                language,
+                context,
+                symbols,
+                include_references,
+                backend=backend_type,
+                backend_obj=backend_obj,
+                files=files,
+                include_metadata=False,  # We'll add metadata at the end
+                max_tokens=max_tokens,
+                session_id=session_id,
+            )
+            return {"response": result, "success": True}
+        except Exception as e:
+            log.warning("voting_call_failed", error=str(e), idx=idx)
+            return None
+
+    # Run all k calls in parallel
+    results = await asyncio.gather(*[single_call(i) for i in range(voting_k)])
+    valid_results = [r for r in results if r and r.get("success")]
+
+    if not valid_results:
+        return "Error: All voting calls failed"
+
+    # Use VotingConsensus for answer extraction
+    consensus = VotingConsensus(k=voting_k, quality_validator=ResponseQualityValidator())
+    for r in valid_results:
+        vote = consensus.add_vote(r["response"])
+        if vote.consensus_reached:
+            response = vote.winning_response
+            if include_metadata:
+                response += f"\n\n---\n_Reliable mode: {vote.votes_for_winner}/{len(valid_results)} votes | Consensus reached_"
+            return response
+
+    # No consensus - return best response
+    best_response, meta = consensus.get_best_response()
+    response = best_response or valid_results[0]["response"]
+
+    if include_metadata:
+        response += f"\n\n---\n_Reliable mode: {len(valid_results)} votes | No consensus (returning best match)_"
+
+    return response
+
+
+async def _delegate_with_tot(
+    task: str,
+    content: str,
+    file: str | None,
+    model: str | None,
+    language: str | None,
+    context: str | None,
+    symbols: str | None,
+    include_references: bool,
+    backend_type: str | None,
+    files: str | None,
+    include_metadata: bool,
+    max_tokens: int | None,
+    session_id: str | None,
+) -> str:
+    """Execute delegate with Tree of Thoughts meta-orchestration.
+
+    ToT runs multiple orchestration modes in parallel (VOTING, AGENTIC, DEEP_THINKING),
+    evaluates results with a Critic, picks the best, and feeds to ACE for meta-learning.
+    """
+    from .orchestration.result import DetectedIntent, OrchestrationMode, ModelRole
+    from .orchestration.executor import get_orchestration_executor
+
+    # Build the full content with context
+    full_content = content
+    if files:
+        from .file_helpers import read_files
+        file_contents = read_files(files)
+        for path, text in file_contents:
+            full_content += f"\n\n### {path}\n```\n{text}\n```"
+    if file:
+        file_text = read_file_safe(file, max_size_bytes=500_000)
+        if file_text:
+            full_content += f"\n\n### {file}\n```\n{file_text}\n```"
+    if context:
+        from .file_helpers import read_memory
+        ctx_text = read_memory(context)
+        if ctx_text:
+            full_content += f"\n\n{ctx_text}"
+
+    # Map task to internal task_type
+    task_mapping = {
+        "quick": "quick", "summarize": "quick",
+        "generate": "coder", "review": "coder", "analyze": "coder",
+        "plan": "moe", "critique": "moe",
+    }
+    task_type = task_mapping.get(task.lower(), "coder")
+
+    # Force ToT mode via explicit intent
+    intent = DetectedIntent(
+        task_type=task_type,
+        orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
+        model_role=ModelRole.ASSISTANT,
+        confidence=1.0,
+        reasoning="Explicit ToT requested via tot=True",
+    )
+
+    # Execute via orchestration executor
+    executor = get_orchestration_executor()
+    result = await executor.execute(
+        intent=intent,
+        message=full_content,
+        backend_type=backend_type,
+        model_override=model,
+        session_id=session_id,
+    )
+
+    response = result.response
+
+    if include_metadata:
+        tot_info = result.debug_info or {}
+        branches = tot_info.get("tot_branches", [])
+        winner = tot_info.get("tot_winner", "unknown")
+        reasoning = tot_info.get("tot_reasoning", "")
+
+        response += f"\n\n---\n_ToT Mode: {len(branches)} branches tried | Winner: {winner}_"
+        if reasoning:
+            response += f"\n_Reasoning: {reasoning[:200]}..._" if len(reasoning) > 200 else f"\n_Reasoning: {reasoning}_"
+
+    return response
+
+
 @mcp.tool()
 async def delegate(
     task: str,
@@ -1079,6 +1269,10 @@ async def delegate(
     dry_run: bool = False,
     session_id: str | None = None,
     stream: bool = False,
+    reliable: bool = False,
+    voting_k: int = 3,
+    tot: bool = False,
+    auto_context: bool = False,
 ) -> str:
     """
     Execute a task with intelligent 3-tier model selection.
@@ -1109,6 +1303,13 @@ async def delegate(
             Returns: estimated_tokens, recommended_tier, recommended_model, backend info, context fit
         session_id: Optional session ID for conversation continuity. Creates stateful multi-turn conversations.
         stream: If True, use streaming mode internally (better for long responses, avoids timeouts). Default: False
+        reliable: If True, use k-voting consensus for higher accuracy. Trades latency for reliability. Default: False
+        voting_k: Number of votes when reliable=True (default: 3). Higher k = more reliable but slower.
+        tot: If True, use Tree of Thoughts meta-orchestration. Runs VOTING, AGENTIC, and DEEP_THINKING
+             in parallel, evaluates with Critic, and feeds to ACE for meta-learning. Use for high-stakes
+             tasks where you want maximum confidence. Default: False
+        auto_context: If True and no files provided, automatically find relevant files using semantic
+             search over the codebase index. Adds the top 3 most relevant files to context. Default: False
 
     ROUTING LOGIC:
     1. Content > 32K tokens → Uses backend with largest context window
@@ -1129,9 +1330,49 @@ async def delegate(
         delegate(task="review", content="<large code>", dry_run=True)  # Get estimates first
         delegate(task="review", content="...", session_id="abc-123")  # Use session
         delegate(task="plan", content="<large content>", stream=True)  # Use streaming for long responses
+        delegate(task="analyze", content="Is this code secure?", reliable=True)  # Use voting for critical analysis
+        delegate(task="review", content="<auth code>", tot=True)  # Use ToT for high-stakes security review
+        delegate(task="analyze", content="How does authentication work?", auto_context=True)  # Auto-find relevant files
     """
     # Start prewarm task if not already running
     start_prewarm_task()
+
+    # Reliable mode: use voting consensus for higher accuracy
+    if reliable:
+        return await _delegate_with_voting(
+            task=task,
+            content=content,
+            file=file,
+            model=model,
+            language=language,
+            context=context,
+            symbols=symbols,
+            include_references=include_references,
+            backend_type=backend_type,
+            files=files,
+            include_metadata=include_metadata,
+            max_tokens=max_tokens,
+            session_id=session_id,
+            voting_k=voting_k,
+        )
+
+    # ToT mode: Tree of Thoughts meta-orchestration for maximum confidence
+    if tot:
+        return await _delegate_with_tot(
+            task=task,
+            content=content,
+            file=file,
+            model=model,
+            language=language,
+            context=context,
+            symbols=symbols,
+            include_references=include_references,
+            backend_type=backend_type,
+            files=files,
+            include_metadata=include_metadata,
+            max_tokens=max_tokens,
+            session_id=session_id,
+        )
 
     # Dry run mode: return estimation signals without executing
     if dry_run:
@@ -1160,7 +1401,8 @@ async def delegate(
 
         # Prepare content with context, files, symbols (matches delegate_impl flow)
         prepared_content = await prepare_delegate_content(
-            content, context, symbols, include_references, files
+            content, context, symbols, include_references, files,
+            auto_context=auto_context,
         )
 
         # Map task to internal type
@@ -1260,6 +1502,7 @@ _[OK] {task} (streamed) | {tier} tier | {elapsed_ms}ms | {selected_model}_"""
         include_metadata=include_metadata,
         max_tokens=max_tokens,
         session_id=session_id,
+        auto_context=auto_context,
     )
 
 
@@ -1814,6 +2057,80 @@ async def session_delete(
 
 
 @mcp.tool()
+async def session_compact(
+    session_id: str,
+    force: bool = False,
+) -> str:
+    """
+    Compact a session's conversation history using LLM summarization.
+
+    This reduces token count by summarizing older messages while preserving
+    recent context and key information (tool calls, file modifications, decisions).
+    Similar to Claude Code's /compact command.
+
+    WHEN TO USE:
+    - Session context is getting too long
+    - You want to preserve key information while reducing tokens
+    - Before a long task that needs more context headroom
+    - Manual maintenance of session history
+
+    Args:
+        session_id: The session ID to compact
+        force: Force compaction even if below threshold (default: False)
+
+    Returns:
+        JSON with compaction result:
+        - success: Whether compaction was successful
+        - messages_compacted: Number of messages summarized
+        - tokens_saved: Tokens reduced
+        - compression_ratio: Compression efficiency (e.g., 0.75 = 75% reduction)
+        - summary_preview: First 200 chars of the summary
+        - key_decisions: Important decisions preserved
+        - file_modifications: File changes preserved
+        - error: Error message if failed
+
+    Example:
+        session_compact(session_id="abc-123")
+        session_compact(session_id="abc-123", force=True)
+    """
+    sm = get_session_manager()
+    result = await sm.compact_session(session_id, force=force)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def session_stats(
+    session_id: str,
+) -> str:
+    """
+    Get compaction statistics for a session.
+
+    Shows current token usage, message count, and whether compaction is recommended.
+
+    Args:
+        session_id: The session ID to check
+
+    Returns:
+        JSON with session statistics:
+        - total_messages: Current message count
+        - total_tokens: Total tokens in session
+        - needs_compaction: Whether compaction is recommended
+        - threshold_tokens: Token threshold for auto-compaction
+        - compactable_messages: Messages that would be summarized
+        - last_compaction: When session was last compacted (if ever)
+        - compression_ratio: Previous compression efficiency
+
+    Example:
+        session_stats(session_id="abc-123")
+    """
+    sm = get_session_manager()
+    stats = sm.get_compaction_stats(session_id)
+    if stats is None:
+        return json.dumps({"error": f"Session not found: {session_id}"})
+    return json.dumps(stats, indent=2)
+
+
+@mcp.tool()
 async def chain(
     steps: str,
     session_id: str | None = None,
@@ -2281,6 +2598,226 @@ async def health() -> str:
 
 
 @mcp.tool()
+async def project_memories(
+    reload: bool = False,
+) -> str:
+    """
+    List project memories (DELIA.md files) loaded into context.
+
+    Similar to Claude Code's /memory command, this shows all project-specific
+    instructions that are automatically loaded into every conversation.
+
+    WHEN TO USE:
+    - Check what project instructions are loaded
+    - Verify DELIA.md files are being discovered
+    - Debug memory loading issues
+    - See the memory hierarchy (user -> project -> rules -> local)
+
+    Args:
+        reload: Force reload of all project memories (default: False)
+
+    Returns:
+        JSON with loaded memories:
+        - memories: List of loaded memory files with path, source, and size
+        - total_size: Combined size of all memories
+        - hierarchy: Explanation of memory priority order
+
+    Example:
+        project_memories()
+        project_memories(reload=True)
+    """
+    from .project_memory import get_project_memory, reload_project_memories, list_project_memories
+
+    if reload:
+        reload_project_memories()
+
+    memories = list_project_memories()
+    pm = get_project_memory()
+    state = pm._state
+
+    result = {
+        "memories": memories,
+        "total_size": state.total_size if state else 0,
+        "total_size_kb": round((state.total_size if state else 0) / 1024, 1),
+        "load_errors": state.load_errors if state else [],
+        "hierarchy": [
+            "1. ~/.delia/DELIA.md (user defaults)",
+            "2. ./DELIA.md (project instructions)",
+            "3. ./.delia/DELIA.md (project config)",
+            "4. ./.delia/rules/*.md (modular rules)",
+            "5. ./DELIA.local.md (local overrides)",
+        ],
+        "import_syntax": "@path/to/file.md includes another file",
+    }
+
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def codebase_graph(
+    file_path: str | None = None,
+    depth: int = 1,
+    query: str | None = None,
+    top_k: int = 10,
+) -> str:
+    """
+    Query the project's dependency graph (GraphRAG).
+
+    Returns architectural relationships between files - which files import
+    which, and what symbols are defined where. Essential for understanding
+    code structure before making changes.
+
+    NEW: Supports semantic search with the `query` parameter.
+
+    WHEN TO USE:
+    - Before modifying a file, understand its dependencies
+    - Finding where a symbol is defined or used
+    - Mapping out the architecture of a module
+    - Understanding import chains
+    - **Semantic search**: Find files related to a concept
+
+    Args:
+        file_path: Optional file to focus on. If provided, returns only
+                   that file's dependencies and dependents. If None, returns
+                   overview stats.
+        depth: How many levels of dependencies to traverse (default: 1)
+        query: Semantic search query (e.g., "authentication logic",
+               "error handling", "database connections"). Returns files
+               ranked by relevance using vector similarity.
+        top_k: Number of results for semantic search (default: 10)
+
+    Returns:
+        JSON with:
+        - If query provided: ranked files with scores and summaries
+        - If file_path provided: imports, imported_by, symbols defined
+        - If None: overview stats (total files, symbols, top connected files)
+
+    Examples:
+        codebase_graph()  # Get overview
+        codebase_graph(file_path="src/main.py")  # Get dependencies for main.py
+        codebase_graph(file_path="src/api/", depth=2)  # Explore module deeply
+        codebase_graph(query="authentication")  # Semantic search
+        codebase_graph(query="error handling", top_k=5)  # Top 5 results
+    """
+    from .orchestration.graph import get_symbol_graph
+    from .orchestration.summarizer import get_summarizer
+
+    # Semantic search mode
+    if query:
+        summarizer = get_summarizer()
+        await summarizer.initialize()
+        results = await summarizer.search(query, top_k=top_k)
+        return json.dumps({
+            "query": query,
+            "results": results,
+            "total_indexed": len(summarizer.summaries),
+            "files_with_embeddings": sum(
+                1 for s in summarizer.summaries.values() if s.embedding
+            ),
+        }, indent=2)
+
+    graph = get_symbol_graph()
+    await graph.initialize()
+
+    if file_path:
+        # Query for specific file
+        if file_path not in graph.nodes:
+            # Try to find partial matches
+            matches = [p for p in graph.nodes if file_path in p]
+            if not matches:
+                return json.dumps({
+                    "error": f"File not found in graph: {file_path}",
+                    "available_files": list(graph.nodes.keys())[:20],
+                })
+            file_path = matches[0]
+
+        node = graph.nodes[file_path]
+        related = graph.get_related_files(file_path)
+
+        # Get summaries for related files
+        summarizer = get_summarizer()
+        await summarizer.initialize()
+
+        related_info = []
+        for rf in related:
+            summary = summarizer.summaries.get(rf)
+            related_info.append({
+                "path": rf,
+                "summary": summary.summary if summary else None,
+            })
+
+        return json.dumps({
+            "file": file_path,
+            "symbols": [{"name": s.name, "kind": s.kind, "line": s.line} for s in node.symbols],
+            "imports": list(node.imports),
+            "related_files": related_info,
+            "symbol_count": len(node.symbols),
+        }, indent=2)
+    else:
+        # Overview stats
+        total_symbols = sum(len(n.symbols) for n in graph.nodes.values())
+        top_connected = sorted(
+            graph.nodes.items(),
+            key=lambda x: len(x[1].imports),
+            reverse=True
+        )[:10]
+
+        return json.dumps({
+            "total_files": len(graph.nodes),
+            "total_symbols": total_symbols,
+            "top_connected_files": [
+                {"path": p, "import_count": len(n.imports)}
+                for p, n in top_connected
+            ],
+            "usage": "Call with file_path='path/to/file.py' to get dependencies",
+        }, indent=2)
+
+
+@mcp.tool()
+async def project_overview() -> str:
+    """
+    Get a hierarchical summary of the entire project structure.
+
+    Returns a condensed "cliff notes" view of the codebase, including
+    file purposes and key exports. This enables Gemini-class architectural
+    awareness in a few thousand tokens.
+
+    WHEN TO USE:
+    - Starting work on an unfamiliar codebase
+    - Understanding overall project structure
+    - Finding where to add new functionality
+    - Getting context before a large refactor
+
+    Returns:
+        Markdown-formatted project overview with:
+        - Directory structure with file summaries
+        - Key classes and functions per file
+        - Total file and symbol counts
+
+    Example:
+        project_overview()
+    """
+    from .orchestration.summarizer import get_summarizer
+
+    summarizer = get_summarizer()
+    await summarizer.initialize()
+
+    overview = summarizer.get_project_overview()
+
+    if not overview or overview == "Project overview not yet generated.":
+        return json.dumps({
+            "error": "Project not yet indexed",
+            "hint": "Run `delia index -s` to generate summaries",
+            "stats": {
+                "indexed_files": len(summarizer.summaries),
+                "with_summaries": sum(1 for s in summarizer.summaries.values() if s.summary),
+            }
+        }, indent=2)
+
+    return overview
+
+
+@mcp.tool()
 async def reload_config() -> str:
     """
     Reload Delia configuration from settings.json.
@@ -2481,7 +3018,7 @@ Start chatting to plant the first seeds! 🌱"""
     for i, stats in enumerate(leaderboard[:10]):  # Top 10
         medal = medals[i] if i < 3 else f"{i+1:>2}."
         golden = f"+{stats.golden_melons}G" if stats.golden_melons else "   "
-        rate = f"{stats.success_rate:.0%}" if stats.total_responses > 0 else "  -"
+        rate = f"{stats.success_rate:.0%}" if stats.total_calls > 0 else "  -"
         board_lines.append(f"{medal} {stats.model_id:<28} {stats.melons:>3} {golden} [{stats.task_type:<6}] {rate}")
     
     if len(leaderboard) > 10:
@@ -2649,6 +3186,92 @@ async def get_model_info_tool(model_name: str) -> str:
 - VRAM estimates are approximate and depend on quantization
 - Context windows may vary by model version
 - Tier classification is based on configured models or size estimates"""
+
+
+# ============================================================
+# LSP TOOLS (Language Server Protocol code intelligence)
+# ============================================================
+
+
+@mcp.tool()
+async def lsp_goto_definition(
+    path: str,
+    line: int,
+    character: int,
+) -> str:
+    """
+    Find the definition of a symbol at the given file position.
+
+    Uses Language Server Protocol to provide semantic code navigation.
+    Supports Python (pyright/pylsp), TypeScript, Rust, and Go.
+
+    Args:
+        path: Path to the file
+        line: Line number (1-indexed)
+        character: Character position (0-indexed)
+
+    Returns:
+        File path and line number where the symbol is defined
+
+    Example:
+        lsp_goto_definition(path="src/main.py", line=42, character=10)
+    """
+    from .tools.lsp import lsp_goto_definition as _lsp_goto_definition
+    return await _lsp_goto_definition(path, line, character)
+
+
+@mcp.tool()
+async def lsp_find_references(
+    path: str,
+    line: int,
+    character: int,
+) -> str:
+    """
+    Find all references to a symbol at the given file position.
+
+    Uses Language Server Protocol to find all usages of a symbol
+    across the codebase. Supports Python, TypeScript, Rust, and Go.
+
+    Args:
+        path: Path to the file
+        line: Line number (1-indexed)
+        character: Character position (0-indexed)
+
+    Returns:
+        List of locations where the symbol is used
+
+    Example:
+        lsp_find_references(path="src/api.py", line=15, character=4)
+    """
+    from .tools.lsp import lsp_find_references as _lsp_find_references
+    return await _lsp_find_references(path, line, character)
+
+
+@mcp.tool()
+async def lsp_hover(
+    path: str,
+    line: int,
+    character: int,
+) -> str:
+    """
+    Get documentation and type information for a symbol.
+
+    Uses Language Server Protocol to retrieve docstrings, type signatures,
+    and other documentation for the symbol at the given position.
+
+    Args:
+        path: Path to the file
+        line: Line number (1-indexed)
+        character: Character position (0-indexed)
+
+    Returns:
+        Documentation and type info in markdown format
+
+    Example:
+        lsp_hover(path="src/utils.py", line=20, character=8)
+    """
+    from .tools.lsp import lsp_hover as _lsp_hover
+    return await _lsp_hover(path, line, character)
 
 
 # ============================================================

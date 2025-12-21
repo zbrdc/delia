@@ -320,19 +320,25 @@ class ScoringWeights:
 # Task-to-tier mapping for economic tracking
 _MOE_TASKS = frozenset({"plan", "critique"})
 _CODER_TASKS = frozenset({"generate", "review", "analyze", "coder"})
+_AGENTIC_TASKS = frozenset({"agent", "tool", "execute", "terminal", "agentic"})
+_SWE_TASKS = frozenset({"refactor", "migrate", "architect", "redesign", "swe"})
 
 
 def _task_to_tier(task_type: str) -> str:
     """Map task type to model tier for economic lookups.
-    
+
     Args:
         task_type: The task type (e.g., "generate", "plan", "quick")
-    
+
     Returns:
-        Tier name: "moe", "coder", or "quick"
+        Tier name: "moe", "coder", "agentic", "swe", or "quick"
     """
     if task_type in _MOE_TASKS:
         return "moe"
+    if task_type in _AGENTIC_TASKS:
+        return "agentic"
+    if task_type in _SWE_TASKS:
+        return "swe"
     if task_type in _CODER_TASKS:
         return "coder"
     return "quick"
@@ -713,6 +719,17 @@ class ModelRouter:
         self.backend_manager = backend_manager
         self.use_semantic_routing = use_semantic_routing and SEMANTIC_ROUTING_ENABLED
         self._semantic_router = None
+        self._profile_manager = None
+
+    def _get_profile_manager(self):
+        """Lazy-load the profile manager."""
+        if self._profile_manager is None:
+            try:
+                from .profiles import get_profile_manager
+                self._profile_manager = get_profile_manager()
+            except ImportError:
+                log.warning("profile_manager_import_failed")
+        return self._profile_manager
 
     async def _get_semantic_router(self):
         """Lazy-load the semantic router."""
@@ -750,7 +767,11 @@ class ModelRouter:
             raise RuntimeError("No backend configured. Check ~/.delia/settings.json or run 'delia init' to setup.")
 
         def get_model(tier: str) -> str:
-            """Get a model for a tier, handling lists and defaults."""
+            """Get a model for a tier, handling lists and defaults.
+
+            In single-GPU mode, uses model affinity to pick the best model
+            considering both quality and swap cost.
+            """
             val = backend.models.get(tier)
             if not val:
                 # Fallback to current if tier not found
@@ -758,7 +779,29 @@ class ModelRouter:
             if isinstance(val, list):
                 if not val:
                     return "current"
-                # Pick random model from tier for load balancing
+
+                # Check if we should use swap-aware model selection
+                if self.backend_manager.is_single_gpu() and len(val) > 1:
+                    from .config import get_model_affinity_tracker
+                    model_affinity = get_model_affinity_tracker()
+                    swap_penalty = self.backend_manager.get_swap_penalty_ms()
+
+                    # Use model affinity to select best model
+                    best = model_affinity.select_best_model(
+                        candidates=val,
+                        task_type=tier,
+                        swap_penalty_ms=swap_penalty,
+                    )
+                    if best:
+                        log.debug(
+                            "swap_aware_model_selected",
+                            tier=tier,
+                            selected=best,
+                            current=model_affinity.get_current_model(),
+                        )
+                        return best
+
+                # Fallback to random selection
                 return random.choice(val)
             return val
 
@@ -766,7 +809,8 @@ class ModelRouter:
         model_coder = get_model("coder")
         model_moe = get_model("moe")
         model_thinking = get_model("thinking")
-        model_dispatcher = get_model("dispatcher")
+        model_agentic = get_model("agentic")
+        model_swe = get_model("swe")
 
         # Helper to resolve tier name to model name
         def resolve_tier(tier_name):
@@ -778,10 +822,17 @@ class ModelRouter:
                 return model_moe
             if tier_name == "thinking":
                 return model_thinking
-            if tier_name == "dispatcher":
-                # Special logic for dispatcher: 
-                # If no dedicated dispatcher, use quick (7B Instruct) for better nuance.
-                return model_dispatcher if model_dispatcher != "current" else model_quick
+            if tier_name == "agentic":
+                # Fallback chain: agentic -> coder -> quick
+                if model_agentic != "current":
+                    return model_agentic
+                return model_coder if model_coder != "current" else model_quick
+            if tier_name == "swe":
+                # Fallback chain: swe -> moe -> coder
+                if model_swe != "current":
+                    return model_swe
+                return model_moe if model_moe != "current" else model_coder
+            # Note: "dispatcher" tier removed - dispatching now uses embeddings
             return tier_name  # Assume it's a model name if not a tier
 
         # Priority 1: Explicit override
@@ -790,10 +841,55 @@ class ModelRouter:
             log.info("model_selected", source="override", tier=model_override, model=resolved)
             return resolved
 
+        # Priority 1.5: Specialist Profile Matching
+        # Check if a specialized fine-tuned model matches this task better than general tiers.
+        # A 3B SQL-specialist may outperform a 14B generalist for SQL queries.
+        if content:
+            profile_manager = self._get_profile_manager()
+            if profile_manager:
+                profile, score = profile_manager.find_best_profile(task_type, content)
+                if profile and score >= 0.6:  # Only use if confident match (task + specialization)
+                    log.info(
+                        "model_selected",
+                        source="specialist_profile",
+                        profile=profile.id,
+                        model=profile.model,
+                        score=f"{score:.2f}",
+                        specializations=profile.specializations[:3],
+                    )
+                    return profile.model
+
         # Priority 2: Tasks that REQUIRE MoE (complex multi-step reasoning)
         if task_type in self.config.moe_tasks:
             log.info("model_selected", source="moe_task", task=task_type, tier="moe")
             return model_moe
+
+        # Priority 2.5: Agentic tasks use agent-trained models
+        # These models are trained on execution traces, not just instructions
+        if task_type in self.config.agentic_tasks or task_type == "agentic":
+            resolved = resolve_tier("agentic")
+            log.info("model_selected", source="agentic_task", task=task_type, tier="agentic", model=resolved)
+            return resolved
+
+        # Priority 2.6: SWE tasks use SWE-specialized models
+        # For repo-scale operations, multi-file reasoning, architecture changes
+        if task_type in self.config.swe_tasks or task_type == "swe":
+            resolved = resolve_tier("swe")
+            log.info("model_selected", source="swe_task", task=task_type, tier="swe", model=resolved)
+            return resolved
+
+        # Priority 2.7: Explicit coder tasks take precedence over semantic routing
+        # When the user/system explicitly requests a coder task (review, generate, analyze),
+        # we should use the coder model regardless of semantic classification
+        if task_type in self.config.coder_tasks:
+            log.info("model_selected", source="coder_task_explicit", task=task_type, tier="coder")
+            return model_coder
+
+        # Priority 2.8: Quick tasks skip semantic routing entirely (fast-path for greetings)
+        # No need to load expensive embedding models for simple chat
+        if task_type == "quick":
+            log.info("model_selected", source="quick_task_fastpath", task=task_type, tier="quick")
+            return model_quick
 
         # Priority 3: Semantic routing (embeddings-based classification)
         if content and self.use_semantic_routing:

@@ -54,6 +54,12 @@ class SymbolGraph:
 
     def __init__(self, root: Path | None = None):
         self.root = root or Path.cwd()
+        # Automatic Root Discovery
+        if not root:
+            for parent in [self.root] + list(self.root.parents):
+                if (parent / ".git").exists() or (parent / "pyproject.toml").exists():
+                    self.root = parent
+                    break
         self.nodes: dict[str, FileNode] = {}
         self._lock = asyncio.Lock()
         self._initialized = False

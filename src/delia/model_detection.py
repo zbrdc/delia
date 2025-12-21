@@ -45,12 +45,15 @@ EXCLUDED_PATTERNS = [
 ]
 
 # Keywords for tier classification
+# Priority order matters - first match wins in classify_model()
+# Note: "dispatcher" tier removed - dispatching now uses embeddings (faster, more accurate)
 TIER_KEYWORDS = {
-    "dispatcher": ["functiongemma"],
-    "thinking": ["think", "reason", "r1", "o1", "deepseek-r"],
-    "coder": ["code", "coder", "codestral", "starcoder", "qwen2.5-coder"],
-    "moe": ["30b", "32b", "70b", "72b", "moe", "mixtral", "qwen3:30"],
-    "quick": ["7b", "8b", "3b", "4b", "1b", "small", "mini", "tiny", "14b"],
+    "agentic": ["openthinker:7b", "openthinker-agent", "agent"],
+    "swe": ["devstral", "deepswe", "swe"],
+    "thinking": ["openthinker:32b", "openthinker", "think", "reason", "r1"],
+    "coder": ["qwen3-coder:30b", "deepcoder:14b", "coder", "code"],
+    "moe": ["nemotron-3-nano", "mixtral", "moe", "30b", "32b"],
+    "quick": ["ministral", "7b", "8b", "small", "tiny"],
 }
 
 
@@ -121,6 +124,8 @@ def assign_models_to_tiers(models: list[str]) -> dict[str, list[str]]:
             "moe": [model],
             "thinking": [model],
             "dispatcher": [model],
+            "agentic": [model],
+            "swe": [model],
         }
 
     # Multiple models - classify each and assign to tiers
@@ -130,6 +135,8 @@ def assign_models_to_tiers(models: list[str]) -> dict[str, list[str]]:
         "moe": [],
         "thinking": [],
         "dispatcher": [],
+        "agentic": [],
+        "swe": [],
     }
 
     # First pass: assign based on keywords

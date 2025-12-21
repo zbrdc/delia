@@ -179,12 +179,34 @@ async def run_agent_loop(
 
         results = await execute_tools(tool_calls, registry, timeout=config.timeout_per_tool, parallel=config.parallel_tools)
         log.debug("agent_tool_results", iteration=iteration, count=len(results))
-        
+
         if on_tool_result:
             for res in results: on_tool_result(res)
 
         all_tool_calls.extend(tool_calls)
         all_tool_results.extend(results)
+
+        # Check for final flag - if any tool result is marked final,
+        # return it directly without reloading the orchestrating model.
+        # This saves a GPU model swap when the delegated result IS the final answer.
+        for res in results:
+            if res.is_final and res.success:
+                log.info(
+                    "agent_early_return_final",
+                    iteration=iteration,
+                    tool=res.tool_name,
+                    output_len=len(res.output),
+                )
+                return AgentResult(
+                    success=True,
+                    response=res.output,
+                    iterations=iteration + 1,
+                    tool_calls=all_tool_calls,
+                    tool_results=all_tool_results,
+                    elapsed_ms=int((time.time() - start_time) * 1000),
+                    tokens=total_tokens,
+                    stopped_reason="final_delegation",
+                )
 
         if config.native_tool_calling:
             messages.append({"role": "assistant", "content": content, "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}} for tc in tool_calls]})

@@ -25,11 +25,19 @@ Provides easy setup and configuration for Delia MCP server:
 
 from __future__ import annotations
 
+# Suppress deprecation warnings from third-party libraries (torchao, swig)
+# Must be before any imports that trigger these
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="torchao")
+warnings.filterwarnings("ignore", message="builtin type Swig.*has no __module__")
+
 import json
 import os
 import platform
 import shutil
 import subprocess
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Annotated, Optional
@@ -849,44 +857,84 @@ def chat(
     session: Annotated[Optional[str], typer.Option("--session", "-s", help="Resume existing session by ID")] = None,
     debug: Annotated[bool, typer.Option("--debug", help="Enable debug logging")] = False,
     workspace: Annotated[Optional[str], typer.Option("--workspace", "-w", help="Confine file operations to directory")] = None,
+    allow_write: Annotated[bool, typer.Option("--allow-write", help="Enable file write operations")] = False,
+    allow_exec: Annotated[bool, typer.Option("--allow-exec", help="Enable shell command execution")] = False,
+    yolo: Annotated[bool, typer.Option("--yolo", help="Skip all security prompts (dangerous!)")] = False,
 ) -> None:
     """
-    Start an interactive chat session using the Native Python TUI.
-
-    Examples:
-        delia chat                    # Start native chat
-        delia chat --model coder      # Use coder model tier
+    Start an interactive chat session using the Premium Ink-based TUI.
     """
+    import subprocess
+    import sys
+    import shutil
+    from .paths import USER_DELIA_DIR
     
-    # Safety check: If called from Python (main), default values might be OptionInfo objects
-    import typer.models
-    if isinstance(workspace, typer.models.OptionInfo):
-        workspace = None
-    if isinstance(model, typer.models.OptionInfo):
-        model = None
-    if isinstance(backend, typer.models.OptionInfo):
-        backend = None
-    if isinstance(session, typer.models.OptionInfo):
-        session = None
-
-    from .agent_cli import AgentCLIConfig, run_chat_cli
-    import asyncio
-    
-    config = AgentCLIConfig(
-        model=model,
-        backend_type=backend,
-        workspace=workspace,
-        verbose=debug,
-        # Enable agent capabilities by default in chat
-        planning_enabled=True,
-        reflection_enabled=True, 
-    )
-    
+    # 1. Start the API server in the background if it is not already running
+    # The TUI requires the API server for SSE streaming.
+    # We use a simple health check to see if it is up.
+    api_url = "http://localhost:34589/api/health"
+    api_running = False
     try:
-        asyncio.run(run_chat_cli(config))
+        import httpx
+        with httpx.Client(timeout=1.0) as client:
+            resp = client.get(api_url)
+            if resp.status_code == 200:
+                api_running = True
+    except Exception:
+        api_running = False
+
+    if not api_running:
+        print_info("Starting Delia API server...")
+        # Start the API server as a background process
+        # We use the same python executable to ensure environment consistency
+        api_cmd = [sys.executable, "-m", "delia.cli", "api", "--port", "34589"]
+        subprocess.Popen(
+            api_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        # Give it a moment to bind
+        time.sleep(2)
+
+    # 2. Find and run the TUI
+    # Try to find delia-tui in PATH, or look in the project root
+    tui_path = shutil.which("delia-tui")
+    
+    if not tui_path:
+        # Fallback: Check in the project root/tui directory
+        project_root = get_delia_root()
+        tui_dir = project_root / "tui"
+        if (tui_dir / "dist" / "cli.js").exists():
+            tui_cmd = ["node", str(tui_dir / "dist" / "cli.js")]
+        else:
+            print_error("New TUI not found or not built.")
+            print_info("Please run 'npm install && npm run build' in the tui directory.")
+            
+            # Fallback to old TUI if user confirms
+            if prompt_confirm("Would you like to use the legacy Python TUI instead?"):
+                from .agent_cli import AgentCLIConfig, run_chat_cli
+                import asyncio
+                config = AgentCLIConfig(model=model, backend_type=backend, workspace=workspace)
+                asyncio.run(run_chat_cli(config))
+            return
+    else:
+        tui_cmd = [tui_path]
+
+    # Build arguments
+    if model: tui_cmd.extend(["--model", model])
+    if backend: tui_cmd.extend(["--backend", backend])
+    if session: tui_cmd.extend(["--session", session])
+    if workspace: tui_cmd.extend(["--workspace", workspace])
+    if allow_write: tui_cmd.append("--allow-write")
+    if allow_exec: tui_cmd.append("--allow-exec")
+    if yolo: tui_cmd.append("--yolo")
+
+    try:
+        subprocess.run(tui_cmd, check=False)
     except KeyboardInterrupt:
         pass
-    return
+
 
 
 @app.command()
@@ -954,6 +1002,74 @@ def agent(
         raise typer.Exit(1)
 
 
+
+@app.command()
+def index(
+    force: bool = typer.Option(False, "--force", "-f", help="Force a complete re-indexing of all files"),
+    summarize: bool = typer.Option(False, "--summarize", "-s", help="Use LLM to generate architectural summaries (Deep Scan)"),
+    parallel: int = typer.Option(4, "--parallel", "-p", help="Number of parallel summarization tasks"),
+) -> None:
+    """
+    Manually index the project for high-fidelity orchestration.
+    
+    Scans the current directory to:
+    1. Generate hierarchical file summaries (Project Map)
+    2. Build a global dependency graph (Symbol Graph)
+    """
+    import asyncio
+    from .orchestration.summarizer import get_summarizer
+    from .orchestration.graph import get_symbol_graph
+    from .llm import init_llm_module
+    from .queue import ModelQueue
+
+    async def run_index():
+        print_header("Initializing Delia Indexer...")
+        
+        # Initialize backends to resolve Ollama URL for embeddings
+        from .backend_manager import backend_manager
+
+        
+        # 1. Setup environment
+        if summarize:
+            print_info("Initializing Inference Engine for Summaries...")
+            model_queue = ModelQueue()
+            init_llm_module(
+                stats_callback=lambda *a, **k: None,
+                save_stats_callback=lambda: None,
+                model_queue=model_queue,
+            )
+        
+        summarizer = get_summarizer()
+        graph = get_symbol_graph()
+        print_info("Building Semantic Vector Index (CPU-bound)...")
+        
+        # 2. Sync Symbol Graph (Static Analysis)
+        print_info("Building Symbol Graph (Classes, Functions, Imports)...")
+        graph_updated = await graph.sync(force=force)
+        print_success(f"Symbol Graph updated ({graph_updated} files processed).")
+        
+        # 3. Sync Summaries (LLM Analysis) - uses qwen3:0.6b for speed
+        if summarize:
+            print_info(f"Generating Project summaries (parallel={parallel}, model=qwen3:0.6b)...")
+        else:
+            print_info("Generating embeddings...")
+        summary_updated = await summarizer.sync_project(force=force, summarize=summarize, parallel=parallel)
+        print_success(f"Project Map updated ({summary_updated} files processed).")
+        
+        print()
+        if RICH_AVAILABLE and console:
+            console.print(Panel.fit("[bold green]Indexing Complete![/bold green] Delia now has full architectural awareness.", border_style="green"))
+        else:
+            print("Index updated successfully.")
+
+    try:
+        asyncio.run(run_index())
+    except KeyboardInterrupt:
+        print_warning("Indexing interrupted.")
+    except Exception as e:
+        print_error(f"Indexing failed: {e}")
+
+
 @app.command()
 def config(
     show: bool = typer.Option(False, "--show", "-s", help="Show current configuration"),
@@ -990,6 +1106,66 @@ def config(
         except Exception as e:
             print_error(f"Failed to read configuration: {e}")
             raise typer.Exit(1) from None
+
+
+
+@app.command()
+def compact(
+    session_id: str = typer.Argument(..., help="Session ID to compact"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force compaction even if below threshold"),
+) -> None:
+    """
+    Compact a session's conversation history.
+    
+    Summarizes older messages while preserving key artifacts to reduce
+    context token usage.
+    """
+    import asyncio
+    from .session_manager import get_session_manager
+
+    async def run_compact():
+        sm = get_session_manager()
+        result = await sm.compact_session(session_id, force=force)
+        
+        if result["success"]:
+            print_success(f"Session {session_id} compacted.")
+            print_info(f"  Messages compacted: {result["messages_compacted"]}")
+            print_info(f"  Tokens saved: {result["tokens_saved"]}")
+            print_info(f"  Reduction: {result["compression_ratio"]:.1%}")
+        else:
+            print_error(f"Compaction failed: {result["error"]}")
+
+    asyncio.run(run_compact())
+
+
+@app.command()
+def memory(
+    reload: bool = typer.Option(False, "--reload", "-r", help="Force reload of all project memories"),
+    show_content: bool = typer.Option(False, "--content", "-c", help="Show combined instructions content"),
+) -> None:
+    """
+    List project memories (DELIA.md files) loaded into context.
+    """
+    from .project_memory import get_project_memory, reload_project_memories, list_project_memories
+
+    if reload:
+        reload_project_memories()
+        print_success("Project memories reloaded.")
+
+    memories = list_project_memories()
+    pm = get_project_memory()
+
+    if not memories:
+        print_info("No project memories loaded.")
+        return
+
+    print_header("Loaded Project Memories")
+    for m in memories:
+        print_info(f"  • {m["name"]} ({m["source"]}) - {m["size_kb"]}KB")
+
+    if show_content:
+        print_header("Combined Content")
+        print(pm._state.combined_content)
 
 
 @app.command()
@@ -1206,6 +1382,169 @@ def uninstall(
         print_info("To completely remove Delia, also delete:")
         print_info(f"  • Data: ~/.delia/")
         print_info(f"  • Source: {get_delia_root()}")
+
+
+# =============================================================================
+# Security Commands
+# =============================================================================
+
+@app.command()
+def audit(
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of entries to show"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    tool: str = typer.Option(None, "--tool", "-t", help="Filter by tool name"),
+    result: str = typer.Option(None, "--result", "-r", help="Filter by result (success/error/denied)"),
+) -> None:
+    """
+    View the security audit log.
+
+    Shows recent tool executions with permission levels, approval methods,
+    and results. Use filters to find specific operations.
+
+    Examples:
+        delia audit                    # Last 20 entries
+        delia audit -n 50              # Last 50 entries
+        delia audit -t shell_exec      # Only shell commands
+        delia audit -r denied          # Only denied operations
+        delia audit --json             # JSON output for scripting
+    """
+    from .security import get_security_manager
+
+    sm = get_security_manager()
+    entries = sm.get_audit_log(limit=limit * 2)  # Get more to allow filtering
+
+    # Apply filters
+    if tool:
+        entries = [e for e in entries if tool.lower() in e.get("tool_name", "").lower()]
+    if result:
+        entries = [e for e in entries if e.get("result", "").lower() == result.lower()]
+
+    # Limit after filtering
+    entries = entries[-limit:]
+
+    if not entries:
+        print_info("No audit entries found.")
+        return
+
+    if json_output:
+        import json as json_module
+        print(json_module.dumps(entries, indent=2))
+        return
+
+    # Pretty print
+    print()
+    print_header(f"Audit Log (last {len(entries)} entries)")
+    print()
+
+    for entry in entries:
+        ts = entry.get("timestamp", "")[:19].replace("T", " ")
+        tool_name = entry.get("tool_name", "unknown")
+        perm = entry.get("permission_level", "?")
+        res = entry.get("result", "?")
+        method = entry.get("approval_method", "?")
+        duration = entry.get("duration_ms", 0)
+
+        # Color-code result
+        if res == "success":
+            status = "[green]OK[/green]" if RICH_AVAILABLE else "OK"
+        elif res == "denied":
+            status = "[red]DENIED[/red]" if RICH_AVAILABLE else "DENIED"
+        else:
+            status = "[yellow]ERROR[/yellow]" if RICH_AVAILABLE else "ERROR"
+
+        # Format line
+        line = f"{ts}  {status:8}  {tool_name:20}  [{perm}]  via:{method}  {duration}ms"
+
+        if RICH_AVAILABLE and console:
+            console.print(line)
+        else:
+            print(line.replace("[green]", "").replace("[/green]", "")
+                  .replace("[red]", "").replace("[/red]", "")
+                  .replace("[yellow]", "").replace("[/yellow]", ""))
+
+        # Show error if present
+        if entry.get("error_message"):
+            print_error(f"    {entry['error_message'][:80]}")
+
+    print()
+    print_info(f"Audit file: {sm.policy.audit_file}")
+
+
+@app.command()
+def undo(
+    list_stack: bool = typer.Option(False, "--list", "-l", help="List undo stack without undoing"),
+    session: str = typer.Option(None, "--session", "-s", help="Filter by session ID"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """
+    Undo file operations.
+
+    Restores files to their state before Delia modified them.
+    Each file modification is backed up automatically.
+
+    Examples:
+        delia undo              # Undo last change (with confirmation)
+        delia undo --list       # List undo stack
+        delia undo --force      # Undo without confirmation
+    """
+    from .security import get_security_manager
+
+    sm = get_security_manager()
+
+    if not sm.policy.undo_enabled:
+        print_error("Undo is disabled in security policy.")
+        return
+
+    stack = sm.get_undo_stack(session_id=session)
+
+    if list_stack:
+        if not stack:
+            print_info("Undo stack is empty.")
+            return
+
+        print()
+        print_header(f"Undo Stack ({len(stack)} entries)")
+        print()
+
+        for i, entry in enumerate(reversed(stack), 1):
+            ts = entry.get("timestamp", "")[:19].replace("T", " ")
+            op = entry.get("operation", "?")
+            path = entry.get("path", "?")
+
+            # Truncate long paths
+            if len(path) > 60:
+                path = "..." + path[-57:]
+
+            line = f"{i:3}.  {ts}  {op:8}  {path}"
+            print(line)
+
+        print()
+        print_info("Run 'delia undo' to restore the most recent change.")
+        return
+
+    # Actually undo
+    if not stack:
+        print_info("Nothing to undo.")
+        return
+
+    last = stack[-1]
+    path = last.get("path", "unknown")
+    op = last.get("operation", "unknown")
+
+    print()
+    print_info(f"Last operation: {op} on {path}")
+
+    if not force:
+        if not prompt_confirm("Undo this change?"):
+            print_info("Cancelled.")
+            return
+
+    success, message = sm.undo_last(session_id=session)
+
+    if success:
+        print_success(message)
+    else:
+        print_error(message)
 
 
 # Default command: launch chat if no command specified

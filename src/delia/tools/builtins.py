@@ -27,6 +27,7 @@ import structlog
 
 from .registry import ToolDefinition, ToolRegistry
 from .executor import validate_path
+from .editing import replace_in_file, insert_into_file
 from ..types import Workspace
 
 log = structlog.get_logger()
@@ -137,31 +138,6 @@ async def delete_file(path: str, workspace: Workspace | None = None) -> str:
         return f"Error deleting file: {e}"
 
 
-async def replace_in_file(path: str, search: str, replace: str, workspace: Workspace | None = None) -> str:
-    """Replace text in a file."""
-    try:
-        valid_path = _resolve_and_validate(path, workspace)
-        content = valid_path.read_text()
-        new_content = content.replace(search, replace)
-        valid_path.write_text(new_content)
-        return f"Successfully replaced occurrences in {path}"
-    except Exception as e:
-        return f"Error replacing in file: {e}"
-
-
-async def insert_into_file(path: str, content: str, line: int, workspace: Workspace | None = None) -> str:
-    """Insert content at a specific line."""
-    try:
-        valid_path = _resolve_and_validate(path, workspace)
-        lines = valid_path.read_text().splitlines()
-        idx = max(0, min(line - 1, len(lines)))
-        lines.insert(idx, content)
-        valid_path.write_text("\n".join(lines))
-        return f"Successfully inserted into {path}"
-    except Exception as e:
-        return f"Error inserting into file: {e}"
-
-
 async def shell_exec(command: str, workspace: Workspace | None = None) -> str:
     """Execute a shell command."""
     # Aggressive security for shell_exec
@@ -203,6 +179,25 @@ async def web_fetch(url: str) -> str:
         return f"Error fetching URL {url}: {e}"
 
 
+
+# In-memory progress state (reset per session)
+_agent_milestones: dict[str, dict[str, str]] = {}
+
+async def check_progress(session_id: str | None = None) -> str:
+    """Check the status of all milestones in the current task."""
+    if not session_id: return "No active session."
+    m = _agent_milestones.get(session_id, {})
+    if not m: return "No milestones defined yet. Use update_milestone to set them."
+    return json.dumps(m, indent=2)
+
+async def update_milestone(milestone_id: str, status: str, session_id: str | None = None) -> str:
+    """Update the status of a specific milestone (e.g. todo, in_progress, verified)."""
+    if not session_id: return "Error: session_id required."
+    if session_id not in _agent_milestones: _agent_milestones[session_id] = {}
+    _agent_milestones[session_id][milestone_id] = status
+    return f"Milestone '{milestone_id}' updated to '{status}'."
+
+
 def get_default_tools(
     allow_write: bool = False,
     allow_exec: bool = False,
@@ -225,5 +220,8 @@ def get_default_tools(
     registry.register(ToolDefinition("insert_into_file", "Insert into file", {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}, "line": {"type": "integer"}}, "required": ["path", "content", "line"]}, insert_into_file, dangerous=not allow_write, permission_level="write", requires_workspace=True))
     
     registry.register(ToolDefinition("shell_exec", "Execute shell", {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}, shell_exec, dangerous=not allow_exec, permission_level="exec", requires_workspace=True))
+
+    registry.register(ToolDefinition("check_progress", "Check status of milestones", {"type": "object", "properties": {"session_id": {"type": "string"}}}, check_progress, dangerous=False))
+    registry.register(ToolDefinition("update_milestone", "Update a milestone status", {"type": "object", "properties": {"milestone_id": {"type": "string"}, "status": {"type": "string"}, "session_id": {"type": "string"}}, "required": ["milestone_id", "status"]}, update_milestone, dangerous=False))
 
     return registry

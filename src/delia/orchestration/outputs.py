@@ -349,26 +349,51 @@ Important:
 """
 
 
+def _clean_json_artifacts(json_str: str) -> str:
+    """
+    Remove markdown formatting artifacts from JSON strings.
+
+    Some models (especially smaller ones) add markdown formatting
+    like **bold** or *italic* inside JSON, breaking parsing.
+    """
+    import re
+
+    # Remove bold markers: **text** -> text
+    json_str = re.sub(r'\*\*([^*]+)\*\*', r'\1', json_str)
+    # Remove italic markers: *text* -> text (but not inside strings)
+    json_str = re.sub(r'(?<![\\"])\*([^*]+)\*(?![\\"])', r'\1', json_str)
+    # Remove underline bold: __text__ -> text
+    json_str = re.sub(r'__([^_]+)__', r'\1', json_str)
+    # Remove strikethrough: ~~text~~ -> text
+    json_str = re.sub(r'~~([^~]+)~~', r'\1', json_str)
+    # Remove inline code in keys: `key` -> key (only outside quotes)
+    json_str = re.sub(r'`([^`]+)`', r'\1', json_str)
+    # Fix common issue: trailing commas before closing bracket
+    json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+
+    return json_str
+
+
 def parse_structured_output(
     response: str,
     output_type: type[T],
 ) -> T:
     """
     Parse an LLM response into a structured Pydantic model.
-    
+
     Args:
         response: The raw LLM response (should be JSON)
         output_type: The Pydantic model class to parse into
-        
+
     Returns:
         An instance of the output_type
-        
+
     Raises:
         ValueError: If the response cannot be parsed
     """
     import json
     import re
-    
+
     # Try to extract JSON from the response
     # Models sometimes wrap JSON in markdown code blocks
     json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response)
@@ -381,7 +406,10 @@ def parse_structured_output(
             json_str = json_match.group(0)
         else:
             json_str = response.strip()
-    
+
+    # Clean markdown artifacts that break JSON parsing
+    json_str = _clean_json_artifacts(json_str)
+
     try:
         data = json.loads(json_str)
         return output_type.model_validate(data)

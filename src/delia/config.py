@@ -47,6 +47,98 @@ class ModelConfig:
         return self.max_input_kb * 1024
 
 
+@dataclass
+class ModelSpec:
+    """
+    Enhanced model specification for fine-tuned/specialist models.
+
+    Allows routing to smaller, specialized models instead of larger general ones.
+    Example: A 3B model fine-tuned for SQL generation may outperform a 14B general model.
+
+    Usage in settings.json:
+        "specialists": {
+            "sql-expert": {
+                "model": "sqlcoder:7b",
+                "specializations": ["sql", "database", "query"],
+                "tasks": ["generate", "review"],
+                "parent": "codellama:7b",
+                "vram_gb": 5.0,
+                "priority": 10
+            }
+        }
+    """
+
+    model: str  # Actual model name (e.g., "sqlcoder:7b")
+    specializations: list[str] = field(default_factory=list)  # What it's trained for
+    tasks: list[str] = field(default_factory=list)  # Task types it handles well
+    parent: str | None = None  # Base model it was fine-tuned from
+    vram_gb: float = -1.0  # VRAM requirement (-1 = auto-detect)
+    context_tokens: int = -1  # Context window (-1 = auto-detect)
+    priority: int = 0  # Higher = preferred when matching
+    quantization: str | None = None  # e.g., "Q4_K_M", "Q8_0", None for full
+    adapter_path: str | None = None  # Path to LoRA adapter if applicable
+
+    # Runtime performance tracking (updated by economics system)
+    affinity_score: float = 0.5  # Learned task affinity (0-1)
+    success_rate: float = 1.0  # Historical success rate
+    avg_latency_ms: float = 0.0  # Average response time
+
+    @classmethod
+    def from_dict(cls, name: str, data: dict) -> "ModelSpec":
+        """Create from settings.json dict."""
+        return cls(
+            model=data.get("model", name),
+            specializations=data.get("specializations", []),
+            tasks=data.get("tasks", []),
+            parent=data.get("parent"),
+            vram_gb=data.get("vram_gb", -1.0),
+            context_tokens=data.get("context_tokens", -1),
+            priority=data.get("priority", 0),
+            quantization=data.get("quantization"),
+            adapter_path=data.get("adapter_path"),
+        )
+
+    def matches_task(self, task_type: str, content: str) -> tuple[bool, float]:
+        """
+        Check if this specialist matches a task.
+
+        Returns (matches, score) where score indicates match quality.
+        """
+        score = 0.0
+
+        # Task type match
+        if task_type in self.tasks:
+            score += 0.4
+
+        # Specialization keyword match in content
+        content_lower = content.lower()
+        matched_specs = sum(1 for spec in self.specializations if spec.lower() in content_lower)
+        if matched_specs > 0:
+            score += 0.3 * min(matched_specs / max(len(self.specializations), 1), 1.0)
+
+        # Priority boost
+        score += self.priority * 0.01
+
+        # Affinity learning boost
+        score += (self.affinity_score - 0.5) * 0.2
+
+        return score > 0.3, score
+
+    def to_dict(self) -> dict:
+        """Serialize for storage."""
+        return {
+            "model": self.model,
+            "specializations": self.specializations,
+            "tasks": self.tasks,
+            "parent": self.parent,
+            "vram_gb": self.vram_gb,
+            "context_tokens": self.context_tokens,
+            "priority": self.priority,
+            "quantization": self.quantization,
+            "adapter_path": self.adapter_path,
+        }
+
+
 @dataclass(frozen=True)
 class VotingConfig:
     """
@@ -144,17 +236,8 @@ class Config:
         )
     )
 
-    # Dedicated dispatcher model (FunctionGemma) for tool selection
-    model_dispatcher: ModelConfig = field(
-        default_factory=lambda: ModelConfig(
-            name="dispatcher",
-            default_model="auto",
-            vram_gb=float(os.getenv("DELIA_MODEL_DISPATCHER_VRAM", "0.5")), # Keep small default
-            context_tokens=-1,
-            num_ctx=-1,
-            max_input_kb=16,
-        )
-    )
+    # Note: Dispatcher now uses embeddings (sentence-transformers) instead of LLM
+    # This is faster (~5ms vs ~500ms) and more accurate (100% on common cases)
 
     # Dedicated critic model (QA) for verification
     model_critic: ModelConfig = field(
@@ -177,6 +260,32 @@ class Config:
             context_tokens=-1,
             num_ctx=-1,
             max_input_kb=100,
+        )
+    )
+
+    # Agent-trained model for tool-calling loops (OpenThinker, agent fine-tunes)
+    # These models are trained on execution traces, not just instructions
+    model_agentic: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            name="agentic",
+            default_model="auto",
+            vram_gb=float(os.getenv("DELIA_MODEL_AGENTIC_VRAM", "-1")),
+            context_tokens=-1,
+            num_ctx=-1,
+            max_input_kb=int(os.getenv("DELIA_MODEL_AGENTIC_INPUT_KB", "64")),
+        )
+    )
+
+    # SWE-specialized model for repo-scale operations (DeepSWE, SWE-bench trained)
+    # Large context for multi-file reasoning and diff generation
+    model_swe: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            name="swe",
+            default_model="auto",
+            vram_gb=float(os.getenv("DELIA_MODEL_SWE_VRAM", "-1")),
+            context_tokens=-1,
+            num_ctx=-1,
+            max_input_kb=int(os.getenv("DELIA_MODEL_SWE_INPUT_KB", "200")),
         )
     )
 
@@ -204,6 +313,12 @@ class Config:
     # Tasks that enable thinking mode
     thinking_tasks: frozenset[str] = field(default_factory=lambda: frozenset({"plan", "analyze", "critique"}))
 
+    # Tasks that benefit from agent-trained models (tool execution optimized)
+    agentic_tasks: frozenset[str] = field(default_factory=lambda: frozenset({"agent", "tool", "execute", "terminal"}))
+
+    # Tasks that benefit from SWE-specialized models (repo-scale operations)
+    swe_tasks: frozenset[str] = field(default_factory=lambda: frozenset({"refactor", "migrate", "architect", "redesign"}))
+
     # ============================================================
     # GENERATION PARAMETERS
     # ============================================================
@@ -228,7 +343,7 @@ class Config:
     # ============================================================
     # FILE HANDLING
     # ============================================================
-    max_file_size: int = 500_000  # 500KB max file read
+    max_file_size: int = 2_000_000  # 500KB max file read
 
     # ============================================================
     # PERSISTENCE
@@ -941,6 +1056,234 @@ def save_affinity() -> None:
         temp_file.replace(affinity_file)  # Atomic on POSIX
     except Exception as e:
         log.warning("affinity_save_failed", error=str(e))
+
+
+# ============================================================
+# MODEL AFFINITY TRACKER (for single-GPU setups)
+# Tracks which model works best for which task type
+# ============================================================
+
+
+@dataclass
+class ModelAffinityTracker:
+    """
+    Track model performance per task type using Exponential Moving Average.
+
+    Unlike backend affinity (which is overkill for single-GPU), this tracks
+    which specific models perform best for each task type. This enables
+    intelligent model selection within a single backend.
+
+    The tracker learns:
+    - Quality scores (from melon awards)
+    - Latency performance (tokens/second)
+    - Task success rates
+
+    Key insight: In single-GPU mode, the BEST model isn't always worth loading
+    if a good-enough model is already loaded (swap cost > quality delta).
+    """
+
+    alpha: float = 0.1  # EMA decay factor
+    swap_penalty_weight: float = 0.3  # How much to weight swap avoidance
+
+    # (model_id, task_type) -> affinity score [0.0-1.0]
+    _scores: dict[tuple[str, str], float] = field(default_factory=dict)
+
+    # Track which model is currently loaded (for swap-aware decisions)
+    _current_model: str | None = field(default=None)
+
+    # (model_id, task_type) -> avg tokens/sec
+    _latency: dict[tuple[str, str], float] = field(default_factory=dict)
+
+    def update(
+        self,
+        model_id: str,
+        task_type: str,
+        success: bool,
+        quality_score: float | None = None,
+        tokens_per_sec: float | None = None,
+    ) -> None:
+        """
+        Update model affinity based on task outcome.
+
+        Args:
+            model_id: The model that was used
+            task_type: Type of task (coder, quick, moe, etc.)
+            success: Whether the task succeeded
+            quality_score: Optional quality score (0.0-1.0)
+            tokens_per_sec: Optional throughput metric
+        """
+        key = (model_id, task_type)
+
+        # Calculate outcome score
+        if quality_score is not None:
+            outcome = quality_score
+        else:
+            outcome = 1.0 if success else 0.0
+
+        # EMA update for affinity
+        old = self._scores.get(key, 0.5)
+        self._scores[key] = old * (1 - self.alpha) + outcome * self.alpha
+
+        # Track latency if provided
+        if tokens_per_sec is not None:
+            old_latency = self._latency.get(key, tokens_per_sec)
+            self._latency[key] = old_latency * (1 - self.alpha) + tokens_per_sec * self.alpha
+
+    def set_current_model(self, model_id: str | None) -> None:
+        """Update which model is currently loaded."""
+        self._current_model = model_id
+
+    def get_current_model(self) -> str | None:
+        """Get the currently loaded model."""
+        return self._current_model
+
+    def get_affinity(self, model_id: str, task_type: str) -> float:
+        """Get learned affinity for a model+task pair."""
+        return self._scores.get((model_id, task_type), 0.5)
+
+    def get_latency(self, model_id: str, task_type: str) -> float | None:
+        """Get average tokens/sec for a model+task pair."""
+        return self._latency.get((model_id, task_type))
+
+    def select_best_model(
+        self,
+        candidates: list[str],
+        task_type: str,
+        swap_penalty_ms: int = 8000,
+    ) -> str:
+        """
+        Select best model considering both affinity and swap cost.
+
+        If the currently loaded model is in candidates and has decent affinity,
+        prefer it to avoid the swap penalty.
+
+        Args:
+            candidates: List of model IDs that can handle this task
+            task_type: The task type to optimize for
+            swap_penalty_ms: Cost of swapping models in ms
+
+        Returns:
+            Best model ID to use
+        """
+        if not candidates:
+            return candidates[0] if candidates else ""
+
+        # Score each candidate
+        scored = []
+        for model_id in candidates:
+            affinity = self.get_affinity(model_id, task_type)
+            latency = self.get_latency(model_id, task_type)
+
+            # Base score from affinity
+            score = affinity
+
+            # Bonus for currently loaded model (avoid swap)
+            if model_id == self._current_model:
+                score += self.swap_penalty_weight
+
+            # Bonus for known fast models
+            if latency and latency > 0:
+                # Normalize: 50 tok/s = 1.0, 100 tok/s = 1.1
+                latency_bonus = min(0.1, (latency - 50) / 500)
+                score += latency_bonus
+
+            scored.append((model_id, score))
+
+        # Sort by score descending
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[0][0]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for persistence."""
+        return {
+            "alpha": self.alpha,
+            "swap_penalty_weight": self.swap_penalty_weight,
+            "scores": {f"{k[0]}:{k[1]}": v for k, v in self._scores.items()},
+            "latency": {f"{k[0]}:{k[1]}": v for k, v in self._latency.items()},
+            "current_model": self._current_model,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ModelAffinityTracker":
+        """Deserialize from persistence."""
+        tracker = cls(
+            alpha=data.get("alpha", 0.1),
+            swap_penalty_weight=data.get("swap_penalty_weight", 0.3),
+        )
+        tracker._current_model = data.get("current_model")
+
+        for key_str, score in data.get("scores", {}).items():
+            parts = key_str.split(":", 1)
+            if len(parts) == 2:
+                tracker._scores[(parts[0], parts[1])] = score
+
+        for key_str, latency in data.get("latency", {}).items():
+            parts = key_str.split(":", 1)
+            if len(parts) == 2:
+                tracker._latency[(parts[0], parts[1])] = latency
+
+        return tracker
+
+    def get_status(self) -> dict[str, Any]:
+        """Get current status for health/debug."""
+        return {
+            "tracked_models": len(set(k[0] for k in self._scores)),
+            "tracked_pairs": len(self._scores),
+            "current_model": self._current_model,
+            "top_scores": sorted(
+                [(f"{k[0]}:{k[1]}", round(v, 3)) for k, v in self._scores.items()],
+                key=lambda x: x[1],
+                reverse=True,
+            )[:10],
+        }
+
+
+# Global model affinity tracker
+MODEL_AFFINITY_TRACKER = ModelAffinityTracker()
+
+
+def get_model_affinity_tracker() -> ModelAffinityTracker:
+    """Get the global model affinity tracker."""
+    return MODEL_AFFINITY_TRACKER
+
+
+def load_model_affinity() -> None:
+    """Load model affinity data from disk."""
+    import json
+    import structlog
+
+    log = structlog.get_logger()
+    affinity_file = paths.DATA_DIR / "cache" / "model_affinity.json"
+
+    if not affinity_file.exists():
+        return
+
+    try:
+        data = json.loads(affinity_file.read_text())
+        global MODEL_AFFINITY_TRACKER
+        MODEL_AFFINITY_TRACKER = ModelAffinityTracker.from_dict(data)
+        log.debug("model_affinity_loaded", tracked_pairs=len(MODEL_AFFINITY_TRACKER._scores))
+    except Exception as e:
+        log.warning("model_affinity_load_failed", error=str(e))
+
+
+def save_model_affinity() -> None:
+    """Save model affinity data to disk."""
+    import json
+    import structlog
+
+    log = structlog.get_logger()
+    affinity_file = paths.DATA_DIR / "cache" / "model_affinity.json"
+
+    try:
+        paths.ensure_directories()
+        affinity_file.parent.mkdir(parents=True, exist_ok=True)
+        data = MODEL_AFFINITY_TRACKER.to_dict()
+        temp_file = affinity_file.with_suffix(".tmp")
+        temp_file.write_text(json.dumps(data, indent=2))
+        temp_file.replace(affinity_file)
+    except Exception as e:
+        log.warning("model_affinity_save_failed", error=str(e))
 
 
 # ============================================================

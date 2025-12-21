@@ -77,9 +77,9 @@ class ModelQueue:
                            Used to call provider-specific load/unload methods.
                            If None, lifecycle methods are not called (soft tracking only).
         """
-        self.loaded_models: dict[str, dict[str, Any]] = {}  # model_name -> metadata
-        self.loading_models: set[str] = set()  # Models currently being loaded
-        self.request_queues: dict[str, list[QueuedRequest]] = {}  # model_name -> priority queue
+        self.loaded_models: dict[str, dict[str, Any]] = {}
+        self.loading_models: set[str] = set()
+        self.request_queues: dict[str, list[QueuedRequest]] = {}
         self.lock = asyncio.Lock()
         self.request_counter = 0
 
@@ -116,7 +116,7 @@ class ModelQueue:
             return self.model_sizes[model_name]
 
         # Handle MoE models (Mixtral, Nemotron MoE, etc.)
-        # These are often named like 8x7b or have 'moe' and 'a3b' (active params)
+        # These are often named like 8x7b or have \u0027moe\u0027 and \u0027a3b\u0027 (active params)
         if "8x7b" in model_lower:
             return 28.0  # Mixtral 8x7B (quantized)
         if "a3b" in model_lower or "a2b" in model_lower:
@@ -158,7 +158,7 @@ class ModelQueue:
         priority = 0
 
         # Task urgency (thinking tasks are most urgent)
-        if task_type in ("think", "thinking"):
+        if task_type in ("think", "thinking", "reflection", "curation"):
             priority -= 100
         elif task_type in ("plan", "analyze"):
             priority -= 50
@@ -319,17 +319,21 @@ class ModelQueue:
                     finally:
                         await self.lock.acquire()
                         log.debug("queue_reacquired_lock_after_preload", model=model_name)
+            
+            # Model loading complete (either via load_model or it will load on first call)
+            # Mark it as loaded so subsequent requests see it
+            self.loading_models.discard(model_name)
+            self.loaded_models[model_name] = {
+                "loaded_at": datetime.now(),
+                "last_used": datetime.now(),
+                "size_gb": self.get_model_size(model_name),
+                "provider": provider_name,
+            }
 
-            # IMPORTANT: The request that triggered the load is NOT queued.
-            # We return True so it can proceed immediately.
-            # Subsequent requests for the same model will hit the 
-            # 'if model_name in self.loading_models' block and be queued.
-            return (True, None)
+            # Wake up any requests that queued during the lock release window
+            await self._process_queue(model_name)
 
-            # IMPORTANT: The request that triggered the load is NOT queued.
-            # We return True so it can proceed immediately.
-            # Subsequent requests for the same model will hit the 
-            # 'if model_name in self.loading_models' block and be queued.
+            # Return True so initiating request proceeds immediately
             return (True, None)
 
     def _get_unload_candidates(self, new_model_name: str, provider_name: str) -> list[tuple[str, str]]:
@@ -370,7 +374,10 @@ class ModelQueue:
                     del self.loaded_models[model_name]
 
     async def release_model(
-        self, model_name: str, success: bool = True, provider_name: str = "ollama"
+        self,
+        model_name: str,
+        success: bool = True,
+        provider_name: str = "ollama",
     ) -> None:
         """Release a model after use and process queued requests.
 

@@ -62,6 +62,9 @@ log = structlog.get_logger()
 stats_service = StatsService()
 model_queue = ModelQueue()
 
+# Pending approval requests (approval_id -> asyncio.Event, result)
+_pending_approvals: dict[str, tuple[asyncio.Event, dict]] = {}
+
 
 def _update_stats_sync(
     model_tier: str,
@@ -362,6 +365,17 @@ async def agent_run_stream(
         allow_write=allow_write,
         allow_exec=allow_exec,
     )
+
+    # Configure security manager based on API flags
+    from .security import get_security_manager, ApprovalMode
+    security_mgr = get_security_manager()
+    if yolo:
+        security_mgr.policy.approval_mode = ApprovalMode.YOLO
+    elif allow_write and allow_exec:
+        security_mgr.policy.approval_mode = ApprovalMode.AUTO
+    else:
+        # Deny operations that aren't explicitly allowed
+        security_mgr.policy.approval_mode = ApprovalMode.DENY
 
     # Log permission status
     if allow_write or allow_exec:
@@ -1305,13 +1319,23 @@ async def chat_handler(request: Request) -> StreamingResponse:
     
     # Mode selection (in priority order):
     # 1. simple=True → Basic chat (no orchestration)
-    # 2. orchestrated=True → Legacy tool-based orchestration  
-    # 3. Default → NEW NLP-based orchestration (models are tools!)
-    
+    # 2. orchestrated=True → Legacy tool-based orchestration
+    # 3. allow_write/allow_exec → Force tool-based mode for file/shell ops
+    # 4. Default → NEW NLP-based orchestration (models are tools!)
+
     simple_mode = body.get("simple", False)
     legacy_orchestrated = body.get("orchestrated", False)
     include_file_tools = body.get("include_file_tools", True)  # Web search enabled by default
     workspace = body.get("workspace")
+
+    # Permission flags - when set, force tool-based mode
+    allow_write = body.get("allow_write", False)
+    allow_exec = body.get("allow_exec", False)
+    yolo = body.get("yolo", False)
+
+    # If tool permissions are requested, use tool-based orchestration
+    if allow_write or allow_exec:
+        legacy_orchestrated = True
     
     # Simple mode - basic single model chat
     if simple_mode:
@@ -1331,6 +1355,7 @@ async def chat_handler(request: Request) -> StreamingResponse:
         )
     
     # Legacy tool-based orchestration (for backward compat)
+    # Also used when allow_write/allow_exec is requested
     if legacy_orchestrated:
         return StreamingResponse(
             chat_agent_stream(
@@ -1340,6 +1365,9 @@ async def chat_handler(request: Request) -> StreamingResponse:
                 backend_type=backend_type,
                 include_file_tools=include_file_tools,
                 workspace=workspace,
+                allow_write=allow_write,
+                allow_exec=allow_exec,
+                yolo=yolo,
             ),
             media_type="text/event-stream",
             headers={
@@ -1376,20 +1404,27 @@ async def chat_agent_stream(
     backend_type: str | None = None,
     include_file_tools: bool = True,  # Web search and file tools enabled by default
     workspace: str | None = None,
+    allow_write: bool = False,
+    allow_exec: bool = False,
+    yolo: bool = False,
 ) -> AsyncGenerator[str, None]:
     """
     Stream orchestrated chat response with tool calling.
-    
+
     This version uses run_agent_loop with orchestration tools,
     allowing the LLM to delegate to other models, run batch comparisons,
     or use deep thinking.
-    
+
+    When allow_write/allow_exec is True, file/shell operations are enabled.
+    Dangerous operations will prompt for confirmation unless yolo=True.
+
     Events:
         - session: Session created/loaded
         - status: Phase status updates (routing, model, tools)
         - thinking: Processing indicator
         - tool_call: Tool being called (name, args)
         - tool_result: Tool execution result
+        - confirm: Confirmation needed for dangerous operation
         - token: Streaming token (if supported)
         - response: Full response
         - error: Error occurred
@@ -1399,10 +1434,12 @@ async def chat_agent_stream(
     from .tools.orchestration import get_orchestration_tools
     from .tools.builtins import get_default_tools
     from .prompts import build_system_prompt, ModelRole
-    
+
     start_time = time.time()
     manager = SessionManager()
-    
+    require_confirm = not yolo  # Require confirmation unless yolo mode
+    session_allow_all = {"value": False}  # Mutable container for allow-all state
+
     # Get or create session
     if session_id:
         session = manager.get_session(session_id)
@@ -1413,14 +1450,26 @@ async def chat_agent_stream(
         session = manager.create_session(metadata={"source": "orchestrated_chat"})
         session_id = session.session_id
         yield await sse_event("session", {"id": session_id, "created": True})
-    
+
+    # Emit permission status
+    if allow_write or allow_exec:
+        yield await sse_event("status", {
+            "phase": "permissions",
+            "message": f"Permissions: write={allow_write} exec={allow_exec} yolo={yolo}",
+            "details": {"allow_write": allow_write, "allow_exec": allow_exec, "yolo": yolo}
+        })
+
     # Build tool registry - start with orchestration tools
     registry = get_orchestration_tools()
-    
-    # Optionally add file/web tools
+
+    # Optionally add file/web tools with permission flags
     if include_file_tools:
         workspace_obj = Workspace(root=workspace) if workspace else None
-        file_registry = get_default_tools(workspace=workspace_obj)
+        file_registry = get_default_tools(
+            workspace=workspace_obj,
+            allow_write=allow_write,
+            allow_exec=allow_exec,
+        )
         for tool_name in file_registry.list_tools():
             if tool := file_registry.get(tool_name):
                 try:
@@ -1549,8 +1598,13 @@ async def chat_agent_stream(
     )
     
     # Track tool calls for real-time display
-    from .tools.agent import build_system_prompt as agent_build_system_prompt, build_messages, execute_tools
+    from .tools.agent import build_system_prompt as agent_build_system_prompt
+    from .tools.executor import execute_tools
     from .tools.parser import parse_tool_calls, has_tool_calls
+
+    # Simple helper to build messages list
+    def build_messages(prompt: str) -> list[dict[str, Any]]:
+        return [{"role": "user", "content": prompt}]
     
     all_tool_calls = []
     all_tool_results = []
@@ -1603,15 +1657,60 @@ async def chat_agent_stream(
                 ],
             })
             
-            # Execute tools
-            yield await sse_event("thinking", {"status": f"Executing {len(tool_calls)} tool(s)..."})
-            
+            # Check for dangerous tools that need confirmation
+            approved_calls = []
+            denied_calls = []
+
+            for tc in tool_calls:
+                tool_def = registry.get(tc.name)
+                is_dangerous = tool_def and tool_def.dangerous
+
+                if is_dangerous and require_confirm and not session_allow_all["value"]:
+                    # Emit confirm event and wait for response
+                    confirmation = create_confirmation(tc.name, tc.arguments)
+
+                    yield await sse_event("confirm", {
+                        "confirm_id": confirmation.confirm_id,
+                        "tool": tc.name,
+                        "args": tc.arguments,
+                        "message": f"Allow {tc.name}?",
+                    })
+
+                    # Wait for user response (or timeout)
+                    await wait_for_confirmation(confirmation.confirm_id)
+
+                    if confirmation.confirmed:
+                        if confirmation.allow_all:
+                            session_allow_all["value"] = True
+                        approved_calls.append(tc)
+                    else:
+                        denied_calls.append(tc)
+                        yield await sse_event("tool_result", {
+                            "name": tc.name,
+                            "success": False,
+                            "output_preview": "Operation denied by user",
+                        })
+
+                    cleanup_confirmation(confirmation.confirm_id)
+                else:
+                    approved_calls.append(tc)
+
+            if not approved_calls:
+                # All tools were denied, continue to next iteration
+                continue
+
+            # Execute approved tools
+            yield await sse_event("thinking", {"status": f"Executing {len(approved_calls)} tool(s)..."})
+
             results = await execute_tools(
-                tool_calls,
+                approved_calls,
                 registry,
                 timeout=config.timeout_per_tool,
                 parallel=config.parallel_tools,
             )
+
+            # Update tool_calls to only approved ones for downstream processing
+            tool_calls = approved_calls
             
             all_tool_calls.extend(tool_calls)
             all_tool_results.extend(results)
@@ -1778,16 +1877,13 @@ async def chat_nlp_orchestrated_stream(
     
     # Pre-process: Check for frustration (for SSE events only)
     # The actual penalty is handled by the service, but we emit events here
-    repeat_info = service.frustration.check_repeat(session_id, message)
-    
-    if repeat_info.is_repeat and repeat_info.previous_model:
-        penalty = 2 + repeat_info.repeat_count
+    is_repeat, repeat_count = service._check_repeat(session_id, message) if session_id else (False, 0)
+
+    if is_repeat and repeat_count >= 2:
         yield await sse_event("frustration", {
             "detected": True,
-            "repeat_count": repeat_info.repeat_count,
-            "previous_model": repeat_info.previous_model,
-            "penalty_melons": penalty,
-            "message": f"Repeat detected ({repeat_info.repeat_count}x) - penalizing {repeat_info.previous_model}",
+            "repeat_count": repeat_count,
+            "message": f"Repeat detected ({repeat_count}x)",
         })
     
     # Pre-process: Detect intent (for SSE events)
@@ -1795,11 +1891,11 @@ async def chat_nlp_orchestrated_stream(
     intent = detect_intent(message)
     
     # Auto-upgrade to VOTING if repeated question
-    if repeat_info.is_repeat and repeat_info.repeat_count >= 2:
+    if is_repeat and repeat_count >= 2:
         if intent.orchestration_mode == OrchestrationMode.NONE:
             intent.orchestration_mode = OrchestrationMode.VOTING
-            intent.k_votes = min(3 + repeat_info.repeat_count, 5)
-            intent.reasoning = f"auto-voting due to {repeat_info.repeat_count}x repeat; {intent.reasoning}"
+            intent.k_votes = min(3 + repeat_count, 5)
+            intent.reasoning = f"auto-voting due to {repeat_count}x repeat; {intent.reasoning}"
     
     yield await sse_event("intent", {
         "task_type": intent.task_type,
@@ -1886,14 +1982,22 @@ async def chat_nlp_orchestrated_stream(
                 model_detail = event.details.get("model", "unknown")
                 if isinstance(model_detail, list):
                     model_detail = model_detail[0] if model_detail else "unknown"
-                
+
                 manager.add_to_session(
                     session.session_id,
                     "assistant",
                     event.message,
                     model=str(model_detail)
                 )
-            
+
+        # Success: yield done event
+        yield await sse_event("done", {
+            "success": True,
+            "session_id": session_id,
+            "backend": backend_name,
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+        })
+
     except Exception as e:
         log.error("nlp_orchestration_error", error=str(e))
         yield await sse_event("error", {"message": str(e)})
@@ -1920,6 +2024,83 @@ async def session_delete_handler(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Session not found"}, status_code=404)
 
     return JSONResponse({"deleted": True, "session_id": session_id})
+
+
+async def session_compact_handler(request: Request) -> JSONResponse:
+    """Handle POST /api/sessions/{id}/compact - Compact session history.
+
+    Compacts the conversation history using LLM-based summarization.
+    Reduces token count while preserving key information.
+
+    Query params:
+        - force: If true, force compaction even if below threshold
+    """
+    from .session_manager import SessionManager
+    from .compaction import ConversationCompactor
+
+    session_id = request.path_params.get("session_id")
+    if not session_id:
+        return JSONResponse({"error": "Missing session_id"}, status_code=400)
+
+    # Check for force param
+    force = request.query_params.get("force", "").lower() in ("true", "1", "yes")
+
+    manager = SessionManager()
+    session = manager.get_session(session_id)
+
+    if not session:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+
+    # Perform compaction
+    compactor = ConversationCompactor()
+    result = await compactor.compact(session, force=force)
+
+    if not result.success:
+        return JSONResponse({
+            "success": False,
+            "error": result.error or "Compaction failed",
+            "session_id": session_id,
+        }, status_code=400)
+
+    return JSONResponse({
+        "success": True,
+        "session_id": session_id,
+        "messages_compacted": result.messages_compacted,
+        "tokens_saved": result.tokens_saved,
+        "compression_ratio": result.compression_ratio,
+        "summary_preview": result.summary[:200] if result.summary else None,
+    })
+
+
+async def session_stats_handler(request: Request) -> JSONResponse:
+    """Handle GET /api/sessions/{id}/stats - Get session compaction stats.
+
+    Returns current token usage and whether compaction is recommended.
+    """
+    from .session_manager import SessionManager
+    from .compaction import ConversationCompactor
+
+    session_id = request.path_params.get("session_id")
+    if not session_id:
+        return JSONResponse({"error": "Missing session_id"}, status_code=400)
+
+    manager = SessionManager()
+    session = manager.get_session(session_id)
+
+    if not session:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+
+    compactor = ConversationCompactor()
+    stats = compactor.get_compaction_stats(session)
+
+    return JSONResponse({
+        "session_id": session_id,
+        "total_messages": stats.get("total_messages", 0),
+        "total_tokens": stats.get("total_tokens", 0),
+        "needs_compaction": stats.get("needs_compaction", False),
+        "threshold_tokens": stats.get("threshold_tokens", 18000),
+        "compactable_messages": stats.get("compactable_messages", 0),
+    })
 
 
 async def agent_confirm_handler(request: Request) -> JSONResponse:
@@ -1969,6 +2150,8 @@ routes = [
     Route("/api/sessions", sessions_list_handler, methods=["GET"]),
     Route("/api/sessions/{session_id}", session_get_handler, methods=["GET"]),
     Route("/api/sessions/{session_id}", session_delete_handler, methods=["DELETE"]),
+    Route("/api/sessions/{session_id}/compact", session_compact_handler, methods=["POST"]),
+    Route("/api/sessions/{session_id}/stats", session_stats_handler, methods=["GET"]),
 ]
 
 app = Starlette(

@@ -20,6 +20,7 @@ from ..config import config
 from ..file_helpers import list_memories, read_memory
 from ..llm import call_llm
 from ..playbook import playbook_manager
+from ..session_manager import get_session_manager
 from .tuning import TuningAdvisor, get_tuning_advisor
 from ..prompts import (
     ACE_CURATOR_PROMPT,
@@ -27,6 +28,7 @@ from ..prompts import (
     ModelRole,
     build_system_prompt,
 )
+from ..personas import get_persona_manager
 from ..routing import select_model
 from ..text_utils import strip_thinking_tags
 from .intent import DetectedIntent
@@ -119,39 +121,99 @@ class OrchestrationExecutor:
         on_tool_call: Callable[[Any], None] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         yield StreamEvent(event_type="status", message=f"Mode: {intent.orchestration_mode.value}")
-        
+
+        # Handle complex orchestration modes by running non-streaming execution
+        # then yielding result as events. This ensures full orchestration coverage.
         if intent.orchestration_mode == OrchestrationMode.AGENTIC:
             async for event in self._execute_agentic_stream(intent, message, backend_type, model_override, messages=messages, on_tool_call=on_tool_call):
                 yield event
-        else:
-            from ..llm import call_llm_stream
-            from ..routing import get_router
-            _, backend_obj = await get_router().select_optimal_backend(message, None, intent.task_type, backend_type)
-            if not backend_obj:
-                yield StreamEvent(event_type="error", message="No backend")
-                return
+            return
 
+        if intent.orchestration_mode == OrchestrationMode.VOTING:
+            yield StreamEvent(event_type="thinking", message="Running k-voting consensus...")
+            result = await self._execute_voting(intent, message, backend_type, model_override, messages=messages)
+            yield StreamEvent(event_type="orchestration", message="Voting complete", details={"k_votes": intent.k_votes, "consensus": result.success})
+            yield StreamEvent(event_type="response", message=result.response, details={"model": result.model_used, "quality": result.quality_score})
+            yield StreamEvent(event_type="done", message="Completed", details={"success": result.success})
+            return
+
+        if intent.orchestration_mode == OrchestrationMode.COMPARISON:
+            yield StreamEvent(event_type="thinking", message="Running multi-model comparison...")
+            result = await self._execute_comparison(intent, message, backend_type, model_override, messages=messages)
+            yield StreamEvent(event_type="orchestration", message="Comparison complete", details={"models_compared": 2})
+            yield StreamEvent(event_type="response", message=result.response, details={"model": result.model_used})
+            yield StreamEvent(event_type="done", message="Completed", details={"success": result.success})
+            return
+
+        if intent.orchestration_mode == OrchestrationMode.DEEP_THINKING:
+            yield StreamEvent(event_type="thinking", message="Deep analysis with extended reasoning...")
+            result = await self._execute_deep_thinking(intent, message, backend_type, model_override, messages=messages)
+            yield StreamEvent(event_type="response", message=result.response, details={"model": result.model_used, "quality": result.quality_score})
+            yield StreamEvent(event_type="done", message="Completed", details={"success": result.success})
+            return
+
+        if intent.orchestration_mode == OrchestrationMode.TREE_OF_THOUGHTS:
+            yield StreamEvent(event_type="thinking", message="Tree-of-thoughts exploration...")
+            result = await self._execute_tree_of_thoughts(intent, message, backend_type, model_override, messages=messages)
+            yield StreamEvent(event_type="orchestration", message="ToT complete", details={"branches_explored": 3})
+            yield StreamEvent(event_type="response", message=result.response, details={"model": result.model_used})
+            yield StreamEvent(event_type="done", message="Completed", details={"success": result.success})
+            return
+
+        # Default: Simple streaming for NONE mode
+        from ..llm import call_llm_stream
+        from ..routing import get_router
+        _, backend_obj = await get_router().select_optimal_backend(message, None, intent.task_type, backend_type)
+        if not backend_obj:
+            yield StreamEvent(event_type="error", message="No backend")
+            return
+
+        # Fast-path: Skip dispatcher for simple quick tasks (greetings, simple Q&A)
+        # The dispatcher LLM call is expensive and unnecessary for trivial messages
+        if intent.task_type == "quick" and intent.orchestration_mode == OrchestrationMode.NONE:
+            target_role_str = "assistant"
+            target_role = ModelRole.EXECUTOR
+            selected_model = model_override or backend_obj.models.get("quick")
+        else:
             target_role_str = await self.dispatcher.dispatch(original_message or message, intent, backend_obj)
             target_role = ModelRole.PLANNER if target_role_str == "planner" else ModelRole.EXECUTOR
             selected_model = model_override or backend_obj.models.get("coder" if target_role_str != "assistant" else "quick")
-            
-            # Ensure selected_model is a string and not None
-            if isinstance(selected_model, list):
-                selected_model = selected_model[0] if selected_model else "auto"
-            if not selected_model:
-                selected_model = "auto"
 
-            system_prompt = build_system_prompt(target_role)
-            pb_context = playbook_manager.format_for_prompt(intent.task_type)
-            if pb_context: system_prompt += f"\n\n{pb_context}"
+        # Ensure selected_model is a string and not None
+        if isinstance(selected_model, list):
+            selected_model = selected_model[0] if selected_model else "auto"
+        if not selected_model:
+            selected_model = "auto"
 
-            full_res = ""
-            async for chunk in call_llm_stream(model=selected_model, prompt=message, system=system_prompt, backend_obj=backend_obj, messages=messages):
-                full_res += chunk.text
-                yield StreamEvent(event_type="token", message=chunk.text)
-            
-            yield StreamEvent(event_type="response", message=full_res)
-            yield StreamEvent(event_type="done", message="Completed")
+        # Dynamic persona loading for chat mode
+        # Uses PersonaManager to detect context and blend appropriate personas
+        persona_manager = get_persona_manager()
+        system_prompt = persona_manager.get_system_prompt(message)
+        active_personas = persona_manager.get_active_persona_names()
+        if len(active_personas) > 1:
+            yield StreamEvent(event_type="status", message=f"Personas: {', '.join(active_personas)}")
+        pb_context = playbook_manager.format_for_prompt(intent.task_type)
+        if pb_context: system_prompt += f"\n\n{pb_context}"
+
+        # Inject task focus for "Am I on task?" grounding
+        if session_id:
+            session_mgr = get_session_manager()
+            session = session_mgr.get_session(session_id)
+            if session:
+                # Set the task if this is a new request (first message or new primary task)
+                if not session.original_task or len(session.messages) == 0:
+                    session.set_task(message)
+                task_focus = session.get_task_focus_prompt()
+                if task_focus:
+                    system_prompt += f"\n\n{task_focus}"
+
+        full_res = ""
+        async for chunk in call_llm_stream(model=selected_model, prompt=message, system=system_prompt, backend_obj=backend_obj, messages=messages):
+            full_res += chunk.text
+            yield StreamEvent(event_type="token", message=chunk.text)
+
+        yield StreamEvent(event_type="response", message=full_res, details={"model": selected_model})
+        yield StreamEvent(event_type="done", message="Completed")
 
     async def _execute_agentic(
         self,
@@ -171,11 +233,29 @@ class OrchestrationExecutor:
         _, backend_obj = await get_router().select_optimal_backend(message, None, intent.task_type, backend_type)
         if not backend_obj: return OrchestrationResult(response="No backend", success=False)
 
-        selected_model = model_override or await select_model(task_type="review", content_size=len(message), content=message)
+        # Use agentic tier for agent loops, with fallback based on task type
+        agent_tier = "agentic"
+        if intent.task_type == "swe":
+            agent_tier = "swe"
+        elif intent.task_type in ("agentic", "agent", "tool"):
+            agent_tier = "agentic"
+        selected_model = model_override or await select_model(task_type=agent_tier, content_size=len(message), content=message)
+        
+        # 1. Strategic Planning Phase (Claude Code / Gemini Style)
+        # Decompose the complex goal into milestones before starting the loop
+        plan = await self.planner.plan(message, intent, backend_obj)
+        plan_context = ""
+        if plan:
+            plan_context = f"\n\n### EXECUTION PLAN\n{json.dumps(plan.dict(), indent=2)}"
+            log.info("agent_plan_created", steps=len(plan.steps))
+
         system_prompt = self.prompt_generator.generate(intent, message, selected_model, backend_obj.name)
+        system_prompt += plan_context
+        
         pb_context = playbook_manager.format_for_prompt(intent.task_type)
         if pb_context: system_prompt += f"\n\n{pb_context}"
 
+        # 2. Add Progress Tracking to Registry
         registry = get_default_tools(allow_write=False, allow_exec=False)
         
         async def security_gate(tool_call: ParsedToolCall) -> bool:
@@ -197,7 +277,10 @@ class OrchestrationExecutor:
                 system_prompt=system_prompt,
                 registry=registry,
                 model=selected_model,
-                config=AgentConfig(max_iterations=10),
+                config=AgentConfig(
+                    max_iterations=10,
+                    native_tool_calling=backend_obj.supports_native_tool_calling if backend_obj else False,
+                ),
                 messages=messages,
                 on_tool_call=on_tool_call or security_gate
             )
@@ -231,11 +314,29 @@ class OrchestrationExecutor:
             yield StreamEvent(event_type="error", message="No backend")
             return
 
-        selected_model = model_override or await select_model(task_type="review", content_size=len(message), content=message)
+        # Use agentic tier for agent loops, with fallback based on task type
+        agent_tier = "agentic"
+        if intent.task_type == "swe":
+            agent_tier = "swe"
+        elif intent.task_type in ("agentic", "agent", "tool"):
+            agent_tier = "agentic"
+        selected_model = model_override or await select_model(task_type=agent_tier, content_size=len(message), content=message)
+        
+        # 1. Strategic Planning Phase (Claude Code / Gemini Style)
+        # Decompose the complex goal into milestones before starting the loop
+        plan = await self.planner.plan(message, intent, backend_obj)
+        plan_context = ""
+        if plan:
+            plan_context = f"\n\n### EXECUTION PLAN\n{json.dumps(plan.dict(), indent=2)}"
+            log.info("agent_plan_created", steps=len(plan.steps))
+
         system_prompt = self.prompt_generator.generate(intent, message, selected_model, backend_obj.name)
+        system_prompt += plan_context
+        
         pb_context = playbook_manager.format_for_prompt(intent.task_type)
         if pb_context: system_prompt += f"\n\n{pb_context}"
 
+        # 2. Add Progress Tracking to Registry
         registry = get_default_tools(allow_write=False, allow_exec=False)
         event_queue = asyncio.Queue()
 
@@ -248,7 +349,14 @@ class OrchestrationExecutor:
             if on_tool_call:
                 on_tool_call(tc)
 
-        agent_task = asyncio.create_task(run_agent_loop(agent_llm_call, message, system_prompt, registry, selected_model, AgentConfig(max_iterations=10), messages=messages, on_tool_call=internal_on_tool_call))
+        agent_task = asyncio.create_task(run_agent_loop(
+            agent_llm_call, message, system_prompt, registry, selected_model,
+            AgentConfig(
+                max_iterations=10,
+                native_tool_calling=backend_obj.supports_native_tool_calling if backend_obj else False,
+            ),
+            messages=messages, on_tool_call=internal_on_tool_call
+        ))
 
         while not agent_task.done() or not event_queue.empty():
             try:
@@ -386,7 +494,9 @@ class OrchestrationExecutor:
             reasoning_count=len(tuning.reasoning),
         )
 
-        system = build_system_prompt(target_role)
+        # Dynamic persona loading - blends base persona with context-specific ones
+        persona_manager = get_persona_manager()
+        system = persona_manager.get_system_prompt(message)
         pb = playbook_manager.format_for_prompt(intent.task_type)
         if pb: system += f"\n\n{pb}"
 

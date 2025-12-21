@@ -27,6 +27,7 @@ import structlog
 
 from . import paths
 from .config import config
+from .paths import PROJECT_ROOT
 
 log = structlog.get_logger()
 
@@ -115,6 +116,13 @@ def read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[str
             # Try relative to cwd if not absolute
             if not file_path.is_absolute():
                 file_path = Path.cwd() / file_path
+
+            # Fallback: try relative to project root (for cross-directory contexts)
+            if not file_path.exists():
+                project_relative = PROJECT_ROOT / path_str
+                if project_relative.exists():
+                    file_path = project_relative
+                    log.debug("file_resolved_via_project_root", path=path_str)
 
             if not file_path.exists():
                 log.warning("file_read_skipped", path=path_str, reason="not_found")

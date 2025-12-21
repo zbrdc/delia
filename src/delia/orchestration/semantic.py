@@ -34,8 +34,7 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
-# Model configuration
-DEFAULT_MODEL = "all-MiniLM-L6-v2"  # 80MB, fast, good quality
+# Model configuration - use the shared model from embeddings module
 SIMILARITY_THRESHOLD = 0.65  # Minimum similarity to trust
 
 
@@ -56,43 +55,42 @@ class SemanticMatch:
 class SemanticIntentMatcher:
     """
     Semantic intent detection using sentence embeddings.
-    
-    Uses sentence-transformers to encode user messages and find
-    the closest matching exemplars via cosine similarity.
-    
-    Thread-safe and caches the model for reuse.
-    
+
+    Uses the SHARED embedding model from embeddings module to avoid
+    loading multiple models. All embedding operations share one model.
+
+    Thread-safe and caches exemplar embeddings for reuse.
+
     Usage:
         matcher = get_semantic_matcher()
         matches = matcher.find_matches("verify this code is correct")
         # matches[0].exemplar.orchestration_mode == VOTING
         # matches[0].confidence == 0.87
     """
-    
-    def __init__(self, model_name: str = DEFAULT_MODEL):
-        self._model_name = model_name
+
+    def __init__(self):
         self._model: SentenceTransformer | None = None
         self._exemplars: list[IntentExemplar] = []
         self._exemplar_embeddings: np.ndarray | None = None
         self._initialized = False
-        
+
     def _ensure_initialized(self) -> None:
-        """Lazy initialization - load model and compute embeddings on first use."""
+        """Lazy initialization - get shared model and compute exemplar embeddings."""
         if self._initialized:
             return
-            
+
         start = time.time()
-        
+
         try:
-            from sentence_transformers import SentenceTransformer
-            
-            # Load model (downloads on first run, cached after)
-            log.info("semantic_loading_model", model=self._model_name)
-            self._model = SentenceTransformer(self._model_name)
-            
+            # Use the SHARED model from embeddings module (loaded once for entire system)
+            from ..embeddings import get_shared_model, SHARED_EMBEDDING_MODEL
+
+            log.info("semantic_using_shared_model", model=SHARED_EMBEDDING_MODEL)
+            self._model = get_shared_model()
+
             # Load exemplars
             self._exemplars = get_all_exemplars()
-            
+
             # Pre-compute embeddings for all exemplars
             exemplar_texts = [e.text for e in self._exemplars]
             self._exemplar_embeddings = self._model.encode(
@@ -101,17 +99,17 @@ class SemanticIntentMatcher:
                 show_progress_bar=False,
                 normalize_embeddings=True,  # For cosine similarity
             )
-            
+
             self._initialized = True
             elapsed = (time.time() - start) * 1000
-            
+
             log.info(
                 "semantic_initialized",
-                model=self._model_name,
+                model=SHARED_EMBEDDING_MODEL,
                 exemplars=len(self._exemplars),
                 elapsed_ms=int(elapsed),
             )
-            
+
         except ImportError as e:
             log.warning("semantic_import_error", error=str(e))
             raise RuntimeError(

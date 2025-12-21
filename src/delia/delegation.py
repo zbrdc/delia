@@ -120,6 +120,8 @@ async def prepare_delegate_content(
     include_references: bool = False,
     files: str | None = None,
     session_context: str | None = None,
+    auto_context: bool = False,
+    auto_context_top_k: int = 3,
 ) -> str:
     """Prepare content with context, files, and symbol focus.
 
@@ -130,6 +132,8 @@ async def prepare_delegate_content(
         include_references: Whether references to symbols are included
         files: Comma-separated file paths to read and include (Delia reads directly)
         session_context: Optional conversation history from session manager
+        auto_context: If True and no files provided, use semantic search to find relevant files
+        auto_context_top_k: Number of files to auto-retrieve (default 3)
 
     Returns:
         Prepared content string with all context assembled
@@ -140,10 +144,42 @@ async def prepare_delegate_content(
     if session_context:
         parts.append("### Previous Conversation\n" + session_context + "\n")
 
-    # Load files directly from disk (efficient - no Claude serialization)
-    if files:
-        file_contents = read_files(files)
+    # Auto-context: Semantic search for relevant files if no explicit files provided
+    auto_fetched_files = []
+    if auto_context and not files:
+        try:
+            from .orchestration.summarizer import get_summarizer
+            summarizer = get_summarizer()
+            await summarizer.initialize()
+
+            # Search for relevant files based on task content
+            results = await summarizer.search(content, top_k=auto_context_top_k)
+            if results:
+                # Get paths of relevant files (only those with decent scores)
+                auto_fetched_files = [
+                    r["path"] for r in results
+                    if r["score"] >= 0.3  # Minimum relevance threshold
+                ]
+                if auto_fetched_files:
+                    log.info(
+                        "auto_context_fetched",
+                        count=len(auto_fetched_files),
+                        paths=auto_fetched_files,
+                        scores=[r["score"] for r in results[:len(auto_fetched_files)]],
+                    )
+        except Exception as e:
+            log.debug("auto_context_search_failed", error=str(e))
+
+    # Load files directly from disk (explicit files take priority)
+    files_to_load = files if files else ",".join(auto_fetched_files) if auto_fetched_files else None
+
+    if files_to_load:
+        file_contents = read_files(files_to_load)
         if file_contents:
+            # Add header for auto-fetched files
+            if auto_fetched_files and not files:
+                parts.append("### Auto-Retrieved Context (semantically relevant files)")
+
             for path, file_content in file_contents:
                 # Detect language from extension for syntax highlighting hint
                 ext = Path(path).suffix.lstrip(".")
@@ -855,6 +891,7 @@ async def delegate_impl(
     include_metadata: bool = True,
     max_tokens: int | None = None,
     session_id: str | None = None,
+    auto_context: bool = False,
 ) -> str:
     """Core implementation for delegate - can be called directly by batch().
 
@@ -874,6 +911,7 @@ async def delegate_impl(
         include_metadata: If False, skip the metadata footer
         max_tokens: Limit response tokens
         session_id: Optional session ID for conversation history tracking
+        auto_context: If True, use semantic search to find relevant files automatically
 
     Returns:
         Response string from LLM, optionally with metadata footer
@@ -907,12 +945,13 @@ async def delegate_impl(
 
     # Prepare content with context, files, symbols, and session history
     prepared_content = await prepare_delegate_content(
-        content, 
-        context, 
-        symbols, 
-        include_references, 
+        content,
+        context,
+        symbols,
+        include_references,
         files,
         session_context=session_context,
+        auto_context=auto_context,
     )
 
     # Map task to internal type

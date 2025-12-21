@@ -2,7 +2,23 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """
-Frustration Detection for Quality Feedback.
+DEPRECATED: This module has been consolidated into orchestration/intrinsics.py
+
+The frustration detection logic is now part of IntrinsicsEngine.check_user_state(),
+which provides a unified pre-execution sanity check combining:
+- Answerability (context sufficiency)
+- User state (frustration detection)
+- Groundedness (hallucination detection)
+
+Use:
+    from delia.orchestration.intrinsics import get_intrinsics_engine, FrustrationLevel
+    intrinsics = get_intrinsics_engine()
+    user_state = intrinsics.check_user_state(message, is_repeat=..., repeat_count=...)
+
+This file is kept for backwards compatibility but will be removed in a future release.
+---
+
+Frustration Detection for Quality Feedback (LEGACY).
 
 When users repeat a question, it's a strong signal that the previous
 answer was wrong or unhelpful. This module detects repeated questions

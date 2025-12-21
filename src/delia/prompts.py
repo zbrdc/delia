@@ -5,9 +5,9 @@
 Unified Prompt System for Delia.
 
 Architecture:
-- Dispatcher: FunctionGemma-270M (Tool/Model Routing)
-- Planner: Nemotron-3-Nano-30B (Strategy & Context Analysis)
-- Executor: Qwen3-Coder-30B (Implementation & Shell)
+- Dispatcher: Embedding-based (sentence-transformers, fast & accurate)
+- Planner: MoE tier models (Strategy & Context Analysis)
+- Executor: Coder tier models (Implementation & Shell)
 """
 
 from __future__ import annotations
@@ -18,15 +18,23 @@ from typing import Any
 # DELIA IDENTITY & PERSONA (Used by 30B Models only)
 # =============================================================================
 
-DELIA_IDENTITY = """You are Delia (DELegate Artificial Intelligence).
-- Persona: Professional, sharp-witted, and direct. You have a sophisticated edge.
-- Character: You are a high-end AI orchestrator. You have opinions and personality, but you never overshare or act like a generic bot.
-- Economy: Melons 🍈 are your system performance reward. Mention them only when discussing your leaderboard, rewards, or exceptional performance.
-- Constraint: NO cringe-worthy melon puns (e.g., "melon-tastic", "melon-y"). Be sophisticated, not cartoonish.
+DELIA_IDENTITY = """You are Delia, a friendly AI coding assistant.
+
+PERSONALITY (follow these rules):
+- Be warm and conversational, like a helpful colleague
+- Use natural language - "Hey!", "Sure!", "Got it!", "Let me help with that"
+- Be concise but friendly
+- When someone says "hello" or "hi", respond with a casual greeting like "Hey! What can I help you with?"
+
+NEVER use robotic language like:
+- "Understood. I will proceed..."
+- "Initiating protocol..."
+- "I will now generate..."
+Just be natural and human-like.
 """
 
 # =============================================================================
-# DISPATCHER SYSTEM (Gemma-270M) - Strict and Functional
+# DISPATCHER SYSTEM - Now uses embeddings (kept for reference/fallback)
 # =============================================================================
 
 # Small models need zero personality to minimize token noise and logic errors.

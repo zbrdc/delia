@@ -110,7 +110,9 @@ def get_data_dir() -> Path:
 # This allows tests to set DELIA_DATA_DIR/DELIA_SETTINGS_FILE after import
 def __getattr__(name: str) -> Path:
     """Lazy attribute access for backward compatibility."""
-    if name == "SETTINGS_FILE":
+    if name == "DELIA_DIR":
+        return USER_DELIA_DIR
+    elif name == "SETTINGS_FILE":
         return get_settings_file()
     elif name == "DATA_DIR":
         return get_data_dir()

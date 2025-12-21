@@ -40,7 +40,8 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
-# High-stakes keywords that boost ToT probability
+# Legacy keyword-based detection (superseded by StakesAnalyzer)
+# Kept for fallback when embeddings unavailable
 HIGH_STAKES_KEYWORDS = frozenset([
     "security", "secure", "vulnerability", "exploit", "injection",
     "crypto", "cryptographic", "encryption", "decrypt",
@@ -270,19 +271,43 @@ class OrchestrationLearner:
         """
         Calculate stakes multiplier for ToT trigger probability.
 
-        Returns 1.0 for normal tasks, higher for high-stakes tasks.
-        """
-        msg_lower = message.lower()
-        stakes_count = sum(1 for kw in HIGH_STAKES_KEYWORDS if kw in msg_lower)
+        Uses StakesAnalyzer for comprehensive multi-signal detection,
+        with fallback to keyword-based detection if embeddings unavailable.
 
-        if stakes_count == 0:
-            return 1.0
-        elif stakes_count == 1:
-            return 1.3
-        elif stakes_count == 2:
-            return 1.6
-        else:
-            return 2.0  # Cap at 2x
+        Returns 1.0 for normal tasks, up to 2.0 for high-stakes tasks.
+        """
+        try:
+            from .stakes import analyze_stakes_sync
+
+            assessment = analyze_stakes_sync(message)
+
+            # Convert score (0-1) to multiplier (1.0-2.0)
+            # Critical (0.8+) -> 2.0, High (0.6+) -> 1.7, Medium (0.4+) -> 1.4
+            if assessment.score >= 0.8:
+                return 2.0
+            elif assessment.score >= 0.6:
+                return 1.7
+            elif assessment.score >= 0.4:
+                return 1.4
+            elif assessment.score >= 0.2:
+                return 1.2
+            else:
+                return 1.0
+
+        except Exception as e:
+            # Fallback to legacy keyword detection
+            log.debug("stakes_analyzer_fallback", error=str(e))
+            msg_lower = message.lower()
+            stakes_count = sum(1 for kw in HIGH_STAKES_KEYWORDS if kw in msg_lower)
+
+            if stakes_count == 0:
+                return 1.0
+            elif stakes_count == 1:
+                return 1.3
+            elif stakes_count == 2:
+                return 1.6
+            else:
+                return 2.0
 
     def should_use_tot(self, message: str, current_intent: "DetectedIntent") -> tuple[bool, str]:
         """
@@ -303,7 +328,8 @@ class OrchestrationLearner:
         pattern = self._find_matching_pattern(features)
 
         # Calculate each factor
-        base_rate = self.BASE_TOT_RATE * math.exp(-self.total_tasks / self.LEARNING_TAU)
+        # Decay with floor: never go below 5% trigger rate
+        base_rate = max(0.05, self.BASE_TOT_RATE * math.exp(-self.total_tasks / self.LEARNING_TAU))
         novelty = 1.0 if pattern is None else 0.3
         stakes = self._calculate_stakes(message)
         confidence = pattern.confidence if pattern else 0.0
@@ -339,6 +365,64 @@ class OrchestrationLearner:
         )
 
         return use_tot, reasoning
+
+    async def should_use_tot_async(
+        self,
+        message: str,
+        current_intent: "DetectedIntent",
+        session_failures: int = 0,
+        frustration_level: str = "none",
+        file_count: int = 0,
+    ) -> tuple[bool, str]:
+        """
+        Async version of should_use_tot with full semantic analysis.
+
+        Uses StakesAnalyzer with embeddings for comprehensive detection.
+        Falls back to sync version if embeddings unavailable.
+        """
+        try:
+            from .stakes import analyze_stakes
+
+            # Full async analysis with all signals
+            assessment = await analyze_stakes(
+                message,
+                session_failures=session_failures,
+                frustration_level=frustration_level,
+                file_count=file_count,
+            )
+
+            # Use StakesAnalyzer's decision directly
+            if assessment.should_use_tot:
+                return True, f"StakesAnalyzer: {assessment.reasoning}"
+
+            # Fall back to probabilistic approach for lower stakes
+            features = self._extract_features(message)
+            pattern = self._find_matching_pattern(features)
+
+            # Decay with floor: never go below 5% trigger rate
+            base_rate = max(0.05, self.BASE_TOT_RATE * math.exp(-self.total_tasks / self.LEARNING_TAU))
+            novelty = 1.0 if pattern is None else 0.3
+            confidence = pattern.confidence if pattern else 0.0
+
+            # Use stakes score directly (already in 0-1 range)
+            stakes_multiplier = 1.0 + assessment.score  # 1.0 to 2.0
+
+            p_tot = base_rate * novelty * stakes_multiplier * (1 - confidence)
+            p_tot = max(0.0, min(1.0, p_tot))
+
+            use_tot = random.random() < p_tot
+
+            reasoning = (
+                f"P(ToT)={p_tot:.3f} (stakes={assessment.level}, "
+                f"score={assessment.score:.2f}, novelty={novelty:.1f}) "
+                f"→ {'EXPLORE' if use_tot else 'EXPLOIT'}"
+            )
+
+            return use_tot, reasoning
+
+        except Exception as e:
+            log.debug("async_stakes_fallback", error=str(e))
+            return self.should_use_tot(message, current_intent)
 
     def get_best_mode(self, message: str) -> tuple[OrchestrationMode | None, float]:
         """

@@ -31,6 +31,7 @@ from .parser import ParsedToolCall, parse_tool_calls
 from .executor import execute_tool, ToolResult
 from .builtins import get_default_tools
 from .coding import get_coding_tools
+from .lsp import get_lsp_tools
 from .agent import run_agent_loop, AgentConfig, AgentResult
 from .mcp_client import (
     MCPClient,
@@ -54,6 +55,8 @@ __all__ = [
     "get_default_tools",
     # Coding tools
     "get_coding_tools",
+    # LSP tools
+    "get_lsp_tools",
     # Agent
     "run_agent_loop",
     "AgentConfig",

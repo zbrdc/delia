@@ -30,6 +30,7 @@ from typing import Any
 import structlog
 
 from ..types import Workspace
+from ..security import get_security_manager
 from .parser import ParsedToolCall
 from .registry import ToolRegistry
 
@@ -64,6 +65,8 @@ class ToolResult:
         tool_call_id: ID of the tool call
         elapsed_ms: Execution time in milliseconds
         truncated: Whether output was truncated
+        is_final: Whether this result should terminate the agent loop
+                  (skip reloading the orchestrating model)
     """
     success: bool
     output: str
@@ -71,6 +74,7 @@ class ToolResult:
     tool_call_id: str
     elapsed_ms: int = 0
     truncated: bool = False
+    is_final: bool = False
 
 
 def validate_path(
@@ -122,9 +126,10 @@ def validate_path(
         if pattern in path_str:
             return False, f"Access to sensitive pattern '{pattern}' is not allowed"
 
-    # Block dangerous extensions
+    # Block dangerous extensions (binaries and databases, NOT source code)
     dangerous_extensions = [
-        ".sql", ".db", ".sqlite", ".bin", ".py", ".sh", ".bash", ".exe", ".dll", ".so"
+        ".sql", ".db", ".sqlite", ".bin", ".exe", ".dll", ".so",
+        ".pem", ".key", ".p12", ".pfx",  # certificates/keys
     ]
     if any(path_str.endswith(ext) for ext in dangerous_extensions):
         return False, "Access to restricted file type not allowed"
@@ -205,6 +210,7 @@ async def execute_tool(
     tool_call: ParsedToolCall,
     registry: ToolRegistry,
     timeout: float = DEFAULT_TIMEOUT,
+    session_id: str | None = None,
 ) -> ToolResult:
     """Execute a single tool call with sandboxing.
 
@@ -212,11 +218,13 @@ async def execute_tool(
         tool_call: Parsed tool call to execute
         registry: Registry containing tool definitions
         timeout: Maximum execution time in seconds
+        session_id: Optional session ID for audit/undo tracking
 
     Returns:
         ToolResult with execution outcome
     """
     start_time = time.time()
+    security = get_security_manager()
 
     # Get tool definition
     tool = registry.get(tool_call.name)
@@ -227,6 +235,41 @@ async def execute_tool(
             tool_name=tool_call.name,
             tool_call_id=tool_call.id,
         )
+
+    # Check if approval is needed
+    needs_approval = security.needs_approval(
+        tool_call.name, tool.permission_level, tool.dangerous
+    )
+
+    if needs_approval:
+        approved, method = await security.request_approval(
+            tool_call.name,
+            tool_call.arguments,
+            tool.permission_level,
+        )
+        if not approved:
+            security.audit(
+                operation="tool_call",
+                tool_name=tool_call.name,
+                arguments=tool_call.arguments,
+                permission_level=tool.permission_level,
+                approved=False,
+                approval_method=method,
+                result="denied",
+                session_id=session_id,
+            )
+            return ToolResult(
+                success=False,
+                output=f"Operation denied: {tool_call.name} requires approval",
+                tool_name=tool_call.name,
+                tool_call_id=tool_call.id,
+            )
+    else:
+        method = "auto"
+
+    # Backup file if this is a write operation
+    if tool.permission_level == "write" and "path" in tool_call.arguments:
+        security.backup_file(tool_call.arguments["path"], session_id)
 
     # Execute with timeout
     try:
@@ -239,6 +282,15 @@ async def execute_tool(
 
         elapsed_ms = int((time.time() - start_time) * 1000)
 
+        # Check for final flag (used by delegate with final=True)
+        # This signals the agent loop to return this result directly
+        # without reloading the orchestrating model (saves GPU swap)
+        is_final = False
+        if isinstance(result, dict) and result.get("__is_final__"):
+            is_final = True
+            result = result.get("__result__", result)
+            log.info("tool_result_is_final", tool=tool_call.name)
+
         # Truncate if needed
         output, truncated = truncate_output(str(result))
 
@@ -249,6 +301,20 @@ async def execute_tool(
             elapsed_ms=elapsed_ms,
             output_len=len(output),
             truncated=truncated,
+            is_final=is_final,
+        )
+
+        # Audit successful execution
+        security.audit(
+            operation="tool_call",
+            tool_name=tool_call.name,
+            arguments=tool_call.arguments,
+            permission_level=tool.permission_level,
+            approved=True,
+            approval_method=method,
+            result="success",
+            session_id=session_id,
+            duration_ms=elapsed_ms,
         )
 
         return ToolResult(
@@ -258,11 +324,26 @@ async def execute_tool(
             tool_call_id=tool_call.id,
             elapsed_ms=elapsed_ms,
             truncated=truncated,
+            is_final=is_final,
         )
 
     except asyncio.TimeoutError:
         elapsed_ms = int((time.time() - start_time) * 1000)
         log.warning("tool_timeout", tool=tool_call.name, timeout=timeout)
+
+        security.audit(
+            operation="tool_call",
+            tool_name=tool_call.name,
+            arguments=tool_call.arguments,
+            permission_level=tool.permission_level,
+            approved=True,
+            approval_method=method,
+            result="error",
+            error_message=f"Timeout after {timeout}s",
+            session_id=session_id,
+            duration_ms=elapsed_ms,
+        )
+
         return ToolResult(
             success=False,
             output=f"Tool '{tool_call.name}' timed out after {timeout}s",
@@ -274,6 +355,20 @@ async def execute_tool(
     except Exception as e:
         elapsed_ms = int((time.time() - start_time) * 1000)
         log.warning("tool_error", tool=tool_call.name, error=str(e))
+
+        security.audit(
+            operation="tool_call",
+            tool_name=tool_call.name,
+            arguments=tool_call.arguments,
+            permission_level=tool.permission_level,
+            approved=True,
+            approval_method=method,
+            result="error",
+            error_message=str(e),
+            session_id=session_id,
+            duration_ms=elapsed_ms,
+        )
+
         return ToolResult(
             success=False,
             output=f"Tool '{tool_call.name}' failed: {e}",
@@ -288,6 +383,7 @@ async def execute_tools(
     registry: ToolRegistry,
     timeout: float = DEFAULT_TIMEOUT,
     parallel: bool = False,
+    session_id: str | None = None,
 ) -> list[ToolResult]:
     """Execute multiple tool calls.
 
@@ -296,6 +392,7 @@ async def execute_tools(
         registry: Registry containing tool definitions
         timeout: Timeout per tool call
         parallel: If True, execute tools in parallel
+        session_id: Optional session ID for audit/undo tracking
 
     Returns:
         List of ToolResults in same order as input
@@ -303,7 +400,7 @@ async def execute_tools(
     if parallel:
         # Execute all tools concurrently
         tasks = [
-            execute_tool(call, registry, timeout)
+            execute_tool(call, registry, timeout, session_id)
             for call in tool_calls
         ]
         return await asyncio.gather(*tasks)
@@ -311,6 +408,6 @@ async def execute_tools(
         # Execute sequentially
         results = []
         for call in tool_calls:
-            result = await execute_tool(call, registry, timeout)
+            result = await execute_tool(call, registry, timeout, session_id)
             results.append(result)
         return results

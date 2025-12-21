@@ -294,6 +294,12 @@ class BackendManager:
         self.system_config: dict[str, Any] = {}
         self.models_config: dict[str, Any] = {}
         self.mcp_servers_config: list[dict[str, Any]] = []  # MCP server configurations
+        self.specialists_config: dict[str, Any] = {}
+        self.sandbox_config: dict[str, Any] = {}
+        self.security_config: dict[str, Any] = {}
+        # Topology and feedback loop configuration
+        self.topology_config: dict[str, Any] = {}
+        self.feedback_config: dict[str, Any] = {}
         self._active_backend_id: str | None = None
 
         # Health check cache with TTL
@@ -325,6 +331,21 @@ class BackendManager:
             self.system_config = data.get("system", {})
             self.models_config = data.get("models", {})
             self.mcp_servers_config = data.get("mcp_servers", [])
+            self.specialists_config = data.get("specialists", {})
+            self.sandbox_config = data.get("sandbox", {})
+            self.security_config = data.get("security", {})
+            # Topology and feedback loop configs
+            self.topology_config = data.get("topology", {})
+            self.feedback_config = data.get("feedback", {})
+
+            # Load specialist profiles if defined
+            if self.specialists_config:
+                try:
+                    from .profiles import get_profile_manager
+                    profile_manager = get_profile_manager()
+                    profile_manager.load_from_settings(self.specialists_config)
+                except ImportError:
+                    _get_log().debug("profiles_module_not_available")
 
             # Set active backend (first enabled one with highest priority)
             enabled = [b for b in self.backends.values() if b.enabled]
@@ -353,6 +374,49 @@ class BackendManager:
             self.system_config = {}
             self.models_config = {}
             self.mcp_servers_config = []
+            self.specialists_config = {}
+            self.sandbox_config = {}
+            self.security_config = {}
+            self.topology_config = {}
+            self.feedback_config = {}
+
+    # Topology and feedback helpers
+    def get_topology_mode(self) -> str:
+        """Get current topology mode: single_gpu, multi_gpu, or hybrid."""
+        return self.topology_config.get("mode", "single_gpu")
+
+    def is_single_gpu(self) -> bool:
+        """Check if running in single-GPU mode."""
+        return self.get_topology_mode() == "single_gpu"
+
+    def get_swap_penalty_ms(self) -> int:
+        """Get the configured swap penalty in milliseconds."""
+        return self.topology_config.get("swap_penalty_ms", 8000)
+
+    def prefer_loaded_model(self) -> bool:
+        """Check if we should prefer keeping the currently loaded model."""
+        return self.topology_config.get("prefer_loaded_model", True)
+
+    def is_feedback_enabled(self, feature: str) -> bool:
+        """Check if a specific feedback feature is enabled.
+
+        Features: backend_affinity, model_affinity, melons_enabled,
+                  orchestration_learning, prewarm_learning, swap_tracking
+        """
+        # Default behaviors based on topology
+        defaults = {
+            "backend_affinity": not self.is_single_gpu(),
+            "model_affinity": True,
+            "melons_enabled": True,
+            "orchestration_learning": True,
+            "prewarm_learning": True,
+            "swap_tracking": self.is_single_gpu(),
+        }
+        return self.feedback_config.get(feature, defaults.get(feature, True))
+
+    def get_economics_mode(self) -> str:
+        """Get economics tracking mode: local, cloud, or hybrid."""
+        return self.feedback_config.get("economics_mode", "local")
 
     def _create_default_settings(self) -> None:
         """Create default settings file with auto-detected backends."""

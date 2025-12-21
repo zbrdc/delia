@@ -84,6 +84,36 @@ class IntentDetector:
             confidence_boost=0.5,
             reasoning="tool operation requested",
         ),
+        IntentPattern(
+            re.compile(r"\b(use tools?|call tools?|with tools?|tool.?use|function.?call)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            task_type="agentic",
+            confidence_boost=0.55,
+            reasoning="explicit tool use requested",
+        ),
+    ]
+
+    # SWE-specific patterns for repo-scale operations
+    SWE_PATTERNS: ClassVar[list[IntentPattern]] = [
+        IntentPattern(
+            re.compile(r"\b(refactor|redesign|migrate|overhaul|rewrite)\s+(the\s+)?(entire|whole|full|complete)?\s*(codebase|project|system|repo)\b", re.I),
+            orchestration_mode=OrchestrationMode.AGENTIC,
+            task_type="swe",
+            confidence_boost=0.6,
+            reasoning="repo-scale operation detected",
+        ),
+        IntentPattern(
+            re.compile(r"\b(multi.?file|across files|all files|every file|codebase.?wide)\b", re.I),
+            task_type="swe",
+            confidence_boost=0.5,
+            reasoning="multi-file operation",
+        ),
+        IntentPattern(
+            re.compile(r"\b(architecture|system design|component diagram|module structure|dependency graph)\b", re.I),
+            task_type="swe",
+            confidence_boost=0.45,
+            reasoning="architectural task",
+        ),
     ]
 
     CHAIN_PATTERNS: ClassVar[list[IntentPattern]] = [
@@ -130,7 +160,7 @@ class IntentDetector:
         IntentPattern(
             re.compile(r"^(hi|hello|hey|thanks|thank you|ok|who are you|what is the weather|summarize)\b", re.I),
             task_type="quick",
-            confidence_boost=0.4,
+            confidence_boost=0.85,  # High confidence to skip semantic matching for greetings
             reasoning="simple chat",
         ),
     ]
@@ -140,6 +170,7 @@ class IntentDetector:
             self.STATUS_PATTERNS +
             self.TOT_PATTERNS +
             self.CHAIN_PATTERNS +
+            self.SWE_PATTERNS +      # SWE before AGENTIC for priority
             self.AGENTIC_PATTERNS +
             self.VERIFICATION_PATTERNS +
             self.COMPARISON_PATTERNS +

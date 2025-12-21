@@ -142,6 +142,8 @@ async def call_llm(
     temperature: float | None = None,
     messages: list[dict[str, Any]] | None = None,
     grammar: str | None = None,
+    num_gpu: int | None = None,
+    bypass_queue: bool = False,
 ) -> dict[str, Any]:
     """
     Unified LLM call dispatcher that routes to the appropriate backend.
@@ -162,6 +164,8 @@ async def call_llm(
         temperature: Sampling temperature (0.0-2.0, higher = more random/diverse)
         messages: Optional conversation history
         grammar: Optional GBNF grammar string to constrain model output
+        num_gpu: GPU layers (0=CPU only, None=auto) - use 0 for dispatcher to save VRAM
+        bypass_queue: If True, skips the ModelQueue (useful for CPU-only tasks)
 
     Returns:
         Dict with 'success', 'response', 'tokens', 'error' keys
@@ -195,37 +199,40 @@ async def call_llm(
 
     provider_name = active_backend.provider
 
-    # Acquire model from queue (prevents concurrent loading)
-    content_length = len(prompt) + len(system or "")
-    is_available, queue_future = await _model_queue.acquire_model(
-        model, task_type, content_length, provider_name=provider_name
-    )
+    # Skip queue if bypass_queue is True
+    if not bypass_queue:
+        # Acquire model from queue (prevents concurrent loading)
+        content_length = len(prompt) + len(system or "")
+        is_available, queue_future = await _model_queue.acquire_model(
+            model, task_type, content_length, provider_name=provider_name
+        )
 
-    # If model is not immediately available, wait for it
-    if not is_available and queue_future:
-        try:
-            await asyncio.wait_for(queue_future, timeout=300)
-        except TimeoutError:
-            _model_queue.queue_timeouts += 1
-            await _model_queue.release_model(model, success=False, provider_name=provider_name)
-            log.warning(
-                "queue_timeout",
-                model=model,
-                provider=provider_name,
-                wait_seconds=300,
-                total_timeouts=_model_queue.queue_timeouts,
-                log_type="QUEUE",
-            )
-            return {"success": False, "error": f"Timeout waiting for model {model} to load (waited 5 minutes)"}
-        except Exception as e:
-            await _model_queue.release_model(model, success=False, provider_name=provider_name)
-            log.error("queue_error", model=model, provider=provider_name, error=str(e), log_type="QUEUE")
-            return {"success": False, "error": f"Error waiting for model {model}: {e!s}"}
+        # If model is not immediately available, wait for it
+        if not is_available and queue_future:
+            try:
+                await asyncio.wait_for(queue_future, timeout=300)
+            except TimeoutError:
+                _model_queue.queue_timeouts += 1
+                await _model_queue.release_model(model, success=False, provider_name=provider_name)
+                log.warning(
+                    "queue_timeout",
+                    model=model,
+                    provider=provider_name,
+                    wait_seconds=300,
+                    total_timeouts=_model_queue.queue_timeouts,
+                    log_type="QUEUE",
+                )
+                return {"success": False, "error": f"Timeout waiting for model {model} to load (waited 5 minutes)"}
+            except Exception as e:
+                await _model_queue.release_model(model, success=False, provider_name=provider_name)
+                log.error("queue_error", model=model, provider=provider_name, error=str(e), log_type="QUEUE")
+                return {"success": False, "error": f"Error waiting for model {model}: {e!s}"}
 
     try:
         provider = get_provider(provider_name)
         if not provider:
-            await _model_queue.release_model(model, success=False, provider_name=provider_name)
+            if not bypass_queue:
+                await _model_queue.release_model(model, success=False, provider_name=provider_name)
             return {"success": False, "error": f"Unsupported provider: {provider_name}"}
 
         response = await provider.call(
@@ -244,6 +251,7 @@ async def call_llm(
             temperature=temperature,
             messages=messages,
             grammar=grammar,
+            num_gpu=num_gpu,
         )
         result = response.to_dict()
         
@@ -252,12 +260,14 @@ async def call_llm(
             from .text_utils import strip_thinking_tags
             result["response"] = strip_thinking_tags(result["response"])
 
-        await _model_queue.release_model(
-            model, success=result.get("success", False), provider_name=provider_name
-        )
+        if not bypass_queue:
+            await _model_queue.release_model(
+                model, success=result.get("success", False), provider_name=provider_name
+            )
         return result
     except Exception:
-        await _model_queue.release_model(model, success=False, provider_name=provider_name)
+        if not bypass_queue:
+            await _model_queue.release_model(model, success=False, provider_name=provider_name)
         raise
 
 

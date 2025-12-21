@@ -31,6 +31,7 @@ from typing import Literal, Optional, TYPE_CHECKING
 import structlog
 
 from . import paths
+from .tokens import count_tokens
 
 if TYPE_CHECKING:
     from .session_backends import SessionBackend
@@ -89,6 +90,9 @@ class SessionState:
         total_tokens: Total tokens used in this session
         total_calls: Total number of LLM calls in this session
         models_used: Set of model names/tiers used in this session
+        original_task: The original user request for "Am I on task?" checks.
+                       Cached until explicitly overwritten by a new primary task.
+        task_history: List of previous tasks for context.
     """
 
     session_id: str
@@ -100,6 +104,8 @@ class SessionState:
     total_tokens: int = 0
     total_calls: int = 0
     models_used: set[str] = field(default_factory=set)
+    original_task: str = ""  # Current primary task for focus checks
+    task_history: list[str] = field(default_factory=list)  # Previous tasks
 
     def __post_init__(self):
         """Initialize timestamps if not provided."""
@@ -174,28 +180,86 @@ class SessionState:
         if not self.messages:
             return ""
 
-        # Estimate ~4 characters per token for rough token counting
-        chars_per_token = 4
-        max_chars = max_tokens * chars_per_token
-
         # Build context from most recent messages, working backwards
+        # Using accurate token counting for optimal window utilization
         lines = []
-        total_chars = 0
+        current_tokens = 0
 
         for message in reversed(self.messages):
             # Format message
             line = f"[{message.role}]: {message.content}"
-            line_chars = len(line)
+            
+            # Use real token count if possible
+            msg_tokens = message.tokens if message.tokens > 0 else count_tokens(line)
 
             # Check if adding this message would exceed limit
-            # Always allow at least one message even if it exceeds the limit
-            if total_chars + line_chars > max_chars and lines:
+            # Always allow at least one message (the most recent)
+            if current_tokens + msg_tokens > max_tokens and lines:
                 break
 
             lines.insert(0, line)  # Prepend to maintain chronological order
-            total_chars += line_chars
+            current_tokens += msg_tokens
 
         return "\n".join(lines)
+
+    def set_task(self, task: str, is_new_primary: bool = True) -> None:
+        """
+        Set the current task for "Am I on task?" focus checks.
+
+        Args:
+            task: The user's request/task description
+            is_new_primary: If True, archives current task and sets new primary.
+                           If False, updates the current task without archiving.
+        """
+        if is_new_primary and self.original_task:
+            # Archive the previous task
+            self.task_history.append(self.original_task)
+            # Keep only last 5 tasks in history
+            self.task_history = self.task_history[-5:]
+        self.original_task = task
+        self.last_accessed = datetime.now().isoformat()
+        log.debug("session_task_set", task=task[:100], history_len=len(self.task_history))
+
+    def get_task_focus_prompt(self) -> str:
+        """
+        Generate a focus reminder for the system prompt.
+
+        Returns:
+            Formatted string to inject into system prompt for task focus.
+        """
+        if not self.original_task:
+            return ""
+
+        focus = f"""
+### TASK FOCUS (Ground Truth)
+**Original Request:** {self.original_task}
+
+Before responding, verify: "Am I addressing this task?"
+If you've drifted off-topic, acknowledge it and refocus.
+"""
+        if self.task_history:
+            focus += f"\n**Previous Tasks:** {', '.join(self.task_history[-3:])}\n"
+        return focus
+
+    def get_compaction_stats(self) -> dict:
+        """
+        Get compaction statistics for this session.
+
+        Returns:
+            Dict with token counts, message counts, and compaction info.
+        """
+        from .compaction import get_compactor
+        return get_compactor().get_compaction_stats(self)
+
+    def needs_compaction(self) -> bool:
+        """
+        Check if this session needs compaction.
+
+        Returns:
+            True if token count exceeds compaction threshold.
+        """
+        from .compaction import needs_compaction
+        return needs_compaction(self)
 
     def is_expired(self, ttl_seconds: int = SESSION_TTL_SECONDS) -> bool:
         """
@@ -778,6 +842,85 @@ class SessionManager:
                 "ttl_seconds": self.ttl_seconds,
                 "max_messages_per_session": self.max_messages_per_session,
             }
+
+    async def compact_session(
+        self,
+        session_id: str,
+        force: bool = False,
+    ) -> dict:
+        """
+        Compact a session's conversation history using LLM summarization.
+
+        This reduces token count by summarizing older messages while
+        preserving recent context and key information (tool calls, decisions).
+
+        Args:
+            session_id: Session identifier
+            force: Force compaction even if below threshold
+
+        Returns:
+            Dict with compaction result:
+            - success: Whether compaction was successful
+            - messages_compacted: Number of messages summarized
+            - tokens_saved: Tokens reduced
+            - compression_ratio: Compression efficiency
+            - error: Error message if failed
+        """
+        session = self.get_session(session_id)
+        if session is None:
+            return {
+                "success": False,
+                "error": f"Session not found: {session_id}",
+            }
+
+        from .compaction import compact_session as do_compact
+        result = await do_compact(session, force=force)
+
+        if result.success:
+            # Save the compacted session to disk
+            with self._lock:
+                self._save_session(session_id)
+
+        return {
+            "success": result.success,
+            "messages_compacted": result.messages_compacted,
+            "tokens_saved": result.tokens_saved,
+            "compression_ratio": result.compression_ratio,
+            "summary_preview": result.summary[:200] + "..." if len(result.summary) > 200 else result.summary,
+            "key_decisions": result.key_decisions,
+            "file_modifications": result.file_modifications,
+            "error": result.error,
+        }
+
+    def get_compaction_stats(self, session_id: str) -> dict | None:
+        """
+        Get compaction statistics for a session.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            Dict with compaction stats or None if session not found
+        """
+        session = self.get_session(session_id)
+        if session is None:
+            return None
+        return session.get_compaction_stats()
+
+    def needs_compaction(self, session_id: str) -> bool:
+        """
+        Check if a session needs compaction.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            True if session needs compaction, False otherwise
+        """
+        session = self.get_session(session_id)
+        if session is None:
+            return False
+        return session.needs_compaction()
 
 
 # Global session manager instance

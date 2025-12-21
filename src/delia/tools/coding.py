@@ -816,5 +816,171 @@ def get_coding_tools(
         handler=git_diff_handler,
     ))
     
+
+    # Session Management and Project Memory
+    from .orchestration import _session_compact_handler, _session_stats_handler, _project_memories_handler
+    
+    registry.register(ToolDefinition(
+        name="session_compact",
+        description="Compact a session's conversation history using LLM summarization. Reduces token count while preserving key info.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to compact"},
+                "force": {"type": "boolean", "description": "Force compaction even if below threshold", "default": False},
+            },
+            "required": ["session_id"]
+        },
+        handler=_session_compact_handler,
+    ))
+
+    registry.register(ToolDefinition(
+        name="session_stats",
+        description="Get compaction statistics for a session, including current token usage and recommendations.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to check"},
+            },
+            "required": ["session_id"]
+        },
+        handler=_session_stats_handler,
+    ))
+
+    registry.register(ToolDefinition(
+        name="project_memories",
+        description="List project memories (DELIA.md files) loaded into context. Shows instruction hierarchy and size.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "reload": {"type": "boolean", "description": "Force reload of all project memories", "default": False},
+            }
+        },
+        handler=_project_memories_handler,
+    ))
+
+    # LSP tools for code intelligence
+    from .lsp import lsp_goto_definition, lsp_find_references, lsp_hover
+
+    registry.register(ToolDefinition(
+        name="lsp_goto_definition",
+        description="Find the definition of a symbol at the given file position. Returns file path and line number where the symbol is defined.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the file"},
+                "line": {"type": "integer", "description": "Line number (1-indexed)"},
+                "character": {"type": "integer", "description": "Character position (0-indexed)"}
+            },
+            "required": ["path", "line", "character"]
+        },
+        handler=lsp_goto_definition,
+        dangerous=False,
+        permission_level="read",
+        requires_workspace=True,
+    ))
+
+    registry.register(ToolDefinition(
+        name="lsp_find_references",
+        description="Find all references to a symbol at the given file position. Returns list of locations where the symbol is used.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the file"},
+                "line": {"type": "integer", "description": "Line number (1-indexed)"},
+                "character": {"type": "integer", "description": "Character position (0-indexed)"}
+            },
+            "required": ["path", "line", "character"]
+        },
+        handler=lsp_find_references,
+        dangerous=False,
+        permission_level="read",
+        requires_workspace=True,
+    ))
+
+    registry.register(ToolDefinition(
+        name="lsp_hover",
+        description="Get documentation and type information for the symbol at the given position. Returns docstrings, type signatures, etc.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the file"},
+                "line": {"type": "integer", "description": "Line number (1-indexed)"},
+                "character": {"type": "integer", "description": "Character position (0-indexed)"}
+            },
+            "required": ["path", "line", "character"]
+        },
+        handler=lsp_hover,
+        dangerous=False,
+        permission_level="read",
+        requires_workspace=True,
+    ))
+
+    # Sandboxed execution tools (optional - requires llm-sandbox)
+    from ..sandbox import is_sandbox_available
+    if is_sandbox_available():
+        from .sandbox_tools import (
+            shell_exec_sandboxed,
+            code_execute,
+            _format_sandbox_result,
+        )
+
+        registry.register(ToolDefinition(
+            name="shell_exec_sandboxed",
+            description="Execute shell commands in an isolated Docker container. Safe for untrusted commands.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Execution timeout in seconds (default: 30)",
+                        "default": 30
+                    }
+                },
+                "required": ["command"]
+            },
+            handler=shell_exec_sandboxed,
+            permission_level="exec",
+            dangerous=False,  # Safe because it's sandboxed
+        ))
+
+        registry.register(ToolDefinition(
+            name="code_execute",
+            description="Execute code in an isolated Docker container. Supports Python, JavaScript, Java, C++, Go, R.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Code to execute"
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["python", "javascript", "java", "cpp", "go", "r"],
+                        "description": "Programming language (default: python)",
+                        "default": "python"
+                    },
+                    "libraries": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Libraries to install before execution (e.g., ['numpy', 'pandas'])"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Execution timeout in seconds (default: 30)",
+                        "default": 30
+                    }
+                },
+                "required": ["code"]
+            },
+            handler=code_execute,
+            permission_level="exec",
+            dangerous=False,  # Safe because it's sandboxed
+        ))
+
     return registry
 

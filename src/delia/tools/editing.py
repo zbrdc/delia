@@ -106,7 +106,7 @@ async def replace_in_file(
             return f"Error: No changes made to {path}"
 
         file_path.write_text(new_content, encoding="utf-8")
-        
+
         log.info("file_replaced", path=str(file_path), matches=matches)
         return f"Successfully replaced {matches} occurrences in {path}"
 

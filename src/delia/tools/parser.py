@@ -38,6 +38,12 @@ TOOL_CALL_PATTERN = re.compile(
     re.DOTALL
 )
 
+# Pattern for FunctionGemma native tool calls: <start_function_call>call:name{args}<end_function_call>
+FUNCTION_GEMMA_CALL_PATTERN = re.compile(
+    r"<start_function_call>call:(\w+)\{(.*?)\}<end_function_call>",
+    re.DOTALL
+)
+
 
 @dataclass
 class ParsedToolCall:
@@ -181,7 +187,50 @@ def _parse_text_format(text: str) -> list[ParsedToolCall]:
     # If no XML-wrapped calls found, try raw JSON fallback
     if not tool_calls:
         tool_calls = _parse_raw_json_tools(text)
+        
+    # Final fallback for FunctionGemma native XML format
+    if not tool_calls:
+        tool_calls = _parse_functiongemma_format(text)
 
+    return tool_calls
+
+
+def _parse_functiongemma_format(text: str) -> list[ParsedToolCall]:
+    """Parse FunctionGemma native tool call format.
+    
+    Format: <start_function_call>call:name{k:v, ...}<end_function_call>
+    Includes <escape> markers for strings and basic type casting.
+    """
+    def cast(v: str) -> Any:
+        try:
+            return int(v)
+        except ValueError:
+            try:
+                return float(v)
+            except ValueError:
+                lower_v = v.lower()
+                if lower_v == "true": return True
+                if lower_v == "false": return False
+                return v.strip("'\"")
+
+    tool_calls = []
+    matches = FUNCTION_GEMMA_CALL_PATTERN.findall(text)
+    
+    for name, args_str in matches:
+        # Parse key:value pairs with optional <escape> tags
+        # Pattern: key:(?:<escape>value<escape>|value_without_comma)
+        arg_matches = re.findall(r"(\w+):(?:<escape>(.*?)<escape>|([^,}]*))", args_str)
+        arguments = {
+            k: cast((v1 or v2).strip())
+            for k, v1, v2 in arg_matches
+        }
+        
+        tool_calls.append(ParsedToolCall(
+            id=f"call_{uuid.uuid4().hex[:8]}",
+            name=name,
+            arguments=arguments
+        ))
+        
     return tool_calls
 
 

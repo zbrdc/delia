@@ -15,10 +15,83 @@ from typing import List, Optional
 import structlog
 
 from ..types import Workspace
-from .registry import ToolDefinition
+from .registry import ToolDefinition, ToolRegistry
 from .. import lsp_client
 
 log = structlog.get_logger()
+
+
+def get_lsp_tools(workspace: Workspace | None = None) -> ToolRegistry:
+    """Get LSP-based code intelligence tools.
+
+    These tools provide semantic code navigation using Language Server Protocol:
+    - Go to definition
+    - Find references
+    - Hover for type info/docs
+
+    Args:
+        workspace: Optional workspace to confine operations
+
+    Returns:
+        ToolRegistry with LSP tools registered
+    """
+    registry = ToolRegistry(workspace=workspace)
+
+    registry.register(ToolDefinition(
+        name="lsp_goto_definition",
+        description="Find the definition of a symbol at the given file position. Returns file path and line number where the symbol is defined.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the file"},
+                "line": {"type": "integer", "description": "Line number (1-indexed)"},
+                "character": {"type": "integer", "description": "Character position (0-indexed)"}
+            },
+            "required": ["path", "line", "character"]
+        },
+        handler=lsp_goto_definition,
+        dangerous=False,
+        permission_level="read",
+        requires_workspace=True,
+    ))
+
+    registry.register(ToolDefinition(
+        name="lsp_find_references",
+        description="Find all references to a symbol at the given file position. Returns list of locations where the symbol is used.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the file"},
+                "line": {"type": "integer", "description": "Line number (1-indexed)"},
+                "character": {"type": "integer", "description": "Character position (0-indexed)"}
+            },
+            "required": ["path", "line", "character"]
+        },
+        handler=lsp_find_references,
+        dangerous=False,
+        permission_level="read",
+        requires_workspace=True,
+    ))
+
+    registry.register(ToolDefinition(
+        name="lsp_hover",
+        description="Get documentation and type information for the symbol at the given position. Returns docstrings, type signatures, etc.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the file"},
+                "line": {"type": "integer", "description": "Line number (1-indexed)"},
+                "character": {"type": "integer", "description": "Character position (0-indexed)"}
+            },
+            "required": ["path", "line", "character"]
+        },
+        handler=lsp_hover,
+        dangerous=False,
+        permission_level="read",
+        requires_workspace=True,
+    ))
+
+    return registry
 
 async def lsp_goto_definition(
     path: str,

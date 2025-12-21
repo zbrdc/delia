@@ -24,9 +24,14 @@ import asyncio
 import time
 import io
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Awaitable
+
+# Suppress torchao deprecation warnings (third-party library noise)
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="torchao")
+warnings.filterwarnings("ignore", message="builtin type Swig.*has no __module__")
 
 import structlog
 
@@ -37,6 +42,10 @@ from .types import Workspace
 from .delegation import DelegateContext, delegate_impl
 from .multi_user_tracking import tracker
 from .tui import RichAgentUI, RICH_AVAILABLE, console
+from .llm import init_llm_module
+from .queue import ModelQueue
+from .session_manager import get_session_manager
+from .security import get_security_manager
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.layout.containers import HSplit, Window, VSplit, ConditionalContainer, FloatContainer, Float
@@ -91,6 +100,9 @@ class ChatState:
         self.pending_confirm = False
         self.confirm_text = ""
         self.confirm_future: asyncio.Future[str] | None = None
+        self.app: Application | None = None  # Set after app creation for refresh
+        self.session_id: str | None = None  # For task focus tracking
+        self.watchdog_timeout: float = 30.0  # Seconds before watchdog intervenes
 
 async def run_chat_cli(config: AgentCLIConfig) -> None:
     from .orchestration.executor import get_orchestration_executor
@@ -98,12 +110,30 @@ async def run_chat_cli(config: AgentCLIConfig) -> None:
     from .mcp_server import get_active_backend
     from .paths import DATA_DIR
 
-    # 1. Initialization
+    # 1. Initialization - LLM module must be initialized before using the executor
+    def _cli_stats_callback(model_tier, task_type, original_task, tokens, elapsed_ms, content_preview, enable_thinking, backend="ollama"):
+        log.debug("cli_stats", tier=model_tier, tokens=tokens, elapsed_ms=elapsed_ms)
+
+    def _cli_save_stats_callback():
+        pass  # CLI doesn't persist stats
+
+    model_queue = ModelQueue()
+    init_llm_module(
+        stats_callback=_cli_stats_callback,
+        save_stats_callback=_cli_save_stats_callback,
+        model_queue=model_queue,
+    )
+
     active_backend = get_active_backend()
     state = ChatState(active_backend.name if active_backend else "local")
     executor = get_orchestration_executor()
     history_file = DATA_DIR / "chat_history.txt"
     os.makedirs(DATA_DIR, exist_ok=True)
+
+    # Create a session for task focus tracking
+    session_mgr = get_session_manager()
+    session = session_mgr.create_session(client_id="cli-user")
+    state.session_id = session.session_id
 
     # 2. Rendering Helpers
     def render_rich(obj) -> str:
@@ -118,7 +148,10 @@ async def run_chat_cli(config: AgentCLIConfig) -> None:
         # Update layout
         history_window.content.text = ANSI(state.history_ansi)
         # Scroll to bottom
-        history_window.vertical_scroll = 1000000 
+        history_window.vertical_scroll = 1000000
+        # Trigger screen refresh if app is running
+        if state.app:
+            state.app.invalidate() 
 
     # 3. Layout Components
     history_window = Window(
@@ -150,28 +183,74 @@ async def run_chat_cli(config: AgentCLIConfig) -> None:
         height=3,
     )
 
-    # 4. Security Gate (Inline)
+    # 4. Security Gate (Inline) - Uses SecurityManager policy
+    security_manager = get_security_manager()
+
     async def gated_security(tc, reg):
         tool_def = reg.get(tc.name)
-        if not tool_def or tool_def.trust_level == TrustLevel.READ_ONLY: return True
-        
-        is_destructive = "delete" in tc.name or "rm" in str(tc.arguments)
-        if not is_destructive and state.allow_all: return True
-        
+        if not tool_def:
+            return True
+
+        # Check if security policy allows this automatically
+        perm_level = getattr(tool_def, 'permission_level', 'read')
+        is_dangerous = getattr(tool_def, 'dangerous', False)
+
+        # Read-only tools always pass
+        if perm_level == 'read' and not is_dangerous:
+            return True
+
+        # Check command blocklist for shell_exec
+        if tc.name == 'shell_exec' and 'command' in tc.arguments:
+            allowed, reason, is_safe = security_manager.check_command(tc.arguments['command'])
+            if not allowed:
+                append_to_history(Panel(
+                    f"[bold red]Blocked:[/bold red] {reason}",
+                    border_style="red"
+                ))
+                return False
+            if is_safe and not is_dangerous:
+                return True  # Safe commands auto-approve
+
+        # Check path security for file operations
+        if 'path' in tc.arguments:
+            allowed, reason = security_manager.check_path(tc.arguments['path'])
+            if not allowed:
+                append_to_history(Panel(
+                    f"[bold red]Blocked:[/bold red] {reason}",
+                    border_style="red"
+                ))
+                return False
+
+        # If allow_all is set and not destructive, auto-approve
+        is_destructive = "delete" in tc.name or "rm -rf" in str(tc.arguments)
+        if not is_destructive and state.allow_all:
+            return True
+
+        # Check if approval is needed per security policy
+        if not security_manager.needs_approval(tc.name, perm_level, is_dangerous):
+            return True
+
+        # Interactive approval prompt
         state.pending_confirm = True
         state.confirm_text = f"Allow {tc.name}?"
         state.confirm_future = asyncio.Future()
-        
+
+        # Show detailed info
+        args_str = str(tc.arguments)[:200]
+        if len(str(tc.arguments)) > 200:
+            args_str += "..."
+
         append_to_history(Panel(
             f"[bold yellow]Security Gate:[/bold yellow] Agent wants to run [cyan]{tc.name}[/cyan]\n"
-            f"[dim]Args: {str(tc.arguments)}[/dim]\n\n"
+            f"[dim]Permission: {perm_level}[/dim]\n"
+            f"[dim]Args: {args_str}[/dim]\n\n"
             f"Press [bold green]y[/bold green] to allow, [bold red]n[/bold red] to deny, [bold blue]a[/bold blue] for all session",
             border_style="yellow"
         ))
-        
+
         res = await state.confirm_future
         state.pending_confirm = False
-        
+
         if res == "a":
             state.allow_all = True
             return True
@@ -197,23 +276,52 @@ async def run_chat_cli(config: AgentCLIConfig) -> None:
         ui.print_plan = lambda p, **kw: setattr(state, 'plan_markdown', p) or setattr(state, 'show_plan', True)
         
         full_response = ""
-        try:
+        start_time = time.time()
+
+        async def run_with_watchdog():
+            """Execute stream with timeout watchdog."""
+            nonlocal full_response
+            streaming_buffer = ""
             async for ev in executor.execute_stream(
                 intent=intent, message=user_input, messages=state.messages,
                 backend_type=config.backend_type, model_override=config.model,
+                session_id=state.session_id,  # Pass session for task focus
                 on_tool_call=gated_security
             ):
                 if ev.event_type == "status": ui.model = ev.message
                 elif ev.event_type == "thinking": pass
+                elif ev.event_type == "token":
+                    # Accumulate and show streaming tokens
+                    if ev.message:
+                        streaming_buffer += ev.message
+                        # Update status to show we're receiving
+                        if len(streaming_buffer) % 20 == 0:  # Throttle updates
+                            if state.app:
+                                state.app.invalidate()
                 elif ev.event_type == "tool_call":
                     append_to_history(f" [magenta]⚙[/magenta] [dim]Running {ev.details['name']}...[/dim]")
                 elif ev.event_type == "response":
                     full_response = ev.message
-            
+
+        try:
+            # Watchdog: If no response in 60s, provide fallback
+            await asyncio.wait_for(run_with_watchdog(), timeout=60.0)
+
             if full_response:
-                append_to_history(Panel(Markdown(full_response), title="Assistant", border_style="green"))
+                elapsed = time.time() - start_time
+                append_to_history(Panel(Markdown(full_response), title=f"Assistant ({elapsed:.1f}s)", border_style="green"))
                 state.messages.append({"role": "user", "content": user_input})
                 state.messages.append({"role": "assistant", "content": full_response})
+        except asyncio.TimeoutError:
+            elapsed = time.time() - start_time
+            append_to_history(Panel(
+                f"[yellow]Watchdog triggered after {elapsed:.0f}s.[/yellow]\n"
+                "The model is taking too long. You can:\n"
+                "• Wait for it to complete\n"
+                "• Press Ctrl+C to cancel\n"
+                "• Try a simpler question",
+                title="⏱️ Timeout", border_style="yellow"
+            ))
         except Exception as e:
             append_to_history(f" [bold red]Error:[/bold red] {e}")
         finally:
@@ -255,6 +363,7 @@ async def run_chat_cli(config: AgentCLIConfig) -> None:
         layout=Layout(root_container, focused_element=input_field),
         key_bindings=kb, full_screen=True, mouse_support=True,
     )
+    state.app = app  # Enable screen refresh from append_to_history
 
     append_to_history(Text("🍈 DELIA Native Chat session started.", style="italic green"))
     await app.run_async()

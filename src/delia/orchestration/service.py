@@ -34,14 +34,18 @@ from .intent import detect_intent, get_intent_detector
 from .executor import get_orchestration_executor, OrchestrationExecutor
 from .result import DetectedIntent, OrchestrationMode, OrchestrationResult, StreamEvent
 from .context import ContextEngine
+from .intrinsics import (
+    get_intrinsics_engine,
+    IntrinsicAction,
+    FrustrationLevel,
+)
 from ..tracing import trace, add_event
-from ..frustration import FrustrationLevel
 from ..melons import get_reward_collector
+from ..compaction import get_compactor, DEFAULT_COMPACTION_THRESHOLD_TOKENS
 
 if TYPE_CHECKING:
     from ..config import AffinityTracker, PrewarmTracker
     from ..melons import MelonTracker
-    from ..frustration import FrustrationTracker
 
 
 log = structlog.get_logger()
@@ -98,22 +102,22 @@ class OrchestrationService:
         affinity: AffinityTracker,
         prewarm: PrewarmTracker,
         melons: MelonTracker,
-        frustration: FrustrationTracker,
     ) -> None:
         self.executor = executor
         self.affinity = affinity
         self.prewarm = prewarm
         self.melons = melons
-        self.frustration = frustration
         self._initialized = True
-        
+        # Simple repeat tracking per session (replaces FrustrationTracker)
+        self._repeat_hashes: dict[str, list[str]] = {}
+
         log.info("orchestration_service_initialized")
     
     @classmethod
     def create(cls) -> "OrchestrationService":
         """
         Factory method to create a properly initialized service.
-        
+
         Loads persisted state (affinity, prewarm) from disk.
         """
         from ..config import (
@@ -123,18 +127,112 @@ class OrchestrationService:
             load_prewarm,
         )
         from ..melons import get_melon_tracker
-        from ..frustration import get_frustration_tracker
-        
+
         # Load persisted state
         load_affinity()
         load_prewarm()
-        
+
         return cls(
             executor=get_orchestration_executor(),
             affinity=get_affinity_tracker(),
             prewarm=get_prewarm_tracker(),
             melons=get_melon_tracker(),
-            frustration=get_frustration_tracker(),
+        )
+
+    def _hash_message(self, message: str) -> str:
+        """Create normalized hash for repeat detection."""
+        import hashlib
+        normalized = " ".join(message.lower().strip().split())
+        return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+    def _check_repeat(self, session_id: str, message: str) -> tuple[bool, int]:
+        """Check if message is a repeat in this session. Returns (is_repeat, count)."""
+        if not session_id:
+            return False, 0
+
+        msg_hash = self._hash_message(message)
+        hashes = self._repeat_hashes.setdefault(session_id, [])
+
+        # Count how many times this hash appears
+        count = hashes.count(msg_hash)
+
+        # Record this message
+        hashes.append(msg_hash)
+
+        # Keep only last 50 messages per session
+        if len(hashes) > 50:
+            self._repeat_hashes[session_id] = hashes[-50:]
+
+        return count > 0, count
+
+    async def _check_auto_compaction(
+        self,
+        session,
+        session_id: str,
+    ) -> StreamEvent | None:
+        """
+        Check if a session needs compaction and optionally auto-compact.
+
+        Returns a warning StreamEvent if compaction is recommended,
+        or performs auto-compaction if above critical threshold.
+        """
+        from ..session_manager import get_session_manager
+
+        compactor = get_compactor()
+        stats = compactor.get_compaction_stats(session)
+
+        if not stats["needs_compaction"]:
+            return None
+
+        total_tokens = stats["total_tokens"]
+        threshold = stats["threshold_tokens"]
+
+        # Critical threshold: 1.5x the normal threshold - auto-compact
+        critical_threshold = int(threshold * 1.5)
+
+        if total_tokens >= critical_threshold:
+            # Auto-compact to prevent context overflow
+            log.info(
+                "auto_compaction_triggered",
+                session_id=session_id,
+                tokens=total_tokens,
+                critical_threshold=critical_threshold,
+            )
+
+            try:
+                from ..compaction import compact_session
+                result = await compact_session(session, force=True)
+
+                if result.success:
+                    # Save the compacted session
+                    sm = get_session_manager()
+                    with sm._lock:
+                        sm._save_session(session_id)
+
+                    return StreamEvent(
+                        event_type="compaction",
+                        message=f"Session auto-compacted: {result.messages_compacted} messages summarized, "
+                                f"{result.tokens_saved} tokens saved ({result.compression_ratio:.0%} reduction)",
+                        details={
+                            "auto": True,
+                            "messages_compacted": result.messages_compacted,
+                            "tokens_saved": result.tokens_saved,
+                            "compression_ratio": result.compression_ratio,
+                        }
+                    )
+            except Exception as e:
+                log.warning("auto_compaction_failed", error=str(e), session_id=session_id)
+
+        # Just a warning - user should manually compact
+        return StreamEvent(
+            event_type="warning",
+            message=f"Session context is large ({total_tokens} tokens). "
+                    f"Consider using session_compact to reduce context.",
+            details={
+                "total_tokens": total_tokens,
+                "threshold": threshold,
+                "compactable_messages": stats["compactable_messages"],
+            }
         )
     
     async def save_state(self) -> None:
@@ -211,18 +309,32 @@ class OrchestrationService:
                 session_context = session.get_context_window(max_tokens=6000)
                 session_manager.add_to_session(session_id, "user", message)
 
+                # Check for auto-compaction need
+                compaction_warning = await self._check_auto_compaction(session, session_id)
+                if compaction_warning:
+                    yield compaction_warning
+
+        # 2. Intent Detection (moved before context prep)
+        intent = await get_intent_detector().detect_async(message)
+
+        # Skip project overview for quick tasks (greetings, simple Q&A)
+        # This avoids confusing the model with "Project overview not yet generated"
+        needs_overview = intent.task_type not in ("quick", "status", "chat")
+
+        # Skip session history injection for quick tasks (greetings, simple Q&A)
+        # Simple messages should get simple responses - history confuses the model
+        needs_session_context = intent.task_type not in ("quick", "status", "chat")
+
         prepared_content = await ContextEngine.prepare_content(
             content=message,
             context=context,
             symbols=symbols,
             include_references=include_references,
             files=files,
-            session_context=session_context,
-            include_project_overview=True, # Chat always gets repo awareness
+            session_context=session_context if needs_session_context else None,
+            include_project_overview=needs_overview,  # Only for complex tasks
+            include_project_instructions=needs_overview,  # Skip for quick tasks
         )
-
-        # 2. Intent Detection
-        intent = await get_intent_detector().detect_async(message)
         yield StreamEvent(
             event_type="intent",
             message=f"Detected Intent: {intent.task_type}",
@@ -373,53 +485,97 @@ class OrchestrationService:
 
         span.event("context_prepared", length=len(prepared_content))
 
-        # STEP 2: Frustration detection
-        repeat_info = None
-        if session_id:
-            repeat_info = self.frustration.check_repeat(session_id, message)
-            
-            # Log frustration (routing handled via orchestration upgrades)
-            if repeat_info.level != FrustrationLevel.NONE and repeat_info.previous_model:
+        # STEP 1.5: Answerability check (Intrinsics) - gate before expensive LLM call
+        # Only run for non-trivial tasks where context matters
+        intrinsics_action = None
+        from .intrinsics import get_intrinsics_engine, IntrinsicAction
+        intrinsics = get_intrinsics_engine()
+        if intent.task_type not in ["status", "quick"] and files:
+            try:
+                answerability = await intrinsics.check_answerability(message, prepared_content)
+
                 span.event(
-                    "frustration_detected",
-                    level=repeat_info.level.value,
-                    previous_model=repeat_info.previous_model,
+                    "answerability_check",
+                    score=round(answerability.score, 2),
+                    action=answerability.action.value,
+                    passed=answerability.passed,
                 )
 
-                log.warning(
-                    "frustration_detected",
-                    level=repeat_info.level.value,
-                    model=repeat_info.previous_model,
-                )
-        
-        # STEP 3: Auto-upgrade orchestration based on frustration level
-        if repeat_info and repeat_info.level != FrustrationLevel.NONE:
-            # Only upgrade if current mode is weaker than what we want
+                intrinsics_action = answerability.action
+
+                if answerability.action == IntrinsicAction.FETCH_MORE:
+                    # Context insufficient - try to auto-fetch more files
+                    log.info(
+                        "intrinsics_fetch_more",
+                        score=answerability.score,
+                        missing=answerability.missing_info,
+                    )
+                    # Use semantic search to find additional relevant files
+                    try:
+                        from .summarizer import get_summarizer
+                        summarizer = get_summarizer()
+                        await summarizer.initialize()
+                        results = await summarizer.search(message, top_k=3)
+                        if results:
+                            extra_paths = [r["path"] for r in results if r["score"] >= 0.3]
+                            if extra_paths:
+                                # Re-prepare content with additional files
+                                extra_files = ",".join(extra_paths)
+                                combined_files = f"{files},{extra_files}" if files else extra_files
+                                prepared_content = await ContextEngine.prepare_content(
+                                    content=message,
+                                    context=context,
+                                    symbols=symbols,
+                                    include_references=include_references,
+                                    files=combined_files,
+                                    session_context=session_context,
+                                    include_project_overview=needs_repo_context,
+                                )
+                                span.event("intrinsics_context_expanded", extra_files=extra_paths)
+                    except Exception as e:
+                        log.debug("intrinsics_auto_fetch_failed", error=str(e))
+
+                elif answerability.action == IntrinsicAction.ESCALATE:
+                    # Low answerability - escalate orchestration mode
+                    log.warning(
+                        "intrinsics_escalate",
+                        score=answerability.score,
+                        current_mode=intent.orchestration_mode.value,
+                    )
+                    if intent.orchestration_mode == OrchestrationMode.NONE:
+                        intent.orchestration_mode = OrchestrationMode.VOTING
+                        intent.k_votes = 3
+                        intent.reasoning = f"intrinsics escalation (answerability={answerability.score:.2f}); {intent.reasoning}"
+
+            except Exception as e:
+                log.debug("answerability_check_failed", error=str(e))
+                # Don't block on intrinsics failure
+
+        # STEP 2: User state analysis (consolidated frustration detection via intrinsics)
+        is_repeat, repeat_count = self._check_repeat(session_id, message) if session_id else (False, 0)
+        user_state = intrinsics.check_user_state(message, is_repeat=is_repeat, repeat_count=repeat_count)
+
+        if user_state.level != FrustrationLevel.NONE:
+            span.event("frustration_detected", level=user_state.level.value)
+            log.warning("frustration_detected", level=user_state.level.value, action=user_state.action.value)
+
+        # STEP 3: Auto-upgrade orchestration based on user state action
+        if user_state.action in (IntrinsicAction.ESCALATE_DEEP, IntrinsicAction.ESCALATE_VOTING, IntrinsicAction.ESCALATE):
             current_mode_is_weak = intent.orchestration_mode == OrchestrationMode.NONE
-            
-            if repeat_info.level == FrustrationLevel.HIGH:
-                # High frustration -> Deep Thinking or Heavy Voting
-                # (Prefer deep thinking for detailed correction, voting for fact check)
+
+            if user_state.action == IntrinsicAction.ESCALATE_DEEP:
                 if current_mode_is_weak:
                     intent.orchestration_mode = OrchestrationMode.DEEP_THINKING
-                    intent.reasoning = f"auto-escalation to deep thinking due to HIGH frustration; {intent.reasoning}"
-                    log.warning("frustration_auto_escalate", mode="deep_thinking", level="high")
-            
-            elif repeat_info.level == FrustrationLevel.MEDIUM:
-                # Medium frustration -> Voting (k=3)
-                if current_mode_is_weak or (intent.orchestration_mode == OrchestrationMode.VOTING and intent.k_votes < 3):
-                    intent.orchestration_mode = OrchestrationMode.VOTING
-                    intent.k_votes = 3
-                    intent.reasoning = f"auto-escalation to voting (k=3) due to MEDIUM frustration; {intent.reasoning}"
-                    log.warning("frustration_auto_escalate", mode="voting_k3", level="medium")
+                    intent.reasoning = f"auto-escalation: {user_state.reasoning}; {intent.reasoning}"
+                    log.warning("frustration_auto_escalate", mode="deep_thinking")
 
-            elif repeat_info.level == FrustrationLevel.LOW:
-                # Low frustration -> Voting (k=2)
-                if current_mode_is_weak:
+            elif user_state.action == IntrinsicAction.ESCALATE_VOTING:
+                k = 3 if user_state.level == FrustrationLevel.MEDIUM else 2
+                if current_mode_is_weak or (intent.orchestration_mode == OrchestrationMode.VOTING and intent.k_votes < k):
                     intent.orchestration_mode = OrchestrationMode.VOTING
-                    intent.k_votes = 2
-                    intent.reasoning = f"auto-escalation to voting (k=2) due to LOW frustration; {intent.reasoning}"
-                    log.info("frustration_auto_escalate", mode="voting_k2", level="low")
+                    intent.k_votes = k
+                    intent.reasoning = f"auto-escalation: {user_state.reasoning}; {intent.reasoning}"
+                    log.warning("frustration_auto_escalate", mode=f"voting_k{k}")
         
         # STEP 4: Prewarm update - learn usage patterns
         self.prewarm.update(intent.task_type)
@@ -484,14 +640,71 @@ class OrchestrationService:
             from ..quality import validate_response
             quality_result = validate_response(result.response, intent.task_type)
             quality_score = quality_result.overall
-            
+
             span.event("quality_validated", score=round(quality_score, 2))
+
+            # Groundedness check (Intrinsics) - detect potential hallucination
+            # Only run if we have source context (files were provided)
+            groundedness_score = None
+            if files and len(prepared_content) > 500:
+                try:
+                    from .intrinsics import get_intrinsics_engine, IntrinsicAction
+                    intrinsics = get_intrinsics_engine()
+                    groundedness = await intrinsics.check_groundedness(
+                        result.response,
+                        prepared_content,
+                    )
+                    groundedness_score = groundedness.score
+
+                    span.event(
+                        "groundedness_check",
+                        score=round(groundedness.score, 2),
+                        passed=groundedness.passed,
+                    )
+
+                    if not groundedness.passed:
+                        # Flag low groundedness - response may contain hallucination
+                        log.warning(
+                            "intrinsics_low_groundedness",
+                            score=groundedness.score,
+                            reasoning=groundedness.reasoning[:100],
+                        )
+                        # Penalize quality score for ungrounded responses
+                        quality_score = quality_score * 0.7
+
+                except Exception as e:
+                    log.debug("groundedness_check_failed", error=str(e))
             
-            # Update affinity tracker
+            # Update affinity trackers
             backend_id = result.backend_used or "unknown"
-            self.affinity.update(backend_id, intent.task_type, quality=quality_score)
-            affinity_updated = True
-            
+
+            # Backend affinity (for multi-GPU setups)
+            from ..backend_manager import backend_manager
+            if backend_manager.is_feedback_enabled("backend_affinity"):
+                self.affinity.update(backend_id, intent.task_type, quality=quality_score)
+                affinity_updated = True
+
+            # Model affinity (for single-GPU setups - tracks which model is best per task)
+            if backend_manager.is_feedback_enabled("model_affinity"):
+                from ..config import get_model_affinity_tracker, save_model_affinity
+                model_affinity = get_model_affinity_tracker()
+
+                # Calculate tokens/sec if we have the data
+                tokens_per_sec = None
+                if result.tokens and result.elapsed_ms and result.elapsed_ms > 0:
+                    tokens_per_sec = result.tokens / (result.elapsed_ms / 1000)
+
+                model_affinity.update(
+                    model_id=result.model_used,
+                    task_type=intent.task_type,
+                    success=True,
+                    quality_score=quality_score,
+                    tokens_per_sec=tokens_per_sec,
+                )
+                model_affinity.set_current_model(result.model_used)
+                save_model_affinity()  # Persist immediately
+                affinity_updated = True
+
             # Award melons! 🍈
             from ..melons import award_melons_for_quality
             melons_awarded = award_melons_for_quality(
@@ -508,16 +721,8 @@ class OrchestrationService:
                 task_type=intent.task_type,
                 quality_score=quality_score,
             )
-            
-            # Record for frustration tracking
-            if session_id:
-                self.frustration.record_response(
-                    session_id=session_id,
-                    message=message,
-                    model_used=result.model_used,
-                    response=result.response,
-                )
-            
+            # Note: Repeat tracking is done in _check_repeat() at STEP 2
+
             span.event(
                 "rewards_applied",
                 melons=melons_awarded,
@@ -574,9 +779,9 @@ class OrchestrationService:
         """Get current service statistics."""
         return {
             "affinity_entries": len(self.affinity._scores),
-            "total_prewarm_points": sum(len(points) for points in self.prewarm._scores.values()),
+            "prewarm_tiers": len(self.prewarm._scores),
             "melon_models": len(self.melons._stats),
-            "frustration_sessions": len(self.frustration._records),
+            "repeat_sessions": len(self._repeat_hashes),
         }
 
 
