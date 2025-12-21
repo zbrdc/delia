@@ -1,0 +1,38 @@
+task: mmlu
+version: "1.0"
+
+data:
+  source: huggingface
+  dataset_path: cais/mmlu
+  dataset_name: all
+  split: test
+  limit: 500
+
+prompt:
+  template: |
+    Answer the following multiple choice question.
+
+    Subject: {subject}
+    Question: {question}
+
+    A. {choice_a}
+    B. {choice_b}
+    C. {choice_c}
+    D. {choice_d}
+
+    Answer with just the letter (A, B, C, or D):
+  input_fields:
+    - question
+    - choices
+    - subject
+  answer_field: answer
+
+metrics:
+  - name: exact_match
+    weight: 1.0
+
+metadata:
+  description: "MMLU - Massive Multitask Language Understanding across 57 subjects"
+  domain: "knowledge"
+  difficulty: "varied"
+  tier: "quick"

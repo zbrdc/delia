@@ -17,7 +17,11 @@
 
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
+import dynamic from "next/dynamic"
+
+// Dynamic import for force graph (client-side only)
+const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false })
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -185,6 +189,56 @@ interface RoutingIntelligence {
   timestamp: string
 }
 
+interface IndexerStats {
+  totalFiles: number
+  withEmbeddings: number
+  totalSymbols: number
+  lastIndexed: string | null
+}
+
+interface IndexerFile {
+  path: string
+  hasEmbedding: boolean
+  mtime: string
+}
+
+interface IndexerSymbol {
+  name: string
+  kind: string
+  file: string
+}
+
+interface IndexerResponse {
+  success: boolean
+  stats: IndexerStats
+  topSymbols: IndexerSymbol[]
+  files: IndexerFile[]
+}
+
+interface GraphNode {
+  id: string
+  symbols: number
+  group: string
+  summary?: string
+}
+
+interface GraphLink {
+  source: string
+  target: string
+}
+
+interface GraphResponse {
+  success: boolean
+  nodes: GraphNode[]
+  links: GraphLink[]
+  groups: string[]
+  stats: {
+    totalNodes: number
+    totalLinks: number
+    totalGroups: number
+  }
+}
+
 const PROVIDER_COLORS: Record<string, string> = {
   ollama: "#689B8A",
   llamacpp: "#4A7D6D",
@@ -237,7 +291,7 @@ const normalizeModel = (model: string | undefined | null): "quick" | "coder" | "
   return "quick"
 }
 
-type TabType = "activity" | "backends" | "analytics" | "logs"
+type TabType = "activity" | "backends" | "analytics" | "orchestration" | "logs"
 
 export default function Dashboard() {
   const [stats, setStats] = useState<UsageStats | null>(null)
@@ -258,6 +312,9 @@ export default function Dashboard() {
   const [selectedLogProvider, setSelectedLogProvider] = useState<string>("all")
   const [routingIntelligence, setRoutingIntelligence] = useState<RoutingIntelligence | null>(null)
   const [melonsData, setMelonsData] = useState<MelonsResponse | null>(null)
+  const [indexerData, setIndexerData] = useState<IndexerResponse | null>(null)
+  const [graphData, setGraphData] = useState<GraphResponse | null>(null)
+  const graphRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -338,6 +395,20 @@ export default function Dashboard() {
     } catch { /* ignore */ }
   }, [])
 
+  const fetchIndexer = useCallback(async () => {
+    try {
+      const res = await fetch("/api/indexer")
+      if (res.ok) setIndexerData(await res.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  const fetchGraph = useCallback(async () => {
+    try {
+      const res = await fetch("/api/graph")
+      if (res.ok) setGraphData(await res.json())
+    } catch { /* ignore */ }
+  }, [])
+
   const fetchLogs = useCallback(async () => {
     try {
       const params = new URLSearchParams()
@@ -369,14 +440,18 @@ export default function Dashboard() {
     fetchCircuitBreaker()
     fetchRoutingIntelligence()
     fetchMelons()
+    fetchIndexer()
+    fetchGraph()
     const interval = setInterval(() => {
       fetchStats()
       fetchCircuitBreaker()
       fetchRoutingIntelligence()
       fetchMelons()
+      fetchIndexer()
+      fetchGraph()
     }, 10000)
     return () => clearInterval(interval)
-  }, [fetchStats, fetchCircuitBreaker, fetchRoutingIntelligence, fetchMelons])
+  }, [fetchStats, fetchCircuitBreaker, fetchRoutingIntelligence, fetchMelons, fetchIndexer, fetchGraph])
 
   useEffect(() => {
     if (activeTab === "logs") {
@@ -492,6 +567,7 @@ export default function Dashboard() {
               { id: "activity", label: "Activity", icon: "📊" },
               { id: "backends", label: "Backends", icon: "🌱" },
               { id: "analytics", label: "Analytics", icon: "📈" },
+              { id: "orchestration", label: "Orchestration", icon: "🧠" },
               { id: "logs", label: "Logs", icon: "📜" },
             ] as const).map((tab) => (
               <button
@@ -898,6 +974,173 @@ export default function Dashboard() {
               </Card>
             )}
           </div>
+        )}
+
+        {activeTab === "orchestration" && (
+          <>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Architectural Awareness */}
+            <Card className="lg:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  🧠 Architectural Awareness (GraphRAG)
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  {indexerData?.stats?.lastIndexed ? `Last indexed: ${new Date(indexerData.stats.lastIndexed).toLocaleString()}` : "Not indexed"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-4 mb-6">
+                  <div className="text-center p-3 rounded-lg bg-muted/30 border">
+                    <div className="text-2xl font-bold text-primary">{indexerData?.stats?.totalFiles || 0}</div>
+                    <div className="text-[10px] text-muted-foreground uppercase font-semibold">Indexed Files</div>
+                  </div>
+                  <div className="text-center p-3 rounded-lg bg-muted/30 border">
+                    <div className="text-2xl font-bold text-primary">{indexerData?.stats?.totalSymbols || 0}</div>
+                    <div className="text-[10px] text-muted-foreground uppercase font-semibold">Tracked Symbols</div>
+                  </div>
+                  <div className="text-center p-3 rounded-lg bg-muted/30 border">
+                    <div className="text-2xl font-bold text-primary">1024</div>
+                    <div className="text-[10px] text-muted-foreground uppercase font-semibold">Vector Dims</div>
+                  </div>
+                </div>
+
+                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-primary" />
+                  Key Symbols & Architectural Entities
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-2">
+                  {indexerData?.topSymbols?.map((sym, idx) => (
+                    <div key={idx} className="p-2 rounded border bg-card/50 text-xs flex items-center justify-between group hover:border-primary/50 transition-colors">
+                      <div className="flex flex-col gap-0.5 overflow-hidden">
+                        <span className="font-mono font-bold truncate text-primary">{sym.name}</span>
+                        <span className="text-[10px] text-muted-foreground truncate">{sym.file}</span>
+                      </div>
+                      <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4">{sym.kind}</Badge>
+                    </div>
+                  ))}
+                  {!indexerData?.topSymbols?.length && (
+                    <div className="col-span-2 h-32 flex items-center justify-center text-muted-foreground text-sm">
+                      No architectural data found. Run `delia index` in the CLI.
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Indexing Status / File Map */}
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">RAG Semantic Index</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-end mb-1">
+                      <span className="text-xs text-muted-foreground">Embedding Coverage</span>
+                      <span className="text-xs font-bold">
+                        {indexerData?.stats ? Math.round((indexerData.stats.withEmbeddings / indexerData.stats.totalFiles) * 100) : 0}%
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-primary transition-all duration-1000" 
+                        style={{ width: `${indexerData?.stats ? (indexerData.stats.withEmbeddings / indexerData.stats.totalFiles) * 100 : 0}%` }}
+                      />
+                    </div>
+                    
+                    <div className="pt-4 space-y-2">
+                      <h5 className="text-[10px] uppercase font-bold text-muted-foreground">Recently Scanned Files</h5>
+                      <div className="space-y-1 max-h-[350px] overflow-y-auto">
+                        {indexerData?.files?.map((file, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-[11px] p-1.5 rounded hover:bg-muted/50">
+                            <span className="truncate flex-1 text-muted-foreground">{file.path}</span>
+                            <div className="flex items-center gap-2">
+                              {file.hasEmbedding ? (
+                                <span className="text-primary" title="Vectorized">⚡</span>
+                              ) : (
+                                <span className="opacity-30">⚡</span>
+                              )}
+                              <span className="text-[9px] text-muted-foreground opacity-50">
+                                {new Date(file.mtime).toLocaleDateString([], { month: "short", day: "numeric" })}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          {/* Dependency Graph Visualization */}
+          <Card className="mt-4">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                🔗 Dependency Graph
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Interactive visualization of file dependencies ({graphData?.stats?.totalNodes || 0} files, {graphData?.stats?.totalLinks || 0} connections)
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div ref={graphRef} className="h-[500px] w-full border rounded-lg bg-muted/20 overflow-hidden">
+                {graphData?.nodes?.length ? (
+                  <ForceGraph2D
+                    graphData={{
+                      nodes: graphData.nodes.map(n => ({ ...n, val: Math.max(1, n.symbols) })),
+                      links: graphData.links
+                    }}
+                    nodeLabel={(node) => {
+                      const n = node as GraphNode & { id: string }
+                      return `${n.id}\n${n.symbols} symbols${n.summary ? `\n${n.summary}` : ''}`
+                    }}
+                    nodeColor={(node) => {
+                      const n = node as GraphNode
+                      const groups = graphData.groups || []
+                      const idx = groups.indexOf(n.group)
+                      const colors = ["#689B8A", "#FF6B7A", "#8BB5A6", "#4A7D6D", "#E85566", "#A8D4C4", "#FFB3BA"]
+                      return colors[idx % colors.length]
+                    }}
+                    nodeRelSize={4}
+                    linkColor={() => "rgba(100, 100, 100, 0.3)"}
+                    linkWidth={1}
+                    backgroundColor="transparent"
+                    width={graphRef.current?.clientWidth || 800}
+                    height={480}
+                    cooldownTicks={100}
+                    onNodeClick={(node) => {
+                      const n = node as GraphNode
+                      console.log("Clicked:", n.id)
+                    }}
+                  />
+                ) : (
+                  <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                    No graph data. Run `delia index` to build the dependency graph.
+                  </div>
+                )}
+              </div>
+              {graphData?.groups && graphData.groups.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {graphData.groups.slice(0, 10).map((group, idx) => {
+                    const colors = ["#689B8A", "#FF6B7A", "#8BB5A6", "#4A7D6D", "#E85566", "#A8D4C4", "#FFB3BA"]
+                    return (
+                      <div key={group} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors[idx % colors.length] }} />
+                        <span className="truncate max-w-[100px]">{group || "root"}</span>
+                      </div>
+                    )
+                  })}
+                  {graphData.groups.length > 10 && (
+                    <span className="text-[10px] text-muted-foreground">+{graphData.groups.length - 10} more</span>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          </>
         )}
 
         {activeTab === "logs" && (

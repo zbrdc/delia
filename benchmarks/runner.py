@@ -405,11 +405,12 @@ class DeliaClient:
                 return {"response": "Error: No model configured for tier", "tokens": 0}
             model_name = model_list[0]  # Use first model in the tier
 
-            # Call LLM
+            # Call LLM (bypass queue for benchmarks - queue has loading issues)
             response = await call_llm(
                 model=model_name,
                 prompt=content,
                 backend_obj=backend,
+                bypass_queue=True,
             )
 
             return {"response": response, "tokens": 0, "model": model_name, "backend": backend.id}
@@ -450,6 +451,7 @@ class DeliaClient:
                     model=model_name,
                     prompt=prompt,
                     backend_obj=backend,
+                    bypass_queue=True,
                 )
                 return response
             except Exception:
@@ -466,6 +468,53 @@ class DeliaClient:
         # Simple majority vote (use most common response, or first if no consensus)
         # For now, just return first valid result (proper voting would compare semantically)
         return {"response": valid_results[0], "tokens": 0, "votes": len(valid_results)}
+
+    async def call_baseline(
+        self,
+        prompt: str,
+        model: str | None = None,
+    ) -> dict:
+        """Call Ollama directly, bypassing Delia orchestration.
+
+        This provides a baseline for comparison - no routing, no queue, no voting.
+        """
+        import httpx
+
+        await self._ensure_initialized()
+
+        # Get first backend and model (simple direct call)
+        backends = self._backend_manager.get_enabled_backends()
+        if not backends:
+            return {"response": "", "error": "No backends", "tokens": 0}
+
+        backend = backends[0]
+
+        # Pick model for tier
+        tier = model or "quick"
+        model_list = backend.models.get(tier) or backend.models.get("coder") or []
+        if not model_list:
+            return {"response": "", "error": "No model", "tokens": 0}
+        model_name = model_list[0]
+
+        # Direct Ollama call (no Delia)
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(
+                    f"{backend.url}/api/generate",
+                    json={"model": model_name, "prompt": prompt, "stream": False},
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return {
+                        "response": data.get("response", ""),
+                        "tokens": data.get("eval_count", 0),
+                        "model": model_name,
+                        "backend": backend.id,
+                        "mode": "baseline",
+                    }
+                return {"response": "", "error": f"HTTP {response.status_code}", "tokens": 0}
+        except Exception as e:
+            return {"response": "", "error": str(e), "tokens": 0}
 
     async def close(self):
         """Cleanup (no-op for direct client)."""
@@ -499,10 +548,7 @@ Think through this carefully and give the final answer as a number."""
 
             start = time.perf_counter()
 
-            if self.mode == "voting":
-                response = await self._run_voting(prompt, "analyze")
-            else:
-                response = await self._run_single(prompt, "analyze")
+            response = await self._run_prompt(prompt, "analyze")
 
             elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -538,10 +584,7 @@ Complete the implementation:"""
 
             start = time.perf_counter()
 
-            if self.mode == "voting":
-                response = await self._run_voting(prompt, "generate")
-            else:
-                response = await self._run_single(prompt, "generate")
+            response = await self._run_prompt(prompt, "generate")
 
             elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -579,10 +622,7 @@ Answer:"""
 
             start = time.perf_counter()
 
-            if self.mode == "voting":
-                response = await self._run_voting(prompt, "quick")
-            else:
-                response = await self._run_single(prompt, "quick")
+            response = await self._run_prompt(prompt, "quick")
 
             elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -618,10 +658,7 @@ Answer:"""
 
             start = time.perf_counter()
 
-            if self.mode == "voting":
-                response = await self._run_voting(prompt, "quick")
-            else:
-                response = await self._run_single(prompt, "quick")
+            response = await self._run_prompt(prompt, "quick")
 
             elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -644,8 +681,17 @@ Answer:"""
 
         return BenchmarkSummary("truthfulqa", self.mode, results)
 
+    async def _run_prompt(self, prompt: str, task_type: str) -> dict:
+        """Dispatch to appropriate runner based on mode."""
+        if self.mode == "voting":
+            return await self._run_voting(prompt, task_type)
+        elif self.mode == "baseline":
+            return await self._run_baseline(prompt, task_type)
+        else:  # raw
+            return await self._run_single(prompt, task_type)
+
     async def _run_single(self, prompt: str, task_type: str) -> dict:
-        """Run single delegate call."""
+        """Run single delegate call through Delia."""
         return await self.client.delegate(
             task=task_type,
             content=prompt,
@@ -654,11 +700,18 @@ Answer:"""
         )
 
     async def _run_voting(self, prompt: str, task_type: str) -> dict:
-        """Run voting consensus."""
+        """Run voting consensus through Delia."""
         return await self.client.batch_vote(
             prompt=prompt,
             task=task_type,
             k=self.voting_k,
+        )
+
+    async def _run_baseline(self, prompt: str, task_type: str) -> dict:
+        """Run direct Ollama call, bypassing Delia entirely."""
+        return await self.client.call_baseline(
+            prompt=prompt,
+            model=self.model_tier,
         )
 
 
@@ -676,9 +729,9 @@ async def main():
     )
     parser.add_argument(
         "--mode", "-m",
-        choices=["raw", "voting"],
+        choices=["baseline", "raw", "voting", "compare"],
         default="raw",
-        help="Orchestration mode",
+        help="Mode: baseline (direct Ollama), raw (Delia single), voting (Delia consensus), compare (baseline vs raw)",
     )
     parser.add_argument(
         "--voting-k", "-k",
@@ -697,6 +750,55 @@ async def main():
 
     args = parser.parse_args()
 
+    # Handle compare mode specially - run both baseline and raw
+    if args.mode == "compare":
+        print(f"\n{'='*60}")
+        print("Delia Benchmark Comparison: Baseline vs Delia")
+        print(f"{'='*60}\n")
+
+        if args.benchmark == "all":
+            to_run = ["gsm8k", "humaneval", "mmlu", "truthfulqa"]
+        else:
+            to_run = [args.benchmark]
+
+        comparison_results: dict[str, dict[str, BenchmarkSummary]] = {}
+
+        for mode in ["baseline", "raw"]:
+            runner = BenchmarkRunner(mode=mode, voting_k=args.voting_k, model_tier=args.model)
+            benchmarks = {
+                "gsm8k": runner.run_gsm8k,
+                "humaneval": runner.run_humaneval,
+                "mmlu": runner.run_mmlu,
+                "truthfulqa": runner.run_truthfulqa,
+            }
+
+            print(f"\n--- Running {mode.upper()} mode ---")
+            for name in to_run:
+                print(f"\n[{name.upper()}]")
+                print("-" * 40)
+                summary = await benchmarks[name]()
+                if name not in comparison_results:
+                    comparison_results[name] = {}
+                comparison_results[name][mode] = summary
+                print(f"\nAccuracy: {summary.accuracy*100:.1f}%")
+                print(f"Avg Latency: {summary.avg_latency_ms:.0f}ms")
+
+        # Print comparison summary
+        print(f"\n{'='*70}")
+        print("COMPARISON: Baseline (direct Ollama) vs Delia (orchestrated)")
+        print(f"{'='*70}")
+        print(f"{'Benchmark':<12} {'Baseline Acc':>12} {'Delia Acc':>12} {'Delta':>8} {'Baseline ms':>12} {'Delia ms':>10}")
+        print("-" * 70)
+        for name in to_run:
+            baseline = comparison_results[name]["baseline"]
+            delia = comparison_results[name]["raw"]
+            delta = (delia.accuracy - baseline.accuracy) * 100
+            delta_str = f"+{delta:.1f}%" if delta >= 0 else f"{delta:.1f}%"
+            print(f"{name:<12} {baseline.accuracy*100:>11.1f}% {delia.accuracy*100:>11.1f}% {delta_str:>8} {baseline.avg_latency_ms:>11.0f}ms {delia.avg_latency_ms:>9.0f}ms")
+
+        return
+
+    # Normal single-mode run
     runner = BenchmarkRunner(
         mode=args.mode,
         voting_k=args.voting_k,

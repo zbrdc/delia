@@ -1,0 +1,35 @@
+task: mbpp
+version: "1.0"
+
+data:
+  source: huggingface
+  dataset_path: google-research-datasets/mbpp
+  dataset_name: sanitized
+  split: test
+  limit: 100
+
+prompt:
+  template: |
+    Write a Python function to solve this problem.
+
+    Problem: {text}
+
+    Test cases that must pass:
+    {test_list}
+
+    Write only the function implementation:
+  input_fields:
+    - text
+    - test_list
+  answer_field: code
+  test_field: test_list
+
+metrics:
+  - name: pass_at_1
+    weight: 1.0
+
+metadata:
+  description: "MBPP - Mostly Basic Python Problems (974 entry-level tasks)"
+  domain: "coding"
+  difficulty: "easy"
+  tier: "coder"
