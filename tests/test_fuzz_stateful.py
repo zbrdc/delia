@@ -55,21 +55,16 @@ class DeliaStatefulFuzzer(RuleBasedStateMachine):
         sid = self.sessions.pop(idx)
         self.sm.delete_session(sid)
 
-    @rule(model_index=st.integers(), 
+    @rule(model_index=st.integers(),
           task_index=st.integers(),
-          melons=st.integers(min_value=1, max_value=10))
-    def award_melons(self, model_index, task_index, melons):
+          savings_cents=st.integers(min_value=1, max_value=100))
+    def record_savings(self, model_index, task_index, savings_cents):
+        """Record savings which converts to melons (1 melon = $0.001)."""
         model = self.models[model_index % len(self.models)]
         task = self.task_types[task_index % len(self.task_types)]
-        self.mt.award(model, task, melons=melons)
-
-    @rule(model_index=st.integers(), 
-          task_index=st.integers(),
-          melons=st.integers(min_value=1, max_value=10))
-    def penalize_melons(self, model_index, task_index, melons):
-        model = self.models[model_index % len(self.models)]
-        task = self.task_types[task_index % len(self.task_types)]
-        self.mt.penalize(model, task, melons=melons)
+        # Convert cents to USD for savings
+        savings_usd = savings_cents / 100.0
+        self.mt.record_savings(model, task, savings_usd=savings_usd)
 
     @invariant()
     def check_consistency(self):

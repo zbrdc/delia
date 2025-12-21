@@ -38,6 +38,10 @@ def mock_env():
         }
     )
     
+    # Disable ToT exploration
+    from delia.orchestration.meta_learning import get_orchestration_learner
+    get_orchestration_learner().base_tot_probability = 0.0
+    
     with patch("delia.backend_manager.BackendManager.get_active_backend", return_value=mock_backend), \
          patch("delia.backend_manager.BackendManager.get_enabled_backends", return_value=[mock_backend]), \
          patch("delia.routing.BackendScorer.score", return_value=1.0), \
@@ -136,11 +140,14 @@ class TestE2EChatTooling:
     async def test_directory_listing_intent(self, mock_env):
         """Test that asking for directory contents triggers AGENTIC mode."""
         service = get_orchestration_service()
-        
+
         # We only care about the intent detection here
-        with patch("delia.llm.call_llm", new_callable=AsyncMock) as mock_call:
+        # Mock should_use_tot to prevent ToT from overriding the agentic mode
+        with patch("delia.llm.call_llm", new_callable=AsyncMock) as mock_call, \
+             patch("delia.orchestration.meta_learning.OrchestrationLearner.should_use_tot") as mock_tot:
             mock_call.return_value = {"success": True, "response": "Listing files...", "model": "test"}
-            
+            mock_tot.return_value = (False, "")  # Disable ToT for this test
+
             # Test with the typo I fixed earlier
             async for event in service.process_stream(message="what direcotry are we in?"):
                 if event.event_type == "intent":

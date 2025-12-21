@@ -344,20 +344,20 @@ class TestQueueModuleEdgeCases:
         """Full acquire/release cycle works."""
         queue = ModelQueue()
 
-        # Acquire a new model
+        # Acquire a new model - triggering request now loads synchronously
         available, future = await queue.acquire_model("test-model", "review", 100)
-        assert available  # Should be available (needs loading)
-        assert future is None  # Not queued
+        assert available  # Triggering request waits for load and gets True
+        assert future is None  # No future needed - model is ready
 
-        # Model should be in loading state
-        assert "test-model" in queue.loading_models
-
-        # Release the model (success)
-        await queue.release_model("test-model", success=True)
-
-        # Model should now be loaded
+        # Model should now be loaded (not loading)
         assert "test-model" in queue.loaded_models
         assert "test-model" not in queue.loading_models
+
+        # Release the model (success) - updates last_used timestamp
+        await queue.release_model("test-model", success=True)
+
+        # Model should still be loaded
+        assert "test-model" in queue.loaded_models
 
     def test_queue_status_structure(self):
         """Queue status returns expected structure."""
