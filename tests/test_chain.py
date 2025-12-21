@@ -4,6 +4,9 @@
 """Tests for chain/pipeline execution in Delia."""
 
 import pytest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 from delia.orchestration.intent import IntentDetector
 from delia.orchestration.meta_learning import reset_orchestration_learner, get_orchestration_learner
@@ -14,12 +17,20 @@ class TestChainDetection:
     """Test chain pattern detection in intent detector."""
 
     def setup_method(self):
-        """Reset meta-learner to prevent learned pattern override."""
+        """Reset meta-learner with empty patterns to prevent learned pattern override."""
+        # Use a temp directory so no patterns are loaded from disk
+        self._temp_dir = tempfile.mkdtemp()
         reset_orchestration_learner()
-        # Reset the learner AND clear any learned patterns
-        learner = get_orchestration_learner()
-        learner.total_tasks = 500
-        learner.patterns.clear()  # Clear learned patterns that might override CHAIN
+
+        # Patch DATA_DIR to use temp directory (no existing patterns)
+        with patch('delia.orchestration.meta_learning.paths.DATA_DIR', Path(self._temp_dir)):
+            reset_orchestration_learner()
+            learner = get_orchestration_learner()
+            # Re-init with clean data dir
+            learner.data_dir = Path(self._temp_dir)
+            learner.patterns.clear()
+            learner.total_tasks = 500  # High count to disable exploration
+            learner.base_tot_probability = 0.0
 
     def test_first_then_pattern(self):
         """Test 'first... then...' pattern detection."""

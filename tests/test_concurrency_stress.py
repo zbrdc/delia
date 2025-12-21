@@ -15,21 +15,23 @@ async def test_high_concurrency_load():
     
     # 1. Setup mock backends
     mock_backend = BackendConfig(
-        id="stress-backend", 
-        name="Stress Backend", 
-        provider="ollama", 
-        type="local", 
+        id="stress-backend",
+        name="Stress Backend",
+        provider="ollama",
+        type="local",
         url="http://localhost:11434",
         enabled=True,
         models={"quick": "qwen3:7b", "coder": "qwen2.5-coder:7b", "moe": "qwen3:14b"}
     )
-    
-    # Mocking essential components
-    with patch("delia.mcp_server.get_active_backend") as mock_ab, \
-         patch("delia.mcp_server.call_llm") as mock_call, \
+
+    # Mocking essential components - patch backend_manager which is used throughout
+    with patch.object(backend_manager, "get_active_backend") as mock_ab, \
+         patch.object(backend_manager, "get_enabled_backends") as mock_eb, \
+         patch("delia.llm.call_llm") as mock_call, \
          patch("delia.delegation.get_affinity_tracker") as mock_at:
         
         mock_ab.return_value = mock_backend
+        mock_eb.return_value = [mock_backend]
         mock_at.return_value = MagicMock()
         
         # Simulate varying latency for LLM calls

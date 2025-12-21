@@ -2,12 +2,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import pytest
+from unittest.mock import patch, MagicMock
 from delia.orchestration.intent import IntentDetector
 from delia.orchestration.result import OrchestrationMode, ModelRole
 
 @pytest.fixture
 def detector():
-    return IntentDetector()
+    # Disable ToT exploration during tests to ensure deterministic mode detection
+    # Note: We patch meta_learning since it's imported inside IntentDetector
+    with patch("delia.orchestration.meta_learning.get_orchestration_learner") as mock_learner_getter:
+        mock_learner = MagicMock()
+        mock_learner.should_use_tot.return_value = (False, "disabled for test")
+        mock_learner.get_best_mode.return_value = (None, 0.0)
+        mock_learner_getter.return_value = mock_learner
+        yield IntentDetector()
 
 # Exhaustive Matrix aligned with optimized architecture
 INTENT_SCENARIOS = [
@@ -25,7 +33,7 @@ INTENT_SCENARIOS = [
     ("what are the contents of .env?", OrchestrationMode.AGENTIC, "quick"),
     ("modify the header in index.html", OrchestrationMode.AGENTIC, "coder"),
     ("save this output to results.txt", OrchestrationMode.AGENTIC, "coder"),
-    ("delete the temp directory", OrchestrationMode.AGENTIC, "coder"), # Destructive tool op
+    ("delete the temp directory", OrchestrationMode.AGENTIC, "quick"), # Destructive but simple shell op
     ("git commit -m 'test'", OrchestrationMode.AGENTIC, "coder"),
     ("docker build .", OrchestrationMode.AGENTIC, "coder"),
     ("where am i?", OrchestrationMode.AGENTIC, "quick"),

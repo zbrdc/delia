@@ -2,14 +2,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import pytest
+from unittest.mock import patch, MagicMock
 from delia.orchestration.intent import IntentDetector
 from delia.orchestration.result import OrchestrationMode, ModelRole
 
 class TestIntentDeepScan:
     """Deep scan of intent detection logic."""
 
-    @pytest.fixture
-    def detector(self):
+@pytest.fixture
+def detector():
+    # Disable ToT exploration during tests to ensure deterministic mode detection
+    with patch("delia.orchestration.meta_learning.get_orchestration_learner") as mock_learner_getter:
+        mock_learner = MagicMock()
+        mock_learner.should_use_tot.return_value = (False, "disabled for test")
+        mock_learner.get_best_mode.return_value = (None, 0.0)
+        mock_learner_getter.return_value = mock_learner
         return IntentDetector()
 
     @pytest.mark.parametrize("msg, expected_mode", [
