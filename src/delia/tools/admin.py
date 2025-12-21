@@ -123,3 +123,107 @@ def register_admin_tools(mcp: FastMCP):
         from ..mcp_server import get_model_info
         info = get_model_info(model_name)
         return json.dumps(info, indent=2)
+
+    @mcp.tool()
+    async def init_project(
+        path: str | None = None,
+        force: bool = False,
+        skip_index: bool = False,
+        parallel: int = 4,
+    ) -> str:
+        """
+        Initialize a project with Delia's ACE Framework.
+
+        This generates per-project instruction files customized to the detected tech stack:
+        - CLAUDE.md (for Claude Code)
+        - .gemini/instructions.md (for Google Gemini)
+        - .github/copilot-instructions.md (for GitHub Copilot)
+        - .delia/playbooks/*.json (strategic bullets)
+
+        Args:
+            path: Project path (defaults to current working directory)
+            force: Overwrite existing framework files
+            skip_index: Skip indexing (use existing analysis)
+            parallel: Number of parallel summarization tasks
+
+        Returns:
+            JSON with initialization results
+        """
+        from pathlib import Path
+        from ..playbook import detect_tech_stack, playbook_manager
+        from ..orchestration.summarizer import get_summarizer
+        from ..orchestration.graph import get_symbol_graph
+        from ..llm import init_llm_module
+        from ..queue import ModelQueue
+
+        project_root = Path(path) if path else Path.cwd()
+        project_name = project_root.name
+        results = {"project": project_name, "path": str(project_root), "steps": []}
+
+        try:
+            # Step 1: Index the project (unless skipped)
+            if not skip_index:
+                model_queue = ModelQueue()
+                init_llm_module(
+                    stats_callback=lambda *a, **k: None,
+                    save_stats_callback=lambda: None,
+                    model_queue=model_queue,
+                )
+
+                summarizer = get_summarizer()
+                graph = get_symbol_graph()
+
+                # Build symbol graph
+                graph_count = await graph.sync(force=force)
+                results["steps"].append({"step": "symbol_graph", "files": graph_count})
+
+                # Generate summaries
+                summary_count = await summarizer.sync_project(force=force, summarize=True, parallel=parallel)
+                results["steps"].append({"step": "summaries", "files": summary_count})
+            else:
+                results["steps"].append({"step": "indexing", "skipped": True})
+
+            # Step 2: Detect tech stack
+            tech_stack = detect_tech_stack(project_root)
+            results["tech_stack"] = tech_stack
+
+            # Step 3: Generate framework files
+            from ..cli import _generate_claude_md
+            claude_md_content = _generate_claude_md(project_name, tech_stack, project_root)
+
+            files_written = []
+
+            # Write CLAUDE.md
+            claude_md_path = project_root / "CLAUDE.md"
+            if force or not claude_md_path.exists():
+                claude_md_path.write_text(claude_md_content)
+                files_written.append("CLAUDE.md")
+
+            # Write to other AI assistant directories
+            other_locations = [
+                (project_root / ".gemini", "instructions.md"),
+                (project_root / ".github", "copilot-instructions.md"),
+            ]
+            for directory, filename in other_locations:
+                directory.mkdir(parents=True, exist_ok=True)
+                file_path = directory / filename
+                if force or not file_path.exists():
+                    file_path.write_text(claude_md_content)
+                    files_written.append(str(file_path.relative_to(project_root)))
+
+            results["files_written"] = files_written
+
+            # Step 4: Generate project playbook
+            from ..playbook import generate_project_playbook
+            playbook_count = await generate_project_playbook(summarizer if not skip_index else get_summarizer())
+            results["steps"].append({"step": "playbook", "bullets": playbook_count})
+
+            results["status"] = "success"
+            log.info("init_project_complete", project=project_name, files=len(files_written))
+
+        except Exception as e:
+            results["status"] = "error"
+            results["error"] = str(e)
+            log.error("init_project_failed", project=project_name, error=str(e))
+
+        return json.dumps(results, indent=2)
