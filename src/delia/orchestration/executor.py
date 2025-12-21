@@ -192,20 +192,27 @@ class OrchestrationExecutor:
         active_personas = persona_manager.get_active_persona_names()
         if len(active_personas) > 1:
             yield StreamEvent(event_type="status", message=f"Personas: {', '.join(active_personas)}")
-        pb_context = playbook_manager.format_for_prompt(intent.task_type)
-        if pb_context: system_prompt += f"\n\n{pb_context}"
 
-        # Inject task focus for "Am I on task?" grounding
-        if session_id:
-            session_mgr = get_session_manager()
-            session = session_mgr.get_session(session_id)
-            if session:
-                # Set the task if this is a new request (first message or new primary task)
-                if not session.original_task or len(session.messages) == 0:
-                    session.set_task(message)
-                task_focus = session.get_task_focus_prompt()
-                if task_focus:
-                    system_prompt += f"\n\n{task_focus}"
+        # Skip playbook and task focus for simple quick tasks (greetings, simple Q&A)
+        # These confuse the model with unnecessary "Am I on task?" checks
+        is_simple_task = intent.task_type in ("quick", "status", "chat")
+
+        if not is_simple_task:
+            pb_context = playbook_manager.format_for_prompt(intent.task_type)
+            if pb_context:
+                system_prompt += f"\n\n{pb_context}"
+
+            # Inject task focus for "Am I on task?" grounding (complex tasks only)
+            if session_id:
+                session_mgr = get_session_manager()
+                session = session_mgr.get_session(session_id)
+                if session:
+                    # Set the task if this is a new request (first message or new primary task)
+                    if not session.original_task or len(session.messages) == 0:
+                        session.set_task(message)
+                    task_focus = session.get_task_focus_prompt()
+                    if task_focus:
+                        system_prompt += f"\n\n{task_focus}"
 
         full_res = ""
         async for chunk in call_llm_stream(model=selected_model, prompt=message, system=system_prompt, backend_obj=backend_obj, messages=messages):
