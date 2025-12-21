@@ -27,6 +27,31 @@ uv pip install -e .
 pip install -e .
 ```
 
+
+## Backend Support & Model Requirements
+
+Delia is designed for high-performance local execution. We support the following inference backends:
+- **Ollama** (Recommended for simplicity)
+- **llama.cpp** (Recommended for maximum hardware performance)
+- **LM Studio** / **vLLM** (OpenAI-compatible endpoints)
+
+### Recommended Model Stack
+
+For the best experience, we recommend the following models (optimized for Delia’s internal logic):
+
+- **Semantic Indexing (Embeddings):** `mxbai-embed-large` 
+  - *Requirement:* Must be available on your backend for codebase indexing and GraphRAG capabilities. 
+  - *Hardware:* Runs on CPU/RAM (669MB).
+- **Logical Orchestration (Quick Tier):** `ministral-3-14b` or `qwen3:0.6b`
+  - Used for intent detection and file summarization.
+- **Agentic reasoning (Coder/Thinking):** `openthinker:7b` or `deepcoder:14b`
+  - Used for complex refactoring and strategic planning.
+
+To automatically detect and configure your local models, run:
+```bash
+delia init
+```
+
 ## Usage
 
 ### Interactive Chat (Default)

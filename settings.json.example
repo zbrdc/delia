@@ -13,7 +13,9 @@
         "quick": "current",
         "coder": "current",
         "moe": "current",
-        "thinking": "current"
+        "thinking": "current",
+        "agentic": "current",
+        "swe": "current"
       }
     },
     {
@@ -25,15 +27,78 @@
       "enabled": false,
       "priority": 2,
       "models": {
-        "quick": "qwen3:14b",
-        "coder": "qwen2.5-coder:14b",
-        "moe": "qwen3:30b-a3b",
-        "thinking": "deepseek-r1:14b"
+        "quick": "qwen3:8b",
+        "coder": ["deepcoder:14b", "qwen2.5-coder:14b"],
+        "moe": ["qwen3:32b", "openthinker:32b"],
+        "thinking": "openthinker:7b",
+        "agentic": "openthinker:7b",
+        "swe": "hf.co/bartowski/agentica-org_DeepSWE-Preview-GGUF:Q4_K_M",
+        "dispatcher": "functiongemma:270m"
       }
     }
   ],
   "routing": {
     "prefer_local": true,
     "fallback_enabled": true
+  },
+  "sandbox": {
+    "enabled": true,
+    "backend": "docker",
+    "timeout_seconds": 30,
+    "memory_limit_mb": 512,
+    "cpu_limit": 1.0,
+    "network_enabled": false,
+    "default_language": "python",
+    "images": {
+      "python": null,
+      "javascript": null,
+      "java": null,
+      "cpp": null,
+      "go": null,
+      "r": null
+    }
+  },
+  "security": {
+    "approval_mode": "auto",
+    "audit_enabled": true,
+    "undo_enabled": true,
+    "max_undo_entries": 100,
+    "blocked_patterns": [
+      "/.ssh", "/.aws", "/.gnupg", "/etc/passwd", "/etc/shadow"
+    ],
+    "command_blocklist": [
+      "rm -rf /", "sudo ", "chmod 777", "curl | bash"
+    ],
+    "safe_commands": [
+      "git status", "git diff", "ls", "cat", "pytest", "npm test"
+    ],
+    "allowed_paths": []
+  },
+  "specialists": {
+    "sql-expert": {
+      "model": "sqlcoder:7b",
+      "specializations": ["sql", "database", "query", "postgres", "mysql", "select", "join"],
+      "tasks": ["generate", "review"],
+      "parent": "codellama:7b",
+      "vram_gb": 5.0
+    },
+    "python-expert": {
+      "model": "codestral:7b",
+      "specializations": ["python", "django", "flask", "fastapi", "pandas", "numpy"],
+      "tasks": ["generate", "review", "analyze"],
+      "vram_gb": 5.0
+    },
+    "typescript-expert": {
+      "model": "qwen2.5-coder:7b",
+      "specializations": ["typescript", "javascript", "react", "vue", "node"],
+      "tasks": ["generate", "review"],
+      "vram_gb": 5.0
+    },
+    "shell-expert": {
+      "model": "granite-code:3b",
+      "specializations": ["bash", "shell", "linux", "docker", "kubernetes"],
+      "tasks": ["generate", "quick"],
+      "vram_gb": 2.5
+    }
   }
 }
