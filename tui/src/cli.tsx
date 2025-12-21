@@ -9,22 +9,16 @@ const cli = meow(`
     $ delia-tui [options]
 
   Options
-    --server, -s        Delia API server URL (default: http://localhost:34589)
+    --server, -s        API server URL (default: http://localhost:34589)
+    --task, -t          Initial task to run
     --no-allow-write    Disable file write operations
-    --no-allow-exec     Disable shell command execution
-    --yolo              Skip all security prompts (dangerous!)
-    --help              Show this help
-
-  By default, file and shell operations are enabled but require confirmation.
-  Use --yolo to skip confirmations (not recommended).
-
-  Before running, start the Delia API server:
-    $ delia api
+    --no-allow-exec     Disable shell execution
+    --yolo              Skip security prompts (dangerous!)
 
   Examples
     $ delia-tui
+    $ delia-tui --task "Find TODO comments"
     $ delia-tui --yolo
-    $ delia-tui --no-allow-exec
 `, {
   importMeta: import.meta,
   flags: {
@@ -32,6 +26,10 @@ const cli = meow(`
       type: 'string',
       shortFlag: 's',
       default: 'http://localhost:34589',
+    },
+    task: {
+      type: 'string',
+      shortFlag: 't',
     },
     allowWrite: {
       type: 'boolean',
@@ -51,6 +49,7 @@ const cli = meow(`
 render(
   <App
     serverUrl={cli.flags.server}
+    initialTask={cli.flags.task}
     allowWrite={cli.flags.allowWrite}
     allowExec={cli.flags.allowExec}
     yolo={cli.flags.yolo}

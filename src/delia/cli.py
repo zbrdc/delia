@@ -908,15 +908,8 @@ def chat(
         if (tui_dir / "dist" / "cli.js").exists():
             tui_cmd = ["node", str(tui_dir / "dist" / "cli.js")]
         else:
-            print_error("New TUI not found or not built.")
-            print_info("Please run 'npm install && npm run build' in the tui directory.")
-            
-            # Fallback to old TUI if user confirms
-            if prompt_confirm("Would you like to use the legacy Python TUI instead?"):
-                from .agent_cli import AgentCLIConfig, run_chat_cli
-                import asyncio
-                config = AgentCLIConfig(model=model, backend_type=backend, workspace=workspace)
-                asyncio.run(run_chat_cli(config))
+            print_error("TUI not found or not built.")
+            print_info("Run: cd tui && npm install && npm run build")
             return
     else:
         tui_cmd = [tui_path]
@@ -940,66 +933,48 @@ def chat(
 @app.command()
 def agent(
     task: Annotated[str, typer.Argument(help="Task for the agent to complete")],
-    model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model tier (quick/coder/moe) or specific model")] = None,
-    workspace: Annotated[Optional[str], typer.Option("--workspace", "-w", help="Confine file operations to directory")] = None,
-    max_iterations: Annotated[int, typer.Option("--max-iterations", help="Maximum tool call iterations")] = 10,
-    tools: Annotated[Optional[str], typer.Option("--tools", help="Comma-separated tools to enable (default: all)")] = None,
-    backend: Annotated[Optional[str], typer.Option("--backend", "-b", help="Force backend type (local/remote)")] = None,
-    voting: Annotated[bool, typer.Option("--voting", help="Enable k-voting for reliability")] = False,
-    voting_k: Annotated[Optional[int], typer.Option("--voting-k", help="Override k value for voting")] = None,
-    # New features
-    plan: Annotated[bool, typer.Option("--plan/--no-plan", help="Enable planning phase (default: True)")] = True,
-    reflect: Annotated[bool, typer.Option("--reflect/--no-reflect", help="Enable agentic reflection (default: True)")] = True,
-    reflection_confidence: Annotated[str, typer.Option("--confidence", help="Reflection confidence (normal/high)")] = "normal",
-    tui: Annotated[bool, typer.Option("--tui/--no-tui", help="Use Rich TUI (default: True)")] = True,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed output")] = False,
+    model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model tier")] = None,
+    workspace: Annotated[Optional[str], typer.Option("--workspace", "-w", help="Confine to directory")] = None,
+    backend: Annotated[Optional[str], typer.Option("--backend", "-b", help="Backend type")] = None,
+    yolo: Annotated[bool, typer.Option("--yolo", help="Auto-approve all operations")] = False,
 ) -> None:
     """
     Run an autonomous agent to complete a task.
 
-    The agent can read files, search code, list directories, and fetch web content
-    to accomplish the given task. It runs a loop of: think -> use tools -> respond.
-
-    New in v3.2:
-    - Planning: Generates a step-by-step plan before execution (--plan)
-    - Reflection: Critiques its own work before finishing (--reflect)
-    - TUI: Live dashboard of agent activity (--tui)
+    Launches the TUI with the given task. The agent can read files, search code,
+    and use tools to accomplish the task.
 
     Examples:
-        delia agent "Refactor this file" --plan --reflect
-        delia agent "Quick fix" --no-plan --no-reflect
+        delia agent "Refactor this file"
+        delia agent "Find all TODO comments" --workspace ./src
     """
-    from .agent_cli import AgentCLIConfig, run_agent_sync
-    
-    # Disable TUI if requested
-    if not tui:
-        import sys
-        sys.modules["delia.agent_cli"].RICH_AVAILABLE = False
+    import subprocess
+    import shutil
 
-    # Parse tools
-    tools_list = None
-    if tools:
-        tools_list = [t.strip() for t in tools.split(",") if t.strip()]
+    # Find TUI
+    tui_path = shutil.which("delia-tui")
+    if not tui_path:
+        project_root = get_delia_root()
+        tui_dir = project_root / "tui"
+        if (tui_dir / "dist" / "cli.js").exists():
+            tui_cmd = ["node", str(tui_dir / "dist" / "cli.js")]
+        else:
+            print_error("TUI not found. Run: cd tui && npm install && npm run build")
+            raise typer.Exit(1)
+    else:
+        tui_cmd = [tui_path]
 
-    config = AgentCLIConfig(
-        model=model,
-        workspace=workspace,
-        max_iterations=max_iterations,
-        tools=tools_list,
-        backend_type=backend,
-        verbose=verbose,
-        voting_enabled=voting,
-        voting_k=voting_k,
-        planning_enabled=plan,
-        reflection_enabled=reflect,
-        reflection_confidence=reflection_confidence,
-    )
+    # Add options
+    if model: tui_cmd.extend(["--model", model])
+    if backend: tui_cmd.extend(["--backend", backend])
+    if workspace: tui_cmd.extend(["--workspace", workspace])
+    if yolo: tui_cmd.append("--yolo")
+    tui_cmd.extend(["--task", task])
 
-    result = run_agent_sync(task, config)
-
-    # Exit with error code if agent failed
-    if not result.success:
-        raise typer.Exit(1)
+    try:
+        subprocess.run(tui_cmd, check=False)
+    except KeyboardInterrupt:
+        pass
 
 
 

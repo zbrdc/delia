@@ -219,7 +219,9 @@ class OrchestrationExecutor:
             full_res += chunk.text
             yield StreamEvent(event_type="token", message=chunk.text)
 
-        yield StreamEvent(event_type="response", message=full_res, details={"model": selected_model})
+        # Strip thinking tags from the response for cleaner output
+        clean_response = strip_thinking_tags(full_res)
+        yield StreamEvent(event_type="response", message=clean_response, details={"model": selected_model})
         yield StreamEvent(event_type="done", message="Completed")
 
     async def _execute_agentic(

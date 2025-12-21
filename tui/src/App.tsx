@@ -22,12 +22,13 @@ type Status = 'ready' | 'connecting' | 'thinking' | 'streaming' | 'error' | 'con
 
 interface AppProps {
   serverUrl: string;
+  initialTask?: string;
   allowWrite?: boolean;
   allowExec?: boolean;
   yolo?: boolean;
 }
 
-export function App({ serverUrl, allowWrite = true, allowExec = true, yolo = false }: AppProps) {
+export function App({ serverUrl, initialTask, allowWrite = true, allowExec = true, yolo = false }: AppProps) {
   const { exit } = useApp();
   const [client] = useState(() => new DeliaClient(serverUrl));
   const [status, setStatus] = useState<Status>('connecting');
@@ -38,6 +39,7 @@ export function App({ serverUrl, allowWrite = true, allowExec = true, yolo = fal
   const [currentModel, setCurrentModel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
+  const [initialTaskSent, setInitialTaskSent] = useState(false);
 
   // Check health on mount
   useEffect(() => {
@@ -244,6 +246,21 @@ ${stats.threshold_tokens ? `Threshold: ${stats.threshold_tokens.toLocaleString()
     setStatus('ready');
     setCurrentModel(null);
   }, [input, status, client, exit]);
+
+  // Set initial task input when ready
+  useEffect(() => {
+    if (initialTask && status === 'ready' && !initialTaskSent && input === '') {
+      setInput(initialTask);
+    }
+  }, [initialTask, status, initialTaskSent, input]);
+
+  // Send initial task after input is set
+  useEffect(() => {
+    if (initialTask && status === 'ready' && !initialTaskSent && input === initialTask) {
+      setInitialTaskSent(true);
+      sendMessage();
+    }
+  }, [initialTask, status, initialTaskSent, input, sendMessage]);
 
   // Handle confirmation response (y/n/a)
   const handleConfirmation = useCallback(async (response: string) => {
