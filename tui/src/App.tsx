@@ -315,10 +315,8 @@ ${stats.threshold_tokens ? `Threshold: ${stats.threshold_tokens.toLocaleString()
         ))}
         {/* Streaming buffer */}
         {streamBuffer && (
-          <Box marginTop={1}>
-            <Text color="green" bold>{'>'} </Text>
-            <Text>{streamBuffer}</Text>
-            <Text color="gray">▌</Text>
+          <Box flexDirection="column" marginTop={1}>
+            <Text wrap="wrap">{streamBuffer}<Text color="gray">▌</Text></Text>
           </Box>
         )}
         {/* Confirmation prompt */}
@@ -398,19 +396,27 @@ function StatusIndicator({ status, model }: { status: Status; model?: string | n
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
 
+  if (isUser) {
+    // User messages: simple prompt style
+    return (
+      <Box marginTop={1}>
+        <Text color="cyan" dimColor>❯ </Text>
+        <Text wrap="wrap">{message.content}</Text>
+      </Box>
+    );
+  }
+
+  // Assistant messages: clean response with optional model tag
   return (
     <Box flexDirection="column" marginTop={1}>
       <Box>
-        <Text color={isUser ? 'blue' : 'green'} bold>
-          {isUser ? 'You' : 'Delia'}
-        </Text>
-        {message.model && (
-          <Text color="gray" dimColor> ({message.model})</Text>
-        )}
-      </Box>
-      <Box marginLeft={2}>
         <Text wrap="wrap">{message.content}</Text>
       </Box>
+      {message.model && (
+        <Box marginTop={0}>
+          <Text color="gray" dimColor>— {message.model}</Text>
+        </Box>
+      )}
     </Box>
   );
 }
