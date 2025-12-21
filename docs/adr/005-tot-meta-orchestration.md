@@ -300,23 +300,28 @@ Learned patterns:
 
 ### Phase 1: Core ToT Execution
 - [x] Design architecture
-- [ ] Implement `_execute_tree_of_thoughts()`
-- [ ] Implement `_critic_evaluate_branches()`
-- [ ] Add ToT result metadata
+- [x] Implement `_execute_tree_of_thoughts()` in executor.py (lines 342-500)
+- [x] Implement `_critic_evaluate_branches()` via Critic class
+- [x] Add ToT result metadata (tot_branches, tot_winner, tot_reasoning)
 
 ### Phase 2: ACE Meta-Learning Integration
-- [ ] Implement `_ace_learn_from_tot()`
-- [ ] Implement `_curate_orchestration_strategy()`
-- [ ] Add orchestration playbook support
-- [ ] Test learning loop
+- [x] Implement `_ace_meta_learn()` in executor.py (lines 502-550)
+- [x] Implement `learn_from_tot()` in meta_learning.py with Bayesian updates
+- [x] Add orchestration playbook support via playbook_manager
+- [x] Test learning loop
 
 ### Phase 3: Intent Detection Enhancement
-- [ ] Add `_check_tot_triggers()` logic
-- [ ] Integrate playbook recommendations
-- [ ] Add frustration-based escalation
-- [ ] Add session history analysis
+- [x] Add `_check_orchestration_learner()` in intent.py (lines 195-256)
+- [x] Implement `should_use_tot()` with probabilistic triggering
+- [x] Add high-stakes keyword detection (security, crypto, auth, etc.)
+- [x] Integrate into executor.execute() dispatch
 
-### Phase 4: Optimization
+### Phase 4: MCP Tool Integration
+- [x] Add `tot=True` parameter to `delegate()` for explicit triggering
+- [x] Create `_delegate_with_tot()` helper function
+- [x] Add ToT metadata in response footer
+
+### Phase 5: Optimization (Future)
 - [ ] Add branch caching (skip redundant executions)
 - [ ] Implement adaptive branch selection
 - [ ] Add cost controls (max branches, timeouts)
