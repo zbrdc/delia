@@ -60,22 +60,18 @@ VOTING_EXEMPLARS = [
     IntentExemplar("is this calculation correct", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
     IntentExemplar("verify my math", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
     IntentExemplar("check if this logic is sound", OrchestrationMode.VOTING, ModelRole.CODE_REVIEWER, "coder"),
-]
 
-COMPARISON_EXEMPLARS = [
-    # Explicit comparison requests
-    IntentExemplar("what do different models think about this", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
-    IntentExemplar("compare perspectives on this", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
-    IntentExemplar("get me a second opinion", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
-    IntentExemplar("I want multiple viewpoints", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
-    IntentExemplar("ask different models", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
-    IntentExemplar("compare qwen vs deepseek on this", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
-    IntentExemplar("what would other models say", OrchestrationMode.COMPARISON, ModelRole.ANALYST, "quick"),
-    
-    # Implicit comparison signals
-    IntentExemplar("I'm not sure which approach is better", OrchestrationMode.COMPARISON, ModelRole.ARCHITECT, "moe"),
-    IntentExemplar("there are multiple ways to do this", OrchestrationMode.COMPARISON, ModelRole.ARCHITECT, "moe"),
-    IntentExemplar("I want to see different options", OrchestrationMode.COMPARISON, ModelRole.ARCHITECT, "moe"),
+    # ADR-008: Comparison requests (formerly COMPARISON mode, now VOTING)
+    IntentExemplar("what do different models think about this", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
+    IntentExemplar("compare perspectives on this", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
+    IntentExemplar("get me a second opinion", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
+    IntentExemplar("I want multiple viewpoints", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
+    IntentExemplar("ask different models", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
+    IntentExemplar("compare qwen vs deepseek on this", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
+    IntentExemplar("what would other models say", OrchestrationMode.VOTING, ModelRole.ANALYST, "quick"),
+    IntentExemplar("I'm not sure which approach is better", OrchestrationMode.VOTING, ModelRole.ARCHITECT, "moe"),
+    IntentExemplar("there are multiple ways to do this", OrchestrationMode.VOTING, ModelRole.ARCHITECT, "moe"),
+    IntentExemplar("I want to see different options", OrchestrationMode.VOTING, ModelRole.ARCHITECT, "moe"),
 ]
 
 DEEP_THINKING_EXEMPLARS = [
@@ -266,8 +262,7 @@ STATUS_EXEMPLARS = [
 def get_all_exemplars() -> list[IntentExemplar]:
     """Get all exemplars for embedding."""
     return (
-        VOTING_EXEMPLARS +
-        COMPARISON_EXEMPLARS +
+        VOTING_EXEMPLARS +  # ADR-008: Now includes comparison exemplars
         DEEP_THINKING_EXEMPLARS +
         AGENTIC_EXEMPLARS +
         CODE_REVIEWER_EXEMPLARS +
@@ -287,8 +282,7 @@ def get_all_exemplars() -> list[IntentExemplar]:
 def get_orchestration_exemplars() -> list[IntentExemplar]:
     """Get only orchestration mode exemplars."""
     return (
-        VOTING_EXEMPLARS +
-        COMPARISON_EXEMPLARS +
+        VOTING_EXEMPLARS +  # ADR-008: Now includes comparison exemplars
         DEEP_THINKING_EXEMPLARS +
         AGENTIC_EXEMPLARS
     )
@@ -325,8 +319,7 @@ __all__ = [
     "get_role_exemplars",
     "get_task_exemplars",
     # Individual lists for testing
-    "VOTING_EXEMPLARS",
-    "COMPARISON_EXEMPLARS",
+    "VOTING_EXEMPLARS",  # ADR-008: Now includes comparison exemplars
     "DEEP_THINKING_EXEMPLARS",
     "AGENTIC_EXEMPLARS",
 ]

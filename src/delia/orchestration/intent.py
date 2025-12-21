@@ -32,6 +32,7 @@ class IntentPattern:
 class IntentDetector:
     """NLP-based intent detection for Delia orchestration."""
 
+    # ADR-008: COMPARISON patterns merged into VOTING
     VERIFICATION_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
             re.compile(r"\b(make sure|verify|double.?check|confirm|validate|ensure|certain|reliable|accurate|correct|accuracy|bugs|reliable answer)\b", re.I),
@@ -39,12 +40,9 @@ class IntentDetector:
             confidence_boost=0.45,
             reasoning="verification requested",
         ),
-    ]
-
-    COMPARISON_PATTERNS: ClassVar[list[IntentPattern]] = [
         IntentPattern(
             re.compile(r"\b(compare|contrast|vs|versus|comparison|side by side|second opinion|multiple models|different models|which model is better|is better)\b", re.I),
-            orchestration_mode=OrchestrationMode.COMPARISON,
+            orchestration_mode=OrchestrationMode.VOTING,
             confidence_boost=0.45,
             reasoning="comparison requested",
         ),
@@ -60,16 +58,14 @@ class IntentDetector:
         ),
     ]
 
+    # ADR-008: ToT patterns removed from auto-detection.
+    # ToT is now opt-in only via tot=True parameter in delegate().
+    # Research (ICLR 2025) shows ToT has diminishing returns for most tasks.
+    # Only explicit "tree of thoughts" or "tot" in message triggers it.
     TOT_PATTERNS: ClassVar[list[IntentPattern]] = [
+        # Only explicit requests trigger ToT - no inference from "explore" etc.
         IntentPattern(
-            re.compile(r"\b(explore|brainstorm).*(possible|different|all).*(solutions|options|paths|approaches)\b", re.I | re.DOTALL),
-            orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
-            task_type="moe",
-            confidence_boost=0.5,
-            reasoning="exploration requested",
-        ),
-        IntentPattern(
-            re.compile(r"\b(tree of thoughts?|tot|branching|search tree)\b", re.I),
+            re.compile(r"\b(tree of thoughts|use tot)\b", re.I),
             orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
             task_type="thinking",
             confidence_boost=0.6,
@@ -172,8 +168,7 @@ class IntentDetector:
             self.CHAIN_PATTERNS +
             self.SWE_PATTERNS +      # SWE before AGENTIC for priority
             self.AGENTIC_PATTERNS +
-            self.VERIFICATION_PATTERNS +
-            self.COMPARISON_PATTERNS +
+            self.VERIFICATION_PATTERNS +  # ADR-008: Now includes comparison patterns
             self.DEEP_THINKING_PATTERNS +
             self.CODE_PATTERNS +
             self.QUICK_PATTERNS
@@ -185,12 +180,12 @@ class IntentDetector:
 
         Detection flow:
         1. Pattern-based detection (fast regex)
-        2. Meta-learner check (ToT trigger + learned patterns)
+        2. Meta-learner check (learned patterns only - ADR-008)
         3. Semantic matching (if confidence < 0.9)
 
-        The meta-learner can:
-        - Trigger ToT for novel/high-stakes tasks (exploration)
-        - Override mode selection with learned patterns (exploitation)
+        NOTE (ADR-008): ToT auto-trigger removed. ToT now requires:
+        - Explicit "tree of thoughts" or "use tot" in message, OR
+        - tot=True parameter in delegate()
         """
         if not message or len(message.strip()) < 3:
             return DetectedIntent(task_type="quick", confidence=0.5, reasoning="short message")
@@ -206,8 +201,9 @@ class IntentDetector:
         if intent.orchestration_mode != OrchestrationMode.NONE or intent.task_type in ("coder", "moe", "thinking"):
             intent = self._check_orchestration_learner(message, intent)
 
-            # If ToT was triggered, we're done - ToT will explore modes
-            if intent.orchestration_mode == OrchestrationMode.TREE_OF_THOUGHTS:
+            # ADR-008: ToT early-return removed. ToT only triggers on explicit request now.
+            # If explicit ToT was requested in message, we can still return early.
+            if intent.orchestration_mode == OrchestrationMode.TREE_OF_THOUGHTS and "tree of thought" in message.lower():
                 return intent
 
         if intent.confidence >= 0.8 and intent.orchestration_mode != OrchestrationMode.CHAIN:
@@ -232,32 +228,27 @@ class IntentDetector:
         Consult the meta-learner for orchestration mode selection.
 
         This can:
-        1. Trigger ToT for exploration (unknown pattern, high stakes)
-        2. Override mode with learned pattern (high confidence)
-        3. Pass through if no strong signal
+        1. Override mode with learned pattern (high confidence)
+        2. Pass through if no strong signal
+
+        NOTE (ADR-008): ToT auto-trigger removed. ToT is now opt-in only.
+        Research shows ToT has diminishing returns for most tasks.
         """
         try:
             from .meta_learning import get_orchestration_learner
 
             learner = get_orchestration_learner()
 
-            # 1. Check if we should use ToT for exploration
-            should_tot, tot_reasoning = learner.should_use_tot(message, base_intent)
+            # ADR-008: ToT auto-trigger disabled.
+            # ToT now requires explicit tot=True parameter in delegate().
+            # The code below is commented out but preserved for reference:
+            #
+            # should_tot, tot_reasoning = learner.should_use_tot(message, base_intent)
+            # if should_tot:
+            #     log.info("intent_tot_triggered", reasoning=tot_reasoning)
+            #     return DetectedIntent(orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS, ...)
 
-            if should_tot:
-                log.info("intent_tot_triggered", reasoning=tot_reasoning)
-                return DetectedIntent(
-                    task_type=base_intent.task_type,
-                    orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
-                    model_role=base_intent.model_role,
-                    confidence=0.9,  # High confidence in decision to explore
-                    reasoning=f"Meta-learning: {tot_reasoning}",
-                    trigger_keywords=base_intent.trigger_keywords,
-                    contains_code=base_intent.contains_code,
-                    chain_steps=base_intent.chain_steps,
-                )
-
-            # 2. Check if we have a learned pattern with high confidence
+            # Check if we have a learned pattern with high confidence
             learned_mode, confidence = learner.get_best_mode(message)
 
             if learned_mode and confidence > 0.7:
@@ -305,8 +296,9 @@ class IntentDetector:
                 if pat.reasoning: reasons.append(pat.reasoning)
                 
                 if pat.orchestration_mode:
-                    prio = {OrchestrationMode.AGENTIC: 10, OrchestrationMode.VOTING: 9, OrchestrationMode.CHAIN: 8, 
-                            OrchestrationMode.DEEP_THINKING: 7, OrchestrationMode.COMPARISON: 6, OrchestrationMode.TREE_OF_THOUGHTS: 5}
+                    # ADR-008: COMPARISON removed, patterns now trigger VOTING directly
+                    prio = {OrchestrationMode.AGENTIC: 10, OrchestrationMode.VOTING: 9, OrchestrationMode.CHAIN: 8,
+                            OrchestrationMode.DEEP_THINKING: 7, OrchestrationMode.TREE_OF_THOUGHTS: 5}
                     if prio.get(pat.orchestration_mode, 0) > prio.get(intent.orchestration_mode, 0):
                         intent.orchestration_mode = pat.orchestration_mode
                 

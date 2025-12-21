@@ -64,10 +64,15 @@ class PlaybookBullet:
 
 
 class PlaybookManager:
-    """Manages the lifecycle of strategic playbooks."""
-    
+    """Manages the lifecycle of strategic playbooks.
+
+    Playbooks are ALWAYS project-specific, stored in .delia/playbooks/
+    relative to the current working directory. No global fallback.
+    """
+
     def __init__(self, playbook_dir: Path | None = None):
-        self.playbook_dir = playbook_dir or paths.DATA_DIR / "playbooks"
+        # Force project-specific: .delia/playbooks/ in CWD
+        self.playbook_dir = playbook_dir or (Path.cwd() / ".delia" / "playbooks")
         self._ensure_dir()
         # Cache for loaded bullets {task_type: [bullets]}
         self._cache: dict[str, list[PlaybookBullet]] = {}
@@ -155,12 +160,232 @@ class PlaybookManager:
         bullets = self.get_top_bullets(task_type, limit)
         if not bullets:
             return ""
-            
+
         formatted = "### STRATEGIC PLAYBOOK (Learned Lessons)\n"
         for b in bullets:
             # ACE-style bullet format: [ID] content
             formatted += f"- [{b.id}] {b.content}\n"
         return formatted
 
+    def get_all_bullets(self) -> dict[str, list[PlaybookBullet]]:
+        """Get all bullets across all task types for MCP exposure."""
+        result = {}
+        for path in self.playbook_dir.glob("*.json"):
+            task_type = path.stem
+            result[task_type] = self.load_playbook(task_type)
+        return result
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get playbook statistics for monitoring."""
+        all_bullets = self.get_all_bullets()
+        total = sum(len(b) for b in all_bullets.values())
+        by_utility = []
+        for task_type, bullets in all_bullets.items():
+            for b in bullets:
+                by_utility.append({
+                    "id": b.id,
+                    "task_type": task_type,
+                    "utility": b.utility_score,
+                    "helpful": b.helpful_count,
+                    "harmful": b.harmful_count,
+                })
+        by_utility.sort(key=lambda x: x["utility"], reverse=True)
+        return {
+            "total_bullets": total,
+            "task_types": list(all_bullets.keys()),
+            "top_bullets": by_utility[:10],
+            "low_utility": [b for b in by_utility if b["utility"] < 0.3],
+        }
+
+    def prune_low_utility(self, task_type: str, threshold: float = 0.3, min_uses: int = 5) -> int:
+        """Remove bullets with low utility scores (if used enough to be confident)."""
+        bullets = self.load_playbook(task_type)
+        original_count = len(bullets)
+
+        # Only prune if we have enough usage data
+        pruned = [
+            b for b in bullets
+            if (b.helpful_count + b.harmful_count) < min_uses or b.utility_score >= threshold
+        ]
+
+        if len(pruned) < original_count:
+            self.save_playbook(task_type, pruned)
+            log.info("playbook_pruned", task_type=task_type, removed=original_count - len(pruned))
+
+        return original_count - len(pruned)
+
+
 # Global manager instance
 playbook_manager = PlaybookManager()
+
+
+# =============================================================================
+# Project Playbook Generation (Called by `delia index`)
+# =============================================================================
+
+def detect_tech_stack(file_paths: list[str], dependencies: list[str]) -> dict[str, Any]:
+    """Detect the project's tech stack from file extensions and dependencies."""
+    extensions = {}
+    for path in file_paths:
+        ext = Path(path).suffix.lower()
+        if ext:
+            extensions[ext] = extensions.get(ext, 0) + 1
+
+    # Detect primary language
+    lang_map = {
+        ".py": "Python",
+        ".ts": "TypeScript", ".tsx": "TypeScript",
+        ".js": "JavaScript", ".jsx": "JavaScript",
+        ".rs": "Rust",
+        ".go": "Go",
+        ".java": "Java",
+    }
+
+    primary_lang = None
+    max_count = 0
+    for ext, count in extensions.items():
+        if ext in lang_map and count > max_count:
+            max_count = count
+            primary_lang = lang_map[ext]
+
+    # Detect frameworks from dependencies
+    frameworks = []
+    dep_set = {d.lower() for d in dependencies}
+
+    framework_patterns = {
+        "fastapi": "FastAPI",
+        "flask": "Flask",
+        "django": "Django",
+        "pydantic": "Pydantic",
+        "sqlalchemy": "SQLAlchemy",
+        "react": "React",
+        "vue": "Vue",
+        "express": "Express",
+        "mcp": "MCP (Model Context Protocol)",
+        "structlog": "structlog",
+        "httpx": "httpx",
+        "asyncio": "asyncio",
+    }
+
+    for pattern, name in framework_patterns.items():
+        if any(pattern in d for d in dep_set):
+            frameworks.append(name)
+
+    return {
+        "primary_language": primary_lang,
+        "extensions": extensions,
+        "frameworks": frameworks,
+        "is_async": "asyncio" in dep_set or "httpx" in dep_set,
+    }
+
+
+def generate_project_bullets(
+    tech_stack: dict[str, Any],
+    file_summaries: dict[str, Any],
+    project_root: str,
+) -> list[PlaybookBullet]:
+    """Generate initial playbook bullets from project analysis."""
+    bullets = []
+
+    # 1. Tech stack bullets
+    if tech_stack.get("primary_language"):
+        bullets.append(PlaybookBullet(
+            content=f"This project uses {tech_stack['primary_language']} as its primary language.",
+            section="project_context",
+            source_task="auto_generated",
+        ))
+
+    if tech_stack.get("frameworks"):
+        frameworks = ", ".join(tech_stack["frameworks"])
+        bullets.append(PlaybookBullet(
+            content=f"Key frameworks/libraries: {frameworks}",
+            section="project_context",
+            source_task="auto_generated",
+        ))
+
+    if tech_stack.get("is_async"):
+        bullets.append(PlaybookBullet(
+            content="This project uses async/await patterns. Prefer async def for I/O operations.",
+            section="coding_patterns",
+            source_task="auto_generated",
+        ))
+
+    # 2. Project structure bullets
+    if file_summaries:
+        # Group by directory to understand structure
+        dirs = {}
+        for path in file_summaries.keys():
+            parent = str(Path(path).parent)
+            if parent not in dirs:
+                dirs[parent] = []
+            dirs[parent].append(Path(path).name)
+
+        # Add key directory hints
+        key_dirs = ["src", "tests", "lib", "api", "models", "utils", "services"]
+        for key_dir in key_dirs:
+            for dir_path, files in dirs.items():
+                if key_dir in dir_path.lower():
+                    bullets.append(PlaybookBullet(
+                        content=f"The `{dir_path}/` directory contains {len(files)} files related to {key_dir}.",
+                        section="project_structure",
+                        source_task="auto_generated",
+                    ))
+                    break
+
+    # 3. Pydantic pattern detection
+    if "Pydantic" in tech_stack.get("frameworks", []):
+        bullets.append(PlaybookBullet(
+            content="Use Pydantic models for data validation and configuration. Check existing models before creating new ones.",
+            section="coding_patterns",
+            source_task="auto_generated",
+        ))
+
+    # 4. Testing patterns
+    if any("test" in str(p).lower() for p in file_summaries.keys()):
+        bullets.append(PlaybookBullet(
+            content="This project has tests. Run `uv run pytest` or equivalent before committing changes.",
+            section="verification",
+            source_task="auto_generated",
+        ))
+
+    return bullets
+
+
+async def generate_project_playbook(summarizer: Any = None) -> int:
+    """
+    Generate a project-specific playbook from codebase analysis.
+
+    Called by `delia index` after summarization completes.
+    Returns the number of bullets generated.
+    """
+    from .orchestration.summarizer import get_summarizer
+
+    if summarizer is None:
+        summarizer = get_summarizer()
+
+    if not summarizer.summaries:
+        log.warning("no_summaries_for_playbook", msg="Run delia index --summarize first")
+        return 0
+
+    # Collect data for analysis
+    file_paths = list(summarizer.summaries.keys())
+    all_deps = []
+    for s in summarizer.summaries.values():
+        all_deps.extend(s.dependencies)
+
+    # Detect tech stack
+    tech_stack = detect_tech_stack(file_paths, all_deps)
+
+    # Generate bullets
+    bullets = generate_project_bullets(
+        tech_stack=tech_stack,
+        file_summaries=summarizer.summaries,
+        project_root=str(Path.cwd()),
+    )
+
+    # Store in playbook manager under "project" task type
+    for bullet in bullets:
+        playbook_manager.add_bullet("project", bullet.content, bullet.section)
+
+    log.info("project_playbook_generated", count=len(bullets), tech_stack=tech_stack)
+    return len(bullets)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,23 @@ if TYPE_CHECKING:
     from .registry import ToolRegistry
 
 log = structlog.get_logger()
+
+
+class ToTConfig(BaseModel):
+    """
+    Research-backed Tree of Thoughts configuration (ADR-008).
+
+    Based on 2025 research showing ToT has diminishing returns for most tasks.
+    These defaults optimize for compute efficiency while preserving ToT's value
+    for genuinely complex planning problems.
+    """
+
+    max_branches: int = 3  # Limit parallel branches (research: fewer is often better)
+    timeout_per_branch: float = 20.0  # Reduced from 30s
+    early_stop_on_high_confidence: bool = True  # Stop if first branch is confident
+    confidence_threshold: float = 0.85  # Confidence level to trigger early stop
+    prune_before_critic: bool = True  # Only send top N to critic
+    max_branches_for_critic: int = 2  # Max branches to evaluate (reduces LLM calls)
 
 
 class OrchestrationExecutor:
@@ -81,8 +99,6 @@ class OrchestrationExecutor:
                 result = await self._execute_agentic(intent, message, session_id, backend_type, model_override, messages=messages)
             elif intent.orchestration_mode == OrchestrationMode.VOTING:
                 result = await self._execute_voting(intent, message, backend_type, model_override, messages=messages)
-            elif intent.orchestration_mode == OrchestrationMode.COMPARISON:
-                result = await self._execute_comparison(intent, message, backend_type, model_override, messages=messages)
             elif intent.orchestration_mode == OrchestrationMode.DEEP_THINKING:
                 result = await self._execute_deep_thinking(intent, message, backend_type, model_override, messages=messages)
             elif intent.orchestration_mode == OrchestrationMode.TREE_OF_THOUGHTS:
@@ -100,6 +116,8 @@ class OrchestrationExecutor:
 
             if result.success and result.model_used:
                 self._award_melons(result, intent)
+                # ACE Framework: Record playbook feedback to close the learning loop
+                asyncio.create_task(self._record_playbook_feedback(intent.task_type, result.quality_score))
 
             if not result.success or (result.quality_score is not None and result.quality_score < 0.4):
                 asyncio.create_task(self._reflect_on_failure(intent.task_type, message, result.response, result.error))
@@ -122,6 +140,36 @@ class OrchestrationExecutor:
     ) -> AsyncIterator[StreamEvent]:
         yield StreamEvent(event_type="status", message=f"Mode: {intent.orchestration_mode.value}")
 
+        # Speculative 'Draft Zero' for complex modes (ADR-008 UX improvement)
+        # Launches a quick model in parallel to provide instant feedback
+        speculative_task = None
+        if intent.orchestration_mode in (OrchestrationMode.VOTING, OrchestrationMode.DEEP_THINKING):
+            yield StreamEvent(event_type="thinking", message="Generating speculative draft zero...")
+            
+            from ..llm import call_llm_stream
+            from ..routing import get_router
+            _, backend_obj = await get_router().select_optimal_backend(message, None, "quick", backend_type)
+            quick_model = backend_obj.models.get("quick") if backend_obj else "auto"
+
+            # Background task to stream quick tokens
+            async def stream_speculative():
+                yield StreamEvent(event_type="status", message="Draft Zero (Speculative)")
+                async for chunk in call_llm_stream(
+                    model=quick_model, 
+                    prompt=message, 
+                    system="You are Delia. Provide a FAST, brief initial response while a deeper analysis is being performed. Focus on the core answer.",
+                    backend_obj=backend_obj,
+                    max_tokens=150 # Keep it short
+                ):
+                    yield StreamEvent(event_type="speculative_token", message=chunk.text)
+                yield StreamEvent(event_type="status", message="Draft Zero complete. Finalizing analysis...")
+
+            # We can't easily 'background' an iterator into the current yield stream
+            # So we'll just run it first or wrap it. 
+            # Given the requirement for UX speed, let's stream it first.
+            async for event in stream_speculative():
+                yield event
+
         # Handle complex orchestration modes by running non-streaming execution
         # then yielding result as events. This ensures full orchestration coverage.
         if intent.orchestration_mode == OrchestrationMode.AGENTIC:
@@ -137,13 +185,7 @@ class OrchestrationExecutor:
             yield StreamEvent(event_type="done", message="Completed", details={"success": result.success})
             return
 
-        if intent.orchestration_mode == OrchestrationMode.COMPARISON:
-            yield StreamEvent(event_type="thinking", message="Running multi-model comparison...")
-            result = await self._execute_comparison(intent, message, backend_type, model_override, messages=messages)
-            yield StreamEvent(event_type="orchestration", message="Comparison complete", details={"models_compared": 2})
-            yield StreamEvent(event_type="response", message=result.response, details={"model": result.model_used})
-            yield StreamEvent(event_type="done", message="Completed", details={"success": result.success})
-            return
+        # ADR-008: COMPARISON mode removed - comparison patterns now trigger VOTING
 
         if intent.orchestration_mode == OrchestrationMode.DEEP_THINKING:
             yield StreamEvent(event_type="thinking", message="Deep analysis with extended reasoning...")
@@ -188,10 +230,22 @@ class OrchestrationExecutor:
         # Dynamic persona loading for chat mode
         # Uses PersonaManager to detect context and blend appropriate personas
         persona_manager = get_persona_manager()
-        system_prompt = persona_manager.get_system_prompt(message)
-        active_personas = persona_manager.get_active_persona_names()
-        if len(active_personas) > 1:
-            yield StreamEvent(event_type="status", message=f"Personas: {', '.join(active_personas)}")
+
+        # Special handling for simple greetings - use minimal prompt
+        # Smaller models don't follow complex persona instructions well
+        message_lower = message.lower().strip()
+        is_greeting = message_lower in ("hello", "hi", "hey", "hello!", "hi!", "hey!",
+                                        "good morning", "good afternoon", "good evening",
+                                        "yo", "sup", "what's up", "howdy")
+
+        if is_greeting:
+            # Ultra-simple prompt that even small models follow
+            system_prompt = "You are Delia, a friendly assistant. Respond to greetings briefly and warmly."
+        else:
+            system_prompt = persona_manager.get_system_prompt(message)
+            active_personas = persona_manager.get_active_persona_names()
+            if len(active_personas) > 1:
+                yield StreamEvent(event_type="status", message=f"Personas: {', '.join(active_personas)}")
 
         # Skip playbook and task focus for simple quick tasks (greetings, simple Q&A)
         # These confuse the model with unnecessary "Am I on task?" checks
@@ -215,7 +269,9 @@ class OrchestrationExecutor:
                         system_prompt += f"\n\n{task_focus}"
 
         full_res = ""
-        async for chunk in call_llm_stream(model=selected_model, prompt=message, system=system_prompt, backend_obj=backend_obj, messages=messages):
+        # Limit tokens for greetings to keep responses short
+        max_tokens = 50 if is_greeting else None
+        async for chunk in call_llm_stream(model=selected_model, prompt=message, system=system_prompt, backend_obj=backend_obj, messages=messages, max_tokens=max_tokens):
             full_res += chunk.text
             yield StreamEvent(event_type="token", message=chunk.text)
 
@@ -378,7 +434,7 @@ class OrchestrationExecutor:
         yield StreamEvent(event_type="response", message=res.response, details={"model": selected_model})
 
     async def _execute_voting(self, intent: DetectedIntent, message: str, backend_type: str | None, model_override: str | None, messages: list[dict[str, Any]] | None = None) -> OrchestrationResult:
-        from ..voting import VotingConsensus
+        from ..voting import AdaptiveVotingConsensus, AdaptiveVotingConfig
         from ..quality import ResponseQualityValidator
         from ..routing import get_router
 
@@ -396,9 +452,18 @@ class OrchestrationExecutor:
         # Voting uses higher temp for diversity in responses
         voting_temp = min(tuning.temperature + 0.2, 1.0)
 
-        consensus = VotingConsensus(k=intent.k_votes, quality_validator=ResponseQualityValidator())
+        # Configure adaptive voting
+        config = AdaptiveVotingConfig(
+            max_k=intent.k_votes or 3,
+            confidence_skip_threshold=0.85,
+        )
+        consensus = AdaptiveVotingConsensus(config=config, quality_validator=ResponseQualityValidator())
+
         total_tokens = 0
-        for i in range(intent.k_votes * 3):
+        votes_cast = 0
+
+        # Adaptive voting loop - continues until should_continue() returns False
+        while consensus.should_continue():
             res = await call_llm(
                 model=selected_model,
                 prompt=message,
@@ -408,44 +473,46 @@ class OrchestrationExecutor:
                 max_tokens=tuning.max_tokens,
                 backend_obj=backend_obj,
             )
+
             if res.get("success"):
                 total_tokens += res.get("tokens", 0)
-                vote = consensus.add_vote(strip_thinking_tags(res["response"]))
+                votes_cast += 1
+
+                # Extract confidence from response (default 0.7 if not found)
+                confidence = self._extract_confidence(res["response"])
+
+                # Add vote with confidence
+                vote = consensus.add_vote(strip_thinking_tags(res["response"]), confidence)
+
                 if vote.consensus_reached:
                     return OrchestrationResult(
-                        response=vote.winning_response, success=True, model_used=selected_model,
-                        backend_used=backend_obj.id if backend_obj else None,  # FIX: Track backend
-                        mode=OrchestrationMode.VOTING, votes_cast=i+1, consensus_reached=True, tokens=total_tokens
+                        response=vote.winning_response,
+                        success=True,
+                        model_used=selected_model,
+                        backend_used=backend_obj.id if backend_obj else None,
+                        mode=OrchestrationMode.VOTING,
+                        votes_cast=votes_cast,
+                        consensus_reached=True,
+                        tokens=total_tokens,
                     )
+            else:
+                # Failed LLM call - break to avoid infinite loop
+                break
 
-        best, meta = consensus.get_best_response()
+        # Consensus not reached within max_k votes, get best available
+        winner = consensus.get_weighted_winner()
         return OrchestrationResult(
-            response=f"Partial consensus: {best}" if best else "Consensus failed",
-            success=best is not None, model_used=selected_model,
-            backend_used=backend_obj.id if backend_obj else None,  # FIX: Track backend
+            response=winner.winning_response if winner.winning_response else "Consensus failed",
+            success=winner.winning_response is not None,
+            model_used=selected_model,
+            backend_used=backend_obj.id if backend_obj else None,
             mode=OrchestrationMode.VOTING,
-            votes_cast=meta.total_votes, consensus_reached=False, tokens=total_tokens
+            votes_cast=votes_cast,
+            consensus_reached=False,
+            tokens=total_tokens,
         )
 
-    async def _execute_comparison(self, intent: DetectedIntent, message: str, backend_type: str | None, model_override: str | None, messages: list[dict[str, Any]] | None = None) -> OrchestrationResult:
-        from ..backend_manager import backend_manager
-        enabled = backend_manager.get_enabled_backends()
-        backend = enabled[0] if enabled else None
-        models = intent.comparison_models or [backend.models.get("coder"), backend.models.get("moe")] if backend else []
-        res_parts = ["# Comparison\n"]
-        actual_models = []
-        for m in [m for m in models if m]:
-            r = await call_llm(model=m, prompt=message, messages=messages, backend_obj=backend)
-            if r.get("success"):
-                actual_models.append(m)
-                res_parts.append(f"## {m}\n{strip_thinking_tags(r.get('response', ''))}\n")
-        return OrchestrationResult(
-            response="\n".join(res_parts),
-            success=len(actual_models) > 0,
-            mode=OrchestrationMode.COMPARISON,
-            models_compared=actual_models,
-            backend_used=backend.id if backend else None,  # FIX: Track backend for affinity
-        )
+    # ADR-008: _execute_comparison removed - use _execute_voting instead
 
     async def _execute_simple(
         self,
@@ -577,37 +644,46 @@ class OrchestrationExecutor:
         backend_type: str | None,
         model_override: str | None,
         messages: list[dict[str, Any]] | None = None,
+        config: ToTConfig | None = None,
     ) -> OrchestrationResult:
         """
         Meta-orchestration: Execute multiple orchestration modes in parallel,
         critic picks best, ACE learns from outcome.
 
+        ADR-008 Optimizations:
+        - Early stopping: If first branch has high confidence, skip remaining
+        - Branch limiting: Max 3 branches (research shows diminishing returns)
+        - Pruning: Only send top 2 branches to critic (reduces LLM calls)
+
         This is the core of Delia's self-improving orchestration system.
         Uses:
         - UCB1 for exploration-exploitation in mode selection
-        - Parallel branch execution with error isolation
+        - Parallel branch execution with error isolation (or sequential with early stop)
         - Weighted critic scoring for winner selection
         - Bayesian learning for pattern confidence
         """
         from .meta_learning import get_orchestration_learner
         from .critic import BranchEvaluation
 
+        # Use provided config or defaults
+        cfg = config or ToTConfig()
         start_time = time.time()
         learner = get_orchestration_learner()
 
-        # 1. Select which modes to try (UCB1 exploration)
-        modes_to_try = learner.select_exploration_modes(message)
-        log.info("tot_starting", modes=[m.value for m in modes_to_try])
+        # 1. Select which modes to try (UCB1 exploration) - LIMITED by config
+        all_modes = learner.select_exploration_modes(message)
+        modes_to_try = all_modes[: cfg.max_branches]  # ADR-008: Limit branches
+        log.info("tot_starting", modes=[m.value for m in modes_to_try], limited_from=len(all_modes))
 
-        # 2. Map modes to executor functions
+        # 2. Map modes to executor functions (ADR-008: COMPARISON removed)
         mode_executors: dict[OrchestrationMode, Callable] = {
             OrchestrationMode.VOTING: self._execute_voting,
             OrchestrationMode.AGENTIC: self._execute_agentic,
             OrchestrationMode.DEEP_THINKING: self._execute_deep_thinking,
-            OrchestrationMode.COMPARISON: self._execute_comparison,
+            # ADR-008: COMPARISON removed - redundant with voting
         }
 
-        # 3. Execute all branches in parallel with error isolation
+        # 3. Execute branches with early stopping (ADR-008)
         async def safe_execute(mode: OrchestrationMode) -> tuple[OrchestrationMode, OrchestrationResult]:
             """Execute a branch with timeout and error handling."""
             try:
@@ -625,18 +701,18 @@ class OrchestrationExecutor:
                     contains_code=intent.contains_code,
                 )
 
-                # Timeout per branch (30 seconds)
+                # ADR-008: Reduced timeout
                 result = await asyncio.wait_for(
                     executor(branch_intent, message, backend_type, model_override, messages),
-                    timeout=30.0
+                    timeout=cfg.timeout_per_branch
                 )
                 log.info("tot_branch_complete", mode=mode.value, success=result.success)
                 return (mode, result)
 
             except asyncio.TimeoutError:
-                log.warning("tot_branch_timeout", mode=mode.value)
+                log.warning("tot_branch_timeout", mode=mode.value, timeout=cfg.timeout_per_branch)
                 return (mode, OrchestrationResult(
-                    response="Branch timed out after 30 seconds",
+                    response=f"Branch timed out after {cfg.timeout_per_branch}s",
                     success=False,
                     error="Timeout",
                     mode=mode,
@@ -650,9 +726,29 @@ class OrchestrationExecutor:
                     mode=mode,
                 ))
 
-        # 4. Execute all branches concurrently
-        branch_tasks = [safe_execute(mode) for mode in modes_to_try]
-        branch_results: list[tuple[OrchestrationMode, OrchestrationResult]] = await asyncio.gather(*branch_tasks)
+        # 4. ADR-008: Execute with early stopping if enabled
+        branch_results: list[tuple[OrchestrationMode, OrchestrationResult]] = []
+
+        if cfg.early_stop_on_high_confidence:
+            # Sequential execution with early stopping
+            for mode in modes_to_try:
+                result = await safe_execute(mode)
+                branch_results.append(result)
+
+                # Early stop if high confidence result
+                _, res = result
+                if res.success and (res.quality_score or 0) >= cfg.confidence_threshold:
+                    log.info(
+                        "tot_early_stop",
+                        mode=mode.value,
+                        quality_score=res.quality_score,
+                        branches_skipped=len(modes_to_try) - len(branch_results),
+                    )
+                    break
+        else:
+            # Original parallel execution
+            branch_tasks = [safe_execute(mode) for mode in modes_to_try]
+            branch_results = await asyncio.gather(*branch_tasks)
 
         # 5. Filter to successful branches for evaluation
         successful_branches = [(mode, res) for mode, res in branch_results if res.success]
@@ -673,7 +769,21 @@ class OrchestrationExecutor:
                 },
             )
 
-        # 6. Critic evaluates all successful branches
+        # 5.5 ADR-008: Prune to top N branches before critic (reduces LLM calls)
+        if cfg.prune_before_critic and len(successful_branches) > cfg.max_branches_for_critic:
+            # Sort by quality score (or response length as fallback)
+            successful_branches = sorted(
+                successful_branches,
+                key=lambda x: x[1].quality_score or len(x[1].response) / 1000,
+                reverse=True,
+            )[: cfg.max_branches_for_critic]
+            log.info(
+                "tot_pruned_for_critic",
+                kept=len(successful_branches),
+                max_allowed=cfg.max_branches_for_critic,
+            )
+
+        # 6. Critic evaluates successful branches (now pruned)
         log.info("tot_evaluating_branches", count=len(successful_branches))
         evaluation: BranchEvaluation = await self.critic.evaluate_branches(
             original_prompt=message,
@@ -795,6 +905,107 @@ class OrchestrationExecutor:
                 output_tokens=output_tokens,
                 latency_ms=result.elapsed_ms or 0,
             )
+
+    async def _record_playbook_feedback(self, task_type: str, quality_score: float | None) -> None:
+        """
+        Record feedback for playbook bullets used in this task.
+        
+        Called after task completion to close the ACE learning loop.
+        Bullets with quality >= 0.7 are marked helpful, < 0.4 harmful.
+        
+        This enables the playbook to learn which strategies actually work.
+        """
+        if quality_score is None:
+            return
+            
+        # Get bullets that were used for this task type
+        bullets = playbook_manager.load_playbook(task_type)
+        if not bullets:
+            return
+            
+        # Determine if the task was helpful based on quality threshold
+        helpful = quality_score >= 0.7
+        
+        # Only record feedback for high or low quality (skip neutral 0.4-0.7)
+        if 0.4 <= quality_score < 0.7:
+            return
+            
+        # Record feedback for bullets that were loaded (assumed used)
+        # We record for the top bullets that would have been injected
+        top_bullets = playbook_manager.get_top_bullets(task_type, limit=5)
+        for bullet in top_bullets:
+            playbook_manager.record_feedback(bullet.id, task_type, helpful)
+            
+        if top_bullets:
+            log.debug(
+                "playbook_feedback_recorded",
+                task_type=task_type,
+                quality_score=round(quality_score, 3),
+                helpful=helpful,
+                bullets_updated=len(top_bullets),
+            )
+
+    def _extract_confidence(self, response: str) -> float:
+        """
+        Extract confidence score from LLM response.
+
+        Looks for common confidence patterns in the response text:
+        - "confidence: 0.85" or "confidence = 0.85"
+        - "I am X% confident" or "X% sure"
+        - Thinking tags with confidence markers
+
+        Args:
+            response: The LLM response text
+
+        Returns:
+            Confidence score 0.0-1.0 (default 0.7 if not found)
+        """
+        # Default confidence if no explicit signal
+        default_confidence = 0.7
+
+        # Pattern 1: Explicit confidence score (0.0-1.0)
+        confidence_pattern = r"confidence[:\s=]+([0-9]*\.?[0-9]+)"
+        match = re.search(confidence_pattern, response.lower())
+        if match:
+            conf_value = float(match.group(1))
+            # If > 1.0, assume it's a percentage
+            if conf_value > 1.0:
+                conf_value = conf_value / 100.0
+            return max(0.0, min(1.0, conf_value))
+
+        # Pattern 2: Percentage confidence ("95% confident", "I'm 80% sure")
+        percent_pattern = r"(\d+)%\s*(confident|sure|certain)"
+        match = re.search(percent_pattern, response.lower())
+        if match:
+            conf_value = float(match.group(1)) / 100.0
+            return max(0.0, min(1.0, conf_value))
+
+        # Pattern 3: Qualitative confidence signals
+        high_confidence_phrases = [
+            r"\b(definitely|certainly|absolutely|clearly)\b",
+            r"\b(without a doubt|no question|unquestionably)\b",
+            r"\b(highly confident|very confident|quite confident)\b",
+        ]
+        low_confidence_phrases = [
+            r"\b(maybe|perhaps|possibly|might|could be)\b",
+            r"\b(uncertain|unsure|not sure|not certain)\b",
+            r"\b(i think|i believe|it seems|it appears)\b",
+        ]
+
+        high_confidence_count = sum(
+            len(re.findall(pattern, response.lower())) for pattern in high_confidence_phrases
+        )
+        low_confidence_count = sum(
+            len(re.findall(pattern, response.lower())) for pattern in low_confidence_phrases
+        )
+
+        # Adjust default based on qualitative signals
+        if high_confidence_count > low_confidence_count:
+            return 0.85  # High confidence detected
+        elif low_confidence_count > high_confidence_count:
+            return 0.55  # Low confidence detected
+
+        return default_confidence
 
     async def _retrieve_context(self, message: str) -> str:
         available = list_memories()

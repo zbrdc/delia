@@ -169,14 +169,125 @@ async def web_search(query: str, limit: int = 5) -> str:
 
 
 async def web_fetch(url: str) -> str:
+
+
     """Fetch URL contents."""
+
+
     try:
+
+
         async with httpx.AsyncClient(timeout=10.0) as client:
+
+
             resp = await client.get(url)
+
+
             resp.raise_for_status()
+
+
             return resp.text
+
+
     except Exception as e:
+
+
         return f"Error fetching URL {url}: {e}"
+
+
+
+
+
+
+
+
+async def propose_memory_update(name: str, content: str, reasoning: str) -> str:
+
+
+    """Propose an update to a Delia project memory.
+
+
+    
+
+
+    The user will be asked to approve this update.
+
+
+    Args:
+
+
+        name: Name of the memory (e.g. 'project_evolution')
+
+
+        content: The text to APPEND to the memory
+
+
+        reasoning: Why this update is being proposed
+
+
+    """
+
+
+    try:
+
+
+        from ..file_helpers import read_memory, MEMORY_DIR
+
+
+        import re
+
+
+        import datetime
+
+
+        
+
+
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+
+
+        path = MEMORY_DIR / f"{safe_name}.md"
+
+
+        
+
+
+        # Prepare content with timestamp and reasoning header
+
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+        new_entry = f"\n\n## {timestamp} - Update\n**Reasoning**: {reasoning}\n\n{content}\n"
+
+
+        
+
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+
+        with open(path, "a", encoding="utf-8") as f:
+
+
+            f.write(new_entry)
+
+
+            
+
+
+        return f"Memory '{name}' updated successfully."
+
+
+    except Exception as e:
+
+
+        return f"Error updating memory: {e}"
+
+
+
+
+
 
 
 
@@ -223,5 +334,7 @@ def get_default_tools(
 
     registry.register(ToolDefinition("check_progress", "Check status of milestones", {"type": "object", "properties": {"session_id": {"type": "string"}}}, check_progress, dangerous=False))
     registry.register(ToolDefinition("update_milestone", "Update a milestone status", {"type": "object", "properties": {"milestone_id": {"type": "string"}, "status": {"type": "string"}, "session_id": {"type": "string"}}, "required": ["milestone_id", "status"]}, update_milestone, dangerous=False))
+
+    registry.register(ToolDefinition("propose_memory_update", "Propose update to project memories", {"type": "object", "properties": {"name": {"type": "string"}, "content": {"type": "string"}, "reasoning": {"type": "string"}}, "required": ["name", "content", "reasoning"]}, propose_memory_update, dangerous=True, permission_level="write"))
 
     return registry

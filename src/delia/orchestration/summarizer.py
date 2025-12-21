@@ -20,14 +20,13 @@ from typing import Any
 
 import structlog
 
-from .. import paths
 from ..file_helpers import read_file_safe
 from ..routing import select_model
 
 log = structlog.get_logger()
 
-# File to store the project summary index
-SUMMARY_INDEX_FILE = paths.DATA_DIR / "project_summary.json"
+# Project-specific summary index (.delia/ in CWD)
+SUMMARY_INDEX_FILE = Path.cwd() / ".delia" / "project_summary.json"
 
 @dataclass
 class FileSummary:
@@ -191,25 +190,28 @@ class CodeSummarizer:
                 log.info("summarizer_loaded", files=len(self.summaries))
             except Exception as e:
                 log.warning("summarizer_load_failed", error=str(e))
+                
+        # Trigger background sync (non-blocking for fast startup)
+        asyncio.create_task(self.sync_project())
+        self._initialized = True
 
 
 
     async def sync_project(self, force: bool = False, summarize: bool = False, parallel: int = 4) -> int:
-        """Scan project and update symbols/embeddings for all files.
-
-        Args:
-            force: Re-index all files even if unchanged
-            summarize: Generate LLM summaries (slower but richer)
-            parallel: Number of concurrent summarization tasks (default: 4)
-        """
+        """Scan project AND memories and update symbols/embeddings for all files."""
         async with self._lock:
             from .constants import CODE_EXTENSIONS, IGNORE_DIRS
+            from ..paths import MEMORIES_DIR
 
-            # Use fast 0.6B model for summaries - much faster than large models
-            summary_model = "qwen3:0.6b" if summarize else None
+            # Use olmo-3:7b-instruct for code summarization
+            # Reliably outputs JSON (with markdown fences which we handle)
+            # Note: qwen3:14b is a thinking model that doesn't respond well
+            summary_model = "olmo-3:7b-instruct" if summarize else None
 
             # Collect files to process
             files_to_process = []
+            
+            # 1. Code Files
             for path in self.root.rglob("*"):
                 if any(part in IGNORE_DIRS for part in path.parts):
                     continue
@@ -221,6 +223,14 @@ class CodeSummarizer:
 
                 if force or rel_path not in self.summaries or self.summaries[rel_path].mtime < mtime:
                     files_to_process.append((rel_path, path, mtime))
+                    
+            # 2. Memory Files (New for P3.1)
+            if MEMORIES_DIR.exists():
+                for path in MEMORIES_DIR.glob("*.md"):
+                    rel_path = f"memory://{path.stem}"
+                    mtime = path.stat().st_mtime
+                    if force or rel_path not in self.summaries or self.summaries[rel_path].mtime < mtime:
+                        files_to_process.append((rel_path, path, mtime))
 
             if not files_to_process:
                 log.info("project_sync_no_changes")
@@ -288,8 +298,18 @@ class CodeSummarizer:
         import httpx
         from ..backend_manager import backend_manager
 
-        active = backend_manager.get_active_backend()
-        url = (active.url if active else "http://localhost:11434").rstrip("/")
+        # Find an Ollama backend for embeddings (prefer local)
+        url = "http://localhost:11434"  # Default fallback
+        for backend in backend_manager.backends.values():
+            if backend.enabled and backend.provider == "ollama" and backend.type == "local":
+                url = backend.url.rstrip("/")
+                break
+        else:
+            # Try any ollama backend
+            for backend in backend_manager.backends.values():
+                if backend.enabled and backend.provider == "ollama":
+                    url = backend.url.rstrip("/")
+                    break
 
         for attempt in range(3):
             try:
@@ -356,8 +376,17 @@ Output ONLY valid JSON: {{"summary": "...", "exports": [...], "deps": [...]}}"""
         import httpx
         from ..backend_manager import backend_manager
 
-        active = backend_manager.get_active_backend()
-        url = (active.url if active else "http://localhost:11434").rstrip("/")
+        # Find an Ollama backend (prefer local)
+        url = "http://localhost:11434"  # Default fallback
+        for backend in backend_manager.backends.values():
+            if backend.enabled and backend.provider == "ollama" and backend.type == "local":
+                url = backend.url.rstrip("/")
+                break
+        else:
+            for backend in backend_manager.backends.values():
+                if backend.enabled and backend.provider == "ollama":
+                    url = backend.url.rstrip("/")
+                    break
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -367,7 +396,7 @@ Output ONLY valid JSON: {{"summary": "...", "exports": [...], "deps": [...]}}"""
                         "model": model,
                         "prompt": prompt,
                         "stream": False,
-                        "options": {"temperature": 0.1, "num_predict": 150}
+                        "options": {"temperature": 0.1, "num_predict": 512}
                     }
                 )
                 if response.status_code != 200:
@@ -376,24 +405,33 @@ Output ONLY valid JSON: {{"summary": "...", "exports": [...], "deps": [...]}}"""
 
                 result_text = response.json().get("response", "")
 
-                # Parse JSON from response
+                # Parse JSON from response - handle thinking models
                 import json as json_lib
-                # Try to extract JSON from response
+                import re
+
+                # Step 1: Strip thinking blocks (<think>...</think>)
+                result_text = re.sub(r'<think>.*?</think>', '', result_text, flags=re.DOTALL)
+
+                # Step 2: Extract JSON from markdown code fences
+                fence_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', result_text, flags=re.DOTALL)
+                if fence_match:
+                    result_text = fence_match.group(1)
+
+                # Step 3: Try to parse as JSON
                 try:
-                    # Handle markdown code fences
-                    if "```" in result_text:
-                        result_text = result_text.split("```")[1]
-                        if result_text.startswith("json"):
-                            result_text = result_text[4:]
                     data = json_lib.loads(result_text.strip())
                 except json_lib.JSONDecodeError:
-                    # Try to find JSON in the response
-                    import re
-                    match = re.search(r'\{[^{}]+\}', result_text)
-                    if match:
-                        data = json_lib.loads(match.group())
+                    # Step 4: Find any JSON object in the text
+                    # Use a more robust pattern that handles nested structures
+                    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', result_text)
+                    if json_match:
+                        try:
+                            data = json_lib.loads(json_match.group())
+                        except json_lib.JSONDecodeError:
+                            log.debug("summarize_json_parse_failed", file=rel_path, raw=result_text[:200])
+                            return False
                     else:
-                        log.debug("summarize_json_parse_failed", file=rel_path)
+                        log.debug("summarize_json_not_found", file=rel_path, raw=result_text[:200])
                         return False
 
                 if rel_path in self.summaries:
@@ -465,8 +503,17 @@ Output ONLY valid JSON: {{"summary": "...", "exports": [...], "deps": [...]}}"""
         import httpx
         from ..backend_manager import backend_manager
 
-        active = backend_manager.get_active_backend()
-        url = (active.url if active else "http://localhost:11434").rstrip("/")
+        # Find an Ollama backend for embeddings (prefer local)
+        url = "http://localhost:11434"  # Default fallback
+        for backend in backend_manager.backends.values():
+            if backend.enabled and backend.provider == "ollama" and backend.type == "local":
+                url = backend.url.rstrip("/")
+                break
+        else:
+            for backend in backend_manager.backends.values():
+                if backend.enabled and backend.provider == "ollama":
+                    url = backend.url.rstrip("/")
+                    break
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:

@@ -25,14 +25,18 @@ from pathlib import Path
 
 import structlog
 
-from . import paths
 from .config import config
-from .paths import PROJECT_ROOT
 
 log = structlog.get_logger()
 
-# Directory for Delia's memory files
-MEMORY_DIR = paths.MEMORIES_DIR
+
+def get_memory_dir() -> Path:
+    """Get project-specific memory directory (.delia/memories/ in CWD)."""
+    return Path.cwd() / ".delia" / "memories"
+
+
+# Directory for Delia's memory files (project-specific)
+MEMORY_DIR = get_memory_dir()
 
 
 def read_file_safe(file_path: str, max_size: int | None = None) -> tuple[str | None, str | None]:

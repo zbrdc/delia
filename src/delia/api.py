@@ -1937,13 +1937,10 @@ async def chat_nlp_orchestrated_stream(
     manager.add_to_session(session.session_id, "user", message)
     
     # Emit thinking status based on mode
+    # ADR-008: COMPARISON removed - comparison patterns now trigger VOTING
     if intent.orchestration_mode == OrchestrationMode.VOTING:
         yield await sse_event("thinking", {
             "status": f"K-voting with k={intent.k_votes} for reliable answer...",
-        })
-    elif intent.orchestration_mode == OrchestrationMode.COMPARISON:
-        yield await sse_event("thinking", {
-            "status": "Running multi-model comparison...",
         })
     elif intent.orchestration_mode == OrchestrationMode.DEEP_THINKING:
         yield await sse_event("thinking", {
@@ -2036,7 +2033,7 @@ async def session_compact_handler(request: Request) -> JSONResponse:
         - force: If true, force compaction even if below threshold
     """
     from .session_manager import SessionManager
-    from .compaction import ConversationCompactor
+    from .semantic import ConversationCompressor as ConversationCompactor
 
     session_id = request.path_params.get("session_id")
     if not session_id:
@@ -2078,7 +2075,7 @@ async def session_stats_handler(request: Request) -> JSONResponse:
     Returns current token usage and whether compaction is recommended.
     """
     from .session_manager import SessionManager
-    from .compaction import ConversationCompactor
+    from .semantic import ConversationCompressor as ConversationCompactor
 
     session_id = request.path_params.get("session_id")
     if not session_id:

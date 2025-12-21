@@ -51,18 +51,20 @@ INTENT_SCENARIOS = [
     ("this is critical, double check", OrchestrationMode.VOTING, "quick"),
     ("can you confirm this is safe?", OrchestrationMode.VOTING, "quick"),
     
-    ("compare qwen and llama", OrchestrationMode.COMPARISON, "quick"),
-    ("vs GPT-4", OrchestrationMode.COMPARISON, "quick"),
-    ("what do different models think of this?", OrchestrationMode.COMPARISON, "quick"),
-    ("contrast these two approaches", OrchestrationMode.COMPARISON, "quick"),
-    ("give me a second opinion", OrchestrationMode.COMPARISON, "quick"),
-    ("which model is better for this task?", OrchestrationMode.COMPARISON, "quick"),
-    ("side by side comparison", OrchestrationMode.COMPARISON, "quick"),
+    # ADR-008: COMPARISON deprecated, redirects to VOTING
+    ("compare qwen and llama", OrchestrationMode.VOTING, "quick"),
+    ("vs GPT-4", OrchestrationMode.VOTING, "quick"),
+    ("what do different models think of this?", OrchestrationMode.VOTING, "quick"),
+    ("contrast these two approaches", OrchestrationMode.VOTING, "quick"),
+    ("give me a second opinion", OrchestrationMode.VOTING, "quick"),
+    ("which model is better for this task?", OrchestrationMode.VOTING, "quick"),
+    ("side by side comparison", OrchestrationMode.VOTING, "quick"),
     
     ("think deeply about the architecture", OrchestrationMode.DEEP_THINKING, "moe"),
     ("step by step analysis", OrchestrationMode.DEEP_THINKING, "moe"),
     ("thorough architectural review", OrchestrationMode.DEEP_THINKING, "moe"),
-    ("explore all possible solutions", OrchestrationMode.TREE_OF_THOUGHTS, "moe"),
+    # ADR-008: ToT now opt-in only, "explore" no longer triggers it
+    ("explore all possible solutions", OrchestrationMode.NONE, "quick"),
     ("use tree of thoughts to solve this", OrchestrationMode.TREE_OF_THOUGHTS, "thinking"),
     ("what are the trade-offs?", OrchestrationMode.DEEP_THINKING, "moe"),
     ("plan a migration strategy", OrchestrationMode.DEEP_THINKING, "moe"),
@@ -98,7 +100,7 @@ INTENT_SCENARIOS = [
 for i in range(10):
     INTENT_SCENARIOS.append((f"test variation {i} for read_file", OrchestrationMode.AGENTIC, "coder"))
     INTENT_SCENARIOS.append((f"make sure variation {i} is accurate", OrchestrationMode.VOTING, "quick"))
-    INTENT_SCENARIOS.append((f"compare {i} models", OrchestrationMode.COMPARISON, "quick"))
+    INTENT_SCENARIOS.append((f"compare {i} models", OrchestrationMode.VOTING, "quick"))  # ADR-008: COMPARISON->VOTING
     INTENT_SCENARIOS.append((f"write {i} lines of code", OrchestrationMode.AGENTIC, "coder"))
     INTENT_SCENARIOS.append((f"hello {i}", OrchestrationMode.NONE, "quick"))
 

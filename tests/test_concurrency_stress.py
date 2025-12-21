@@ -6,7 +6,13 @@ import asyncio
 import time
 import random
 from unittest.mock import MagicMock, patch, AsyncMock
-from delia.mcp_server import delegate, stats_service, model_queue
+from delia.delegation import delegate_impl as delegate
+from delia.container import get_container
+
+container = get_container()
+stats_service = container.stats_service
+model_queue = container.model_queue
+
 from delia.backend_manager import backend_manager, BackendConfig
 
 @pytest.mark.asyncio
@@ -37,6 +43,17 @@ async def test_high_concurrency_load():
         # Simulate varying latency for LLM calls
         async def slow_call(*args, **kwargs):
             await asyncio.sleep(random.uniform(0.01, 0.1))
+            # Manually record stats since we've patched call_llm
+            stats_service.record_call(
+                model_tier=kwargs.get("task_type", "quick"),
+                task_type=kwargs.get("task_type", "quick"),
+                original_task=kwargs.get("original_task", "stress-test"),
+                tokens=10,
+                elapsed_ms=50,
+                content_preview="...",
+                enable_thinking=False,
+                backend="stress-backend"
+            )
             return {"success": True, "response": "OK", "tokens": 10}
         
         mock_call.side_effect = slow_call
@@ -45,11 +62,11 @@ async def test_high_concurrency_load():
         async def simulated_user(user_id):
             task_type = random.choice(["quick", "generate", "analyze", "plan"])
             try:
-                # Use .fn to bypass FunctionTool wrapper
-                result = await delegate.fn(
+                # Call implementation directly
+                result = await delegate(
                     task=task_type,
-                    content=f"Task from user {user_id}",
-                    model="quick"
+                    content=f"Stress test task {user_id}",
+                    session_id=f"stress-session-{user_id}"
                 )
                 return True
             except Exception as e:

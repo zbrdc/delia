@@ -125,13 +125,39 @@ class ContextEngine:
                 log.debug("graph_context_failed", error=str(e))
 
         # 3. Delia's Memories (Project Knowledge)
+        manual_memories = set()
         if context:
-            memory_names = [m.strip() for m in context.split(",")]
-            for mem_name in memory_names:
+            manual_memories = {m.strip() for m in context.split(",")}
+            for mem_name in manual_memories:
                 mem_content = read_memory(mem_name)
                 if mem_content:
                     parts.append(f"### Project Context ({mem_name}):\n{mem_content}")
                     log.info("context_memory_loaded", memory=mem_name)
+                    
+        # 3.5. Additive Semantic Memory (New for P3.1)
+        # Search for relevant memories that weren't manually requested
+        try:
+            summarizer = get_summarizer()
+            await summarizer.initialize()
+            
+            # Search only in memory:// entries
+            semantic_results = await summarizer.search(content, top_k=5)
+            added_semantic = 0
+            for res in semantic_results:
+                path = res["path"]
+                if path.startswith("memory://"):
+                    mem_name = path.replace("memory://", "")
+                    if mem_name not in manual_memories and res["score"] > 0.6:
+                        mem_content = read_memory(mem_name)
+                        if mem_content:
+                            parts.append(f"### Relevant Context ({mem_name}):\n{mem_content}")
+                            added_semantic += 1
+                            if added_semantic >= 2: # Limit to top 2 to avoid noise
+                                break
+            if added_semantic > 0:
+                log.info("additive_semantic_memories_injected", count=added_semantic)
+        except Exception as e:
+            log.debug("additive_memory_failed", error=str(e))
 
         # 4. Symbol Focus (Targeted Coding) - Now with actual symbol definitions!
         if symbols:

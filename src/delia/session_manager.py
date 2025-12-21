@@ -248,8 +248,8 @@ If you've drifted off-topic, acknowledge it and refocus.
         Returns:
             Dict with token counts, message counts, and compaction info.
         """
-        from .compaction import get_compactor
-        return get_compactor().get_compaction_stats(self)
+        from .semantic import get_conversation_compressor
+        return get_conversation_compressor().get_compaction_stats(self)
 
     def needs_compaction(self) -> bool:
         """
@@ -258,7 +258,7 @@ If you've drifted off-topic, acknowledge it and refocus.
         Returns:
             True if token count exceeds compaction threshold.
         """
-        from .compaction import needs_compaction
+        from .semantic.compression import needs_compaction
         return needs_compaction(self)
 
     def is_expired(self, ttl_seconds: int = SESSION_TTL_SECONDS) -> bool:
@@ -873,7 +873,7 @@ class SessionManager:
                 "error": f"Session not found: {session_id}",
             }
 
-        from .compaction import compact_session as do_compact
+        from .semantic.compression import compact_session as do_compact
         result = await do_compact(session, force=force)
 
         if result.success:

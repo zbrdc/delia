@@ -186,6 +186,35 @@ async def run_agent_loop(
         all_tool_calls.extend(tool_calls)
         all_tool_results.extend(results)
 
+        # In-Loop Correction (P4.1): Trigger reflection on failure
+        any_failed = any(not res.success for res in results)
+        if any_failed and config.reflection_enabled:
+            failed_tools = [res.tool_name for res in results if not res.success]
+            log.info("agent_triggering_reflection", iteration=iteration, failed=failed_tools)
+            
+            # Formulate reflection prompt
+            failure_context = "\n".join([f"Tool '{res.tool_name}' failed: {res.output}" for res in results if not res.success])
+            reflection_prompt = f"""[System Reflection Request]
+The following tools failed during iteration {iteration}:
+{failure_context}
+
+Analyze the error and provide a CORRECTIVE STRATEGY. 
+How should the plan change to overcome this? Be concise.
+"""
+            try:
+                # Use the same model for reflection to maintain context, 
+                # but with a system-level corrective prompt.
+                reflection_msgs = messages + [{"role": "user", "content": reflection_prompt}]
+                reflection_res = await call_llm(reflection_msgs, full_system)
+                
+                reflection_text = reflection_res["response"] if isinstance(reflection_res, dict) else str(reflection_res)
+                log.info("agent_reflection_complete", strategy=reflection_text[:100])
+                
+                # Inject the reflection as a high-priority system instruction for the next turn
+                messages.append({"role": "user", "content": f"[System Correction]: {reflection_text}"})
+            except Exception as e:
+                log.warning("agent_reflection_failed", error=str(e))
+
         # Check for final flag - if any tool result is marked final,
         # return it directly without reloading the orchestrating model.
         # This saves a GPU model swap when the delegated result IS the final answer.

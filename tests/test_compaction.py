@@ -7,11 +7,11 @@ import pytest
 from datetime import datetime
 
 from delia.session_manager import SessionState, SessionMessage
-from delia.compaction import (
-    ConversationCompactor,
-    CompactionResult,
-    CompactionMetadata,
-    get_compactor,
+from delia.semantic.compression import (
+    ConversationCompressor as ConversationCompactor,
+    CompressionResult as CompactionResult,
+    CompressionMetadata as CompactionMetadata,
+    get_conversation_compressor as get_compactor,
     needs_compaction,
     DEFAULT_COMPACTION_THRESHOLD_TOKENS,
 )

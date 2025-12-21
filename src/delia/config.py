@@ -426,6 +426,9 @@ class Config:
 # Global config instance
 config = Config()
 
+# Valid model tiers for validation and routing
+VALID_MODELS = frozenset({"quick", "coder", "moe", "thinking", "agentic", "swe", "critic", "dispatcher"})
+
 
 # ============================================================
 # PROVIDER COST ESTIMATES

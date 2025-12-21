@@ -577,34 +577,34 @@ class TestToTExecutorIntegration:
                 response="Unknown", success=False
             ))
 
+        # ADR-008: _execute_comparison removed (deprecated, redirects to voting)
         with patch.object(executor, '_execute_voting', side_effect=mock_executor):
             with patch.object(executor, '_execute_agentic', side_effect=mock_executor):
                 with patch.object(executor, '_execute_deep_thinking', side_effect=mock_executor):
-                    with patch.object(executor, '_execute_comparison', side_effect=mock_executor):
-                        with patch.object(executor.critic, 'evaluate_branches') as mock_eval:
-                            mock_eval.return_value = BranchEvaluation(
-                                winner_index=0,
-                                winner_mode=OrchestrationMode.VOTING,
-                                scores=[],
-                                reasoning="VOTING won",
-                                insights="Consensus helpful",
-                            )
+                    with patch.object(executor.critic, 'evaluate_branches') as mock_eval:
+                        mock_eval.return_value = BranchEvaluation(
+                            winner_index=0,
+                            winner_mode=OrchestrationMode.VOTING,
+                            scores=[],
+                            reasoning="VOTING won",
+                            insights="Consensus helpful",
+                        )
 
-                            intent = DetectedIntent(
-                                task_type="review",
-                                orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
-                            )
+                        intent = DetectedIntent(
+                            task_type="review",
+                            orchestration_mode=OrchestrationMode.TREE_OF_THOUGHTS,
+                        )
 
-                            result = await executor._execute_tree_of_thoughts(
-                                intent=intent,
-                                message="Test task",
-                                backend_type=None,
-                                model_override=None,
-                            )
+                        result = await executor._execute_tree_of_thoughts(
+                            intent=intent,
+                            message="Test task",
+                            backend_type=None,
+                            model_override=None,
+                        )
 
-                            assert result.mode == OrchestrationMode.TREE_OF_THOUGHTS
-                            assert "tot_branches" in result.debug_info
-                            assert "tot_winner" in result.debug_info
+                        assert result.mode == OrchestrationMode.TREE_OF_THOUGHTS
+                        assert "tot_branches" in result.debug_info
+                        assert "tot_winner" in result.debug_info
 
 
 class TestHighStakesKeywords:

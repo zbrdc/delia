@@ -79,21 +79,17 @@ class TestOrchestrationStress:
             assert "Simulated Network Error" in result.response
 
     @pytest.mark.asyncio
-    async def test_comparison_multi_backend(self, mock_backend):
+    async def test_voting_multi_backend(self, mock_backend):
+        """Test VOTING mode with multiple backends (ADR-008: COMPARISON removed)."""
         executor = OrchestrationExecutor()
-        intent = DetectedIntent(task_type="quick", orchestration_mode=OrchestrationMode.COMPARISON)
-        intent.comparison_models = ["model-a", "model-b"]
-        
-        with patch.object(executor, "_execute_comparison", new_callable=AsyncMock) as mock_exec:
+        intent = DetectedIntent(task_type="quick", orchestration_mode=OrchestrationMode.VOTING)
+
+        with patch.object(executor, "_execute_voting", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = OrchestrationResult(
-                response="# Comparison\n## model-a\nOpinion\n## model-b\nOpinion", 
-                success=True, 
-                models_compared=["model-a", "model-b"],
-                mode=OrchestrationMode.COMPARISON
+                response="Consensus opinion",
+                success=True,
+                mode=OrchestrationMode.VOTING
             )
-            
+
             result = await executor.execute(intent, "what do you think?")
             assert result.success
-            assert "model-a" in result.response
-            assert "model-b" in result.response
-            assert len(result.models_compared) == 2

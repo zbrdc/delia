@@ -990,6 +990,13 @@ def index(
     Scans the current directory to:
     1. Generate hierarchical file summaries (Project Map)
     2. Build a global dependency graph (Symbol Graph)
+    3. Generate project-specific playbooks (with --summarize)
+    
+    The generated playbooks contain strategic bullets about:
+    - Tech stack and frameworks detected
+    - Coding patterns and conventions
+    - Project structure and key directories
+    - Testing and verification practices
     """
     import asyncio
     from .orchestration.summarizer import get_summarizer
@@ -1023,13 +1030,23 @@ def index(
         graph_updated = await graph.sync(force=force)
         print_success(f"Symbol Graph updated ({graph_updated} files processed).")
         
-        # 3. Sync Summaries (LLM Analysis) - uses qwen3:0.6b for speed
+        # 3. Sync Summaries (LLM Analysis) - uses olmo-3 for reliable JSON
         if summarize:
-            print_info(f"Generating Project summaries (parallel={parallel}, model=qwen3:0.6b)...")
+            print_info(f"Generating Project summaries (parallel={parallel}, model=olmo-3:7b-instruct)...")
         else:
             print_info("Generating embeddings...")
         summary_updated = await summarizer.sync_project(force=force, summarize=summarize, parallel=parallel)
         print_success(f"Project Map updated ({summary_updated} files processed).")
+        
+        # 4. Generate project playbook from codebase analysis
+        if summarize:
+            print_info("Generating project playbook from analysis...")
+            from .playbook import generate_project_playbook
+            playbook_count = await generate_project_playbook(summarizer)
+            if playbook_count > 0:
+                print_success(f"Project playbook generated ({playbook_count} strategic bullets).")
+            else:
+                print_info("No new playbook bullets generated (may already exist).")
         
         print()
         if RICH_AVAILABLE and console:
@@ -1043,6 +1060,435 @@ def index(
         print_warning("Indexing interrupted.")
     except Exception as e:
         print_error(f"Indexing failed: {e}")
+
+
+@app.command("init-project")
+def init_project(
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing framework files"),
+    skip_index: bool = typer.Option(False, "--skip-index", help="Skip indexing (use existing analysis)"),
+    parallel: int = typer.Option(4, "--parallel", "-p", help="Number of parallel summarization tasks"),
+) -> None:
+    """
+    Initialize a project with Delia's ACE Framework.
+
+    This command:
+    1. Indexes the codebase with LLM summarization
+    2. Detects tech stack, patterns, and conventions
+    3. Generates a customized CLAUDE.md framework file
+    4. Creates .claude/, .gemini/, .github/ directories with synced configs
+
+    Run this in your project root to enable Delia-powered AI assistance.
+    """
+    import asyncio
+    from .playbook import detect_tech_stack, playbook_manager
+
+    async def run_init_project():
+        project_root = Path.cwd()
+        project_name = project_root.name
+
+        print_header(f"Initializing Delia Framework for '{project_name}'...")
+
+        # Step 1: Index the project (unless skipped)
+        if not skip_index:
+            from .orchestration.summarizer import get_summarizer
+            from .orchestration.graph import get_symbol_graph
+            from .llm import init_llm_module
+            from .queue import ModelQueue
+            from .backend_manager import backend_manager
+
+            print_info("Analyzing codebase structure...")
+
+            model_queue = ModelQueue()
+            init_llm_module(
+                stats_callback=lambda *a, **k: None,
+                save_stats_callback=lambda: None,
+                model_queue=model_queue,
+            )
+
+            summarizer = get_summarizer()
+            graph = get_symbol_graph()
+
+            # Build symbol graph
+            print_info("Building Symbol Graph...")
+            await graph.sync(force=force)
+
+            # Generate summaries
+            print_info(f"Generating project summaries (parallel={parallel})...")
+            await summarizer.sync_project(force=force, summarize=True, parallel=parallel)
+
+            # Generate playbook
+            print_info("Generating project playbook...")
+            from .playbook import generate_project_playbook
+            await generate_project_playbook(summarizer)
+
+            print_success("Codebase analysis complete.")
+        else:
+            print_info("Skipping indexing (using existing analysis)...")
+
+        # Step 2: Detect tech stack
+        print_info("Detecting tech stack and patterns...")
+        tech_stack = _detect_project_tech_stack(project_root)
+
+        # Step 3: Generate CLAUDE.md
+        print_info("Generating CLAUDE.md framework file...")
+        claude_md_content = _generate_claude_md(project_name, tech_stack, project_root)
+
+        claude_md_path = project_root / "CLAUDE.md"
+        if claude_md_path.exists() and not force:
+            if not prompt_confirm(f"CLAUDE.md already exists. Overwrite?", default=False):
+                print_warning("Skipping CLAUDE.md generation.")
+            else:
+                claude_md_path.write_text(claude_md_content)
+                print_success(f"Generated {claude_md_path}")
+        else:
+            claude_md_path.write_text(claude_md_content)
+            print_success(f"Generated {claude_md_path}")
+
+        # Step 4: Sync to AI assistant config directories
+        print_info("Syncing framework to AI assistant configs...")
+
+        ai_configs = [
+            (project_root / ".claude", "INSTRUCTIONS.md"),
+            (project_root / ".gemini", "instructions.md"),
+            (project_root / ".github", "copilot-instructions.md"),
+        ]
+
+        for config_dir, filename in ai_configs:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_path = config_dir / filename
+            config_path.write_text(claude_md_content)
+            print_success(f"  Created {config_path.relative_to(project_root)}")
+
+        # Final summary
+        print()
+        if RICH_AVAILABLE and console:
+            from rich.panel import Panel
+            console.print(Panel.fit(
+                f"[bold green]Project initialized![/bold green]\n\n"
+                f"Framework files created:\n"
+                f"  • CLAUDE.md\n"
+                f"  • .claude/INSTRUCTIONS.md\n"
+                f"  • .gemini/instructions.md\n"
+                f"  • .github/copilot-instructions.md\n\n"
+                f"[dim]Delia will now provide dynamic playbook guidance for this project.[/dim]",
+                border_style="green",
+                title="Delia ACE Framework"
+            ))
+        else:
+            print("\nProject initialized successfully!")
+            print("Framework files: CLAUDE.md, .claude/, .gemini/, .github/")
+
+    try:
+        asyncio.run(run_init_project())
+    except KeyboardInterrupt:
+        print_warning("Initialization interrupted.")
+    except Exception as e:
+        print_error(f"Initialization failed: {e}")
+        raise
+
+
+def _detect_project_tech_stack(project_root: Path) -> dict[str, Any]:
+    """Detect tech stack from project files."""
+    tech_stack = {
+        "primary_language": None,
+        "frameworks": [],
+        "test_framework": None,
+        "package_manager": None,
+        "has_tests": False,
+        "is_async": False,
+    }
+
+    # Check for Python
+    if (project_root / "pyproject.toml").exists() or (project_root / "setup.py").exists():
+        tech_stack["primary_language"] = "Python"
+        tech_stack["package_manager"] = "uv" if (project_root / "uv.lock").exists() else "pip"
+
+        # Check pyproject.toml for dependencies
+        pyproject = project_root / "pyproject.toml"
+        if pyproject.exists():
+            content = pyproject.read_text()
+            if "fastapi" in content.lower():
+                tech_stack["frameworks"].append("FastAPI")
+            if "pydantic" in content.lower():
+                tech_stack["frameworks"].append("Pydantic")
+            if "structlog" in content.lower():
+                tech_stack["frameworks"].append("structlog")
+            if "asyncio" in content.lower() or "httpx" in content.lower():
+                tech_stack["is_async"] = True
+            if "pytest" in content.lower():
+                tech_stack["test_framework"] = "pytest"
+                tech_stack["has_tests"] = True
+
+    # Check for TypeScript/JavaScript
+    if (project_root / "package.json").exists():
+        if tech_stack["primary_language"] is None:
+            tech_stack["primary_language"] = "TypeScript"
+        tech_stack["package_manager"] = "npm"
+
+        try:
+            pkg_json = json.loads((project_root / "package.json").read_text())
+            deps = {**pkg_json.get("dependencies", {}), **pkg_json.get("devDependencies", {})}
+
+            if "react" in deps or "react-native" in deps:
+                tech_stack["frameworks"].append("React")
+            if "react-native" in deps:
+                tech_stack["frameworks"].append("React Native")
+            if "expo" in deps:
+                tech_stack["frameworks"].append("Expo")
+            if "next" in deps:
+                tech_stack["frameworks"].append("Next.js")
+            if "tamagui" in deps:
+                tech_stack["frameworks"].append("Tamagui")
+            if "swr" in deps:
+                tech_stack["frameworks"].append("SWR")
+            if "zod" in deps:
+                tech_stack["frameworks"].append("Zod")
+            if "jest" in deps:
+                tech_stack["test_framework"] = "Jest"
+                tech_stack["has_tests"] = True
+            if "vitest" in deps:
+                tech_stack["test_framework"] = "Vitest"
+                tech_stack["has_tests"] = True
+            if "playwright" in deps:
+                tech_stack["frameworks"].append("Playwright")
+        except Exception:
+            pass
+
+    # Check for Supabase
+    if (project_root / "supabase").is_dir():
+        tech_stack["frameworks"].append("Supabase")
+
+    # Check for tests directory
+    if (project_root / "tests").is_dir() or (project_root / "test").is_dir():
+        tech_stack["has_tests"] = True
+
+    return tech_stack
+
+
+def _generate_claude_md(project_name: str, tech_stack: dict[str, Any], project_root: Path) -> str:
+    """Generate a customized CLAUDE.md based on detected tech stack."""
+
+    # Determine language-specific content
+    lang = tech_stack.get("primary_language", "Unknown")
+    frameworks = tech_stack.get("frameworks", [])
+    test_framework = tech_stack.get("test_framework", "pytest" if lang == "Python" else "Jest")
+    pkg_manager = tech_stack.get("package_manager", "uv" if lang == "Python" else "npm")
+    is_async = tech_stack.get("is_async", False)
+
+    # Build framework list
+    framework_str = ", ".join(frameworks) if frameworks else "Standard library"
+
+    # Generate test command
+    if lang == "Python":
+        test_cmd = "uv run pytest" if pkg_manager == "uv" else "pytest"
+        lint_cmd = "ruff check" if pkg_manager == "uv" else "ruff check"
+    else:
+        test_cmd = "npm run test" if test_framework else "npm test"
+        lint_cmd = "npm run lint"
+
+    # Build the CLAUDE.md content
+    content = f'''# {project_name} Development Instructions
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+## ACE Framework: Delia-Controlled Playbooks
+
+Delia manages project-specific playbooks that provide learned strategies, patterns, and guidance.
+Instead of reading static profile files, query Delia for dynamic, feedback-refined guidance.
+
+### Getting Playbook Guidance
+
+**Before starting a task**, query Delia for relevant playbook bullets:
+
+```python
+# Get task-specific guidance
+get_playbook(task_type="coding")  # or: testing, architecture, debugging, project
+
+# Get project context (tech stack, patterns, conventions)
+get_project_context()
+```
+
+The playbooks contain strategic bullets with:
+- **Learned lessons** from past tasks
+- **Project-specific patterns** (detected from codebase analysis via `delia index --summarize`)
+- **Utility scores** - bullets that helped more rank higher
+
+### Applying Guidance
+
+Use the bullet content to guide your work. Each bullet has an ID for feedback:
+
+```json
+{{
+  "id": "strat-a1b2c3d4",
+  "content": "This project uses async/await patterns. Prefer async def for I/O operations.",
+  "utility_score": 0.85
+}}
+```
+
+### Closing the Learning Loop
+
+**After completing a task**, report whether the guidance helped:
+
+```python
+# If the bullet helped complete the task successfully
+report_feedback(bullet_id="strat-a1b2c3d4", task_type="coding", helpful=True)
+
+# If the bullet was misleading or irrelevant
+report_feedback(bullet_id="strat-a1b2c3d4", task_type="coding", helpful=False)
+```
+
+This feedback updates bullet utility scores, improving future recommendations.
+
+### Task Type Mapping
+
+| Task Type | Keywords | Playbook |
+|-----------|----------|----------|
+| coding | implement, add, create, write | `coding` |
+| testing | test, {test_framework.lower() if test_framework else "test"}, coverage, assert | `testing` |
+| architecture | design, ADR, refactor, pattern | `architecture` |
+| debugging | error, bug, fix, stack trace | `debugging` |
+| project | general project context | `project` |
+
+---
+
+## Project Overview
+
+**Project:** {project_name}
+**Language:** {lang}
+**Frameworks:** {framework_str}
+
+---
+
+## Build & Development Commands
+
+```bash
+# Install dependencies
+{pkg_manager} {"sync" if pkg_manager == "uv" else "install"}
+
+# Run tests
+{test_cmd}
+
+# Lint code
+{lint_cmd}
+```
+
+---
+
+## INLINED CRITICAL RULES
+
+These rules are mandatory for all work in this project:
+
+### From core.md - Universal Rules
+```
+ALWAYS:
+- Search codebase for similar patterns before creating new code (DRY)
+- Check existing utilities before creating new ones
+- Run tests before committing
+- Complete Integration: No placeholders, remove old code
+- Type safety: {"No TypeScript 'any', use Zod validation" if lang == "TypeScript" else "Use type hints and Pydantic models"}
+```
+
+### From coding.md - Before Writing Code
+```
+PRE-IMPLEMENTATION CHECKLIST (Cannot skip):
+[] Query Delia playbook for guidance
+[] Search codebase for similar patterns (DRY)
+[] Check existing utilities before creating new ones
+[] Verify function signatures match project style
+[] Run tests before committing
+```
+
+### From git.md - Git Operations
+```
+BRANCH DECISION:
+- Multi-file changes? -> Create branch: feature/, fix/, refactor/
+- Single-file trivial fix? -> Commit directly to main
+- Experimental? -> Always branch
+
+COMMIT FORMAT:
+type(scope): description
+Examples: feat(core):, fix(api):, refactor(utils):
+
+NEVER:
+- Force-push to main
+- Skip tests before push
+- Leave branches hanging
+```
+
+### From debugging.md - Fixing Issues
+```
+DEBUG ORDER:
+1. Error stack trace -> exact file/line
+2. Recent commits -> what changed?
+3. Test output -> which test failing?
+4. Logs -> structured log events
+
+FIX STRATEGY:
+- Small bug (<10 lines): Direct to main
+- Complex bug (>10 lines): Create fix/ branch
+- ALWAYS add regression test
+```
+
+---
+
+## Anti-Patterns (NEVER DO)
+
+```
+Code:
+- Placeholder delegations -> Actually extract and integrate
+- Duplicate state (old + new module) -> Remove old, use new
+- {"TypeScript 'any'" if lang == "TypeScript" else "Untyped functions"} -> Proper types{"" if lang == "TypeScript" else " and type hints"}
+- Create abstractions for one-time use -> Keep it simple
+
+Process:
+- Commit without running tests -> NEVER
+- Force-push to main -> NEVER
+- Leave dead code "just in case" -> DELETE it
+- Skip playbook guidance -> ALWAYS query Delia
+```
+
+---
+
+## Validation Checklist (Before Marking Complete)
+
+```
+[] Playbook bullets queried and applied (get_playbook)
+[] Feedback reported for useful bullets (report_feedback)
+[] Code passes: {lint_cmd}
+[] Tests pass: {test_cmd}
+[] No placeholder delegations
+[] Old code removed if extracting
+[] Tests updated to match new implementation
+```
+
+---
+
+**All projects use Delia for dynamic playbook guidance.**
+'''
+
+    # Add async-specific content if detected
+    if is_async and lang == "Python":
+        async_section = '''
+## Async Patterns
+
+This project uses async/await. Follow these patterns:
+
+```python
+# DO: Use async def for I/O operations
+async def fetch_data(url: str) -> dict:
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        return response.json()
+
+# DO: Use asyncio.gather for parallel operations
+results = await asyncio.gather(task1(), task2(), task3())
+```
+'''
+        content = content.replace("---\n\n**All projects", f"---\n{async_section}\n---\n\n**All projects")
+
+    return content
 
 
 @app.command()

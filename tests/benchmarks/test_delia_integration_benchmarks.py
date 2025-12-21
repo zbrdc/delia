@@ -58,7 +58,7 @@ ROUTING_TEST_CASES = [
 INTENT_TEST_CASES = [
     # (message, expected_mode, expected_task_type)
     ("Make sure this code is correct:\ndef add(a, b): return a + b", OrchestrationMode.VOTING, "coder"),
-    ("Compare these two approaches", OrchestrationMode.COMPARISON, None),
+    ("Compare these two approaches", OrchestrationMode.VOTING, None),  # ADR-008: COMPARISON->VOTING
     ("First analyze the code, then refactor it", OrchestrationMode.CHAIN, None),
     ("Think carefully about the architecture", OrchestrationMode.DEEP_THINKING, "moe"),
     ("Read the file config.py and summarize it", OrchestrationMode.AGENTIC, "coder"),
@@ -161,7 +161,7 @@ class TestRealIntentDetection:
 
         clear_requests = [
             "Make sure this code has no bugs",  # Clear VOTING
-            "Compare option A and option B",  # Clear COMPARISON
+            "Compare option A and option B",  # Clear VOTING (ADR-008: COMPARISON deprecated)
             "First do X, then do Y",  # Clear CHAIN
         ]
 

@@ -83,6 +83,10 @@ class ModelQueue:
         self.lock = asyncio.Lock()
         self.request_counter = 0
 
+        # Hardware telemetry integration
+        from .hardware import get_hardware_monitor
+        self.hardware = get_hardware_monitor()
+
         # Provider lifecycle integration
         self._get_provider = provider_getter
 
@@ -96,7 +100,7 @@ class ModelQueue:
             "Qwen3-30B-Q4_K_M": 16.0,
         }
 
-        # GPU memory limit (assume 24GB for RTX 3090/4090, adjust as needed)
+        # GPU memory limit (estimated fallback)
         self.gpu_memory_limit_gb = 24.0
         self.memory_buffer_gb = 2.0  # Keep 2GB free
 
@@ -116,7 +120,7 @@ class ModelQueue:
             return self.model_sizes[model_name]
 
         # Handle MoE models (Mixtral, Nemotron MoE, etc.)
-        # These are often named like 8x7b or have \u0027moe\u0027 and \u0027a3b\u0027 (active params)
+        # These are often named like 8x7b or have 'moe' and 'a3b' (active params)
         if "8x7b" in model_lower:
             return 28.0  # Mixtral 8x7B (quantized)
         if "a3b" in model_lower or "a2b" in model_lower:
@@ -144,14 +148,33 @@ class ModelQueue:
             return 4.0  # Default small model
 
     def get_available_memory(self) -> float:
-        """Calculate available GPU memory."""
+        """Calculate available GPU memory using real hardware telemetry."""
+        free_vram_mb = self.hardware.get_total_free_vram_mb()
+        
+        # If we have real GPU stats, use them (convert to GB)
+        if free_vram_mb > 0:
+            return (free_vram_mb / 1024.0) - self.memory_buffer_gb
+            
+        # Fallback to estimation logic if no GPU detected
         used_memory = sum(self.get_model_size(model) for model in self.loaded_models)
         return max(0, self.gpu_memory_limit_gb - used_memory - self.memory_buffer_gb)
 
     def can_load_model(self, model_name: str) -> bool:
         """Check if a model can be loaded given current memory."""
         model_size = self.get_model_size(model_name)
-        return self.get_available_memory() >= model_size
+        available = self.get_available_memory()
+        
+        # OOM Protection: Log warning if available is tight
+        if available < model_size:
+            log.warning(
+                "memory_pressure_detected",
+                model=model_name,
+                required_gb=round(model_size, 2),
+                available_gb=round(available, 2),
+                action="attempting_unload"
+            )
+        
+        return available >= model_size
 
     def calculate_priority(self, task_type: str, content_length: int, model_name: str) -> int:
         """Calculate request priority (lower = higher priority)."""

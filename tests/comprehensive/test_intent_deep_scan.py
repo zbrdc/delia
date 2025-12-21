@@ -50,14 +50,16 @@ def detector():
         intent = detector.detect(msg)
         assert intent.orchestration_mode == expected_mode
 
+    # ADR-008: COMPARISON deprecated, redirects to VOTING
     @pytest.mark.parametrize("msg, expected_mode", [
-        ("compare how different models handle this", OrchestrationMode.COMPARISON),
-        ("what do multiple models think about this strategy", OrchestrationMode.COMPARISON),
-        ("get a second opinion on my architectural design", OrchestrationMode.DEEP_THINKING), 
-        ("compare vs deepseek vs claude", OrchestrationMode.COMPARISON),
-        ("which model is best at this code?", OrchestrationMode.NONE), # Better/best isn't comparison without 'vs' or 'multiple'
+        ("compare how different models handle this", OrchestrationMode.VOTING),
+        ("what do multiple models think about this strategy", OrchestrationMode.VOTING),
+        ("get a second opinion on my architectural design", OrchestrationMode.DEEP_THINKING),
+        ("compare vs deepseek vs claude", OrchestrationMode.VOTING),
+        ("which model is best at this code?", OrchestrationMode.NONE),  # Better/best isn't comparison without 'vs' or 'multiple'
     ])
-    def test_comparison_triggers(self, detector, msg, expected_mode):
+    def test_comparison_triggers_voting(self, detector, msg, expected_mode):
+        """COMPARISON now redirects to VOTING per ADR-008."""
         intent = detector.detect(msg)
         assert intent.orchestration_mode == expected_mode
 

@@ -72,12 +72,12 @@ class ModelRole(str, Enum):
 class OrchestrationMode(str, Enum):
     NONE = "none"
     VOTING = "voting"
-    COMPARISON = "comparison"
+    # ADR-008: COMPARISON removed - use VOTING instead
     DEEP_THINKING = "deep_thinking"
     AGENTIC = "agentic"
     CHAIN = "chain"
     WORKFLOW = "workflow"
-    TREE_OF_THOUGHTS = "tree_of_thoughts"
+    TREE_OF_THOUGHTS = "tree_of_thoughts"  # ADR-008: Now opt-in only
     BATCH = "batch"
 
 ROLE_PROMPTS: dict[ModelRole, str] = {

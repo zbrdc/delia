@@ -21,14 +21,13 @@ from typing import Any
 
 import structlog
 
-from .. import paths
 from ..file_helpers import read_file_safe
 from .constants import CODE_EXTENSIONS, IGNORE_DIRS
 
 log = structlog.get_logger()
 
-# File to store the symbol graph
-GRAPH_CACHE_FILE = paths.DATA_DIR / "symbol_graph.json"
+# Project-specific graph cache (.delia/ in CWD)
+GRAPH_CACHE_FILE = Path.cwd() / ".delia" / "symbol_graph.json"
 
 @dataclass
 class Symbol:
@@ -45,6 +44,7 @@ class FileNode:
     path: str
     symbols: list[Symbol] = field(default_factory=list)
     imports: set[str] = field(default_factory=set)
+    edge_summaries: dict[str, str] = field(default_factory=dict) # target_path -> explanation
     mtime: float = 0.0
 
 class SymbolGraph:
@@ -106,37 +106,146 @@ class SymbolGraph:
             
             return updated_count
 
-    def get_related_files(self, file_path: str) -> list[str]:
-        """Get files that are dependencies of or depend on the given file."""
+    async def explain_dependency(self, source_path: str, target_path: str) -> str:
+        """
+        Lazily explain why source_path depends on target_path.
+        
+        Uses a quick LLM model to analyze the relationship and caches the result.
+        """
+        if source_path not in self.nodes:
+            return "Source file not indexed."
+            
+        node = self.nodes[source_path]
+        if target_path in node.edge_summaries:
+            return node.edge_summaries[target_path]
+            
+        # Not in cache, generate it
+        log.info("generating_edge_explanation", source=source_path, target=target_path)
+        
+        from ..llm import call_llm
+        from ..file_helpers import read_file_safe
+        
+        source_content, _ = read_file_safe(str(self.root / source_path), max_size=10000)
+        target_content, _ = read_file_safe(str(self.root / target_path), max_size=10000)
+        
+        if not source_content or not target_content:
+            return "Could not read files to explain dependency."
+            
+        prompt = f"""Explain the relationship between these two files.
+How does `{source_path}` use `{target_path}`?
+Focus on the primary interaction (e.g. inherits from, calls factory, uses utility).
+
+FILE A ({source_path}):
+{source_content[:2000]}
+
+FILE B ({target_path}):
+{target_content[:2000]}
+
+Output ONE short sentence of architectural context."""
+
+        res = await call_llm(model="quick", prompt=prompt, task_type="summarize")
+        explanation = res.get("response", "Relationship could not be summarized.").strip()
+        
+        async with self._lock:
+            node.edge_summaries[target_path] = explanation
+            self._save_cache()
+            
+        return explanation
+
+    def get_related_files(self, file_path: str, max_depth: int = 2) -> list[str]:
+        """
+        Get files related by dependency graph using BFS traversal.
+        
+        Args:
+            file_path: Source file to start traversal from
+            max_depth: How many hops to follow (default 2 for 'Butterfly Effect' awareness)
+            
+        Returns:
+            List of related file paths, sorted by proximity.
+        """
         if file_path not in self.nodes:
             return []
             
-        related = set()
+        visited = {file_path: 0} # path -> depth
+        queue = [(file_path, 0)]
         
-        # 1. Files this file imports (out-edges)
-        for imp in self.nodes[file_path].imports:
-            # Try to resolve import to a local file
-            resolved = self._resolve_import(imp, file_path)
-            if resolved:
-                related.add(resolved)
+        while queue:
+            current_path, current_depth = queue.pop(0)
+            
+            if current_depth >= max_depth:
+                continue
                 
-        # 2. Files that import this file (in-edges)
-        # (This is slower, but good for context)
-        module_name = self._path_to_module(file_path)
-        for path, node in self.nodes.items():
-            if module_name in node.imports:
-                related.add(path)
-                
-        return list(related)
+            # Find all neighbors (out-edges and in-edges)
+            neighbors = set()
+            
+            # 1. Out-edges (imports)
+            if current_path in self.nodes:
+                for imp in self.nodes[current_path].imports:
+                    resolved = self._resolve_import(imp, current_path)
+                    if resolved:
+                        neighbors.add(resolved)
+                        
+            # 2. In-edges (dependents) - slower but necessary for depth
+            module_name = self._path_to_module(current_path)
+            for path, node in self.nodes.items():
+                if module_name in node.imports:
+                    neighbors.add(path)
+                    
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    visited[neighbor] = current_depth + 1
+                    queue.append((neighbor, current_depth + 1))
+                    
+        # Remove source file from results
+        if file_path in visited:
+            del visited[file_path]
+            
+        # Return sorted by depth (closest first)
+        return [p for p, d in sorted(visited.items(), key=lambda x: x[1])]
 
-    def find_symbol(self, name: str) -> list[Symbol]:
+    def find_symbol(self, name: str, semantic_fallback: bool = False) -> list[Symbol]:
         """Find a symbol by name across the entire project."""
         results = []
         for node in self.nodes.values():
             for sym in node.symbols:
                 if sym.name == name:
                     results.append(sym)
+                    
+        # If no exact match and semantic fallback enabled, try searching by meaning
+        if not results and semantic_fallback:
+            # Note: This is a synchronous wrapper for what will likely be 
+            # an async operation in the caller. We'll provide a separate async method.
+            pass
+            
         return results
+
+    async def search_symbols_semantic(self, query: str, top_k: int = 5) -> list[Symbol]:
+        """
+        Search for symbols semantically using the CodeSummarizer index.
+        
+        Args:
+            query: Natural language query (e.g. "auth logic")
+            top_k: Number of relevant files to inspect for symbols
+            
+        Returns:
+            List of symbols from the most semantically relevant files.
+        """
+        from .summarizer import get_summarizer
+        summarizer = get_summarizer()
+        await summarizer.initialize()
+        
+        # 1. Find semantically relevant files
+        file_results = await summarizer.search(query, top_k=top_k)
+        
+        results = []
+        for res in file_results:
+            path = res["path"]
+            if path in self.nodes:
+                # Add all top-level symbols from this relevant file
+                # In the future, we could further filter these by LLM/embeddings
+                results.extend(self.nodes[path].symbols)
+                
+        return results[:20] # Cap total symbols returned
 
     def _parse_file(self, rel_path: str, full_path: Path, mtime: float) -> bool:
         """Parse symbols and imports from a file based on its extension."""
@@ -288,6 +397,7 @@ class SymbolGraph:
             node = FileNode(path=path, mtime=n_data["mtime"])
             node.imports = set(n_data["imports"])
             node.symbols = [Symbol(**s) for s in n_data["symbols"]]
+            node.edge_summaries = n_data.get("edge_summaries", {})
             self.nodes[path] = node
 
     def _save_cache(self) -> None:
@@ -299,7 +409,8 @@ class SymbolGraph:
                 data[path] = {
                     "mtime": node.mtime,
                     "imports": list(node.imports),
-                    "symbols": [asdict(s) for s in node.symbols]
+                    "symbols": [asdict(s) for s in node.symbols],
+                    "edge_summaries": node.edge_summaries
                 }
             GRAPH_CACHE_FILE.write_text(json.dumps(data, indent=2))
         except Exception as e:

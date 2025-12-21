@@ -5,8 +5,8 @@ import pytest
 import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
-from delia.mcp_server import delegate, backend_manager
-from delia.backend_manager import BackendConfig
+from delia.delegation import delegate_impl as delegate
+from delia.backend_manager import backend_manager, BackendConfig
 
 @pytest.mark.asyncio
 async def test_automatic_failover_on_error():

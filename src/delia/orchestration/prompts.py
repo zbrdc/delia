@@ -80,10 +80,10 @@ class SystemPromptGenerator:
         # Handle both string and enum
         mode_str = mode.value if hasattr(mode, 'value') else str(mode)
         
+        # ADR-008: COMPARISON removed
         mapping = {
             "none": OrchestrationMode.NONE,
             "voting": OrchestrationMode.VOTING,
-            "comparison": OrchestrationMode.COMPARISON,
             "deep_thinking": OrchestrationMode.DEEP_THINKING,
             "batch": OrchestrationMode.BATCH,
         }

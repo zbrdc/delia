@@ -21,7 +21,7 @@ class TestOrchestrationDecisionLogic:
     @pytest.mark.parametrize("mode", [
         OrchestrationMode.NONE,
         OrchestrationMode.VOTING,
-        OrchestrationMode.COMPARISON,
+        # ADR-008: COMPARISON removed - redirects to VOTING internally
         OrchestrationMode.DEEP_THINKING,
         OrchestrationMode.AGENTIC,
     ])
@@ -33,12 +33,10 @@ class TestOrchestrationDecisionLogic:
             model_role=ModelRole.ASSISTANT,
             confidence=1.0
         )
-        
+
         # Mock handlers to avoid real LLM calls
         if mode == OrchestrationMode.VOTING:
             executor._execute_voting = AsyncMock(return_value=MagicMock(success=True))
-        elif mode == OrchestrationMode.COMPARISON:
-            executor._execute_comparison = AsyncMock(return_value=MagicMock(success=True))
         elif mode == OrchestrationMode.AGENTIC:
             executor._execute_agentic = AsyncMock(return_value=MagicMock(success=True))
         elif mode == OrchestrationMode.DEEP_THINKING:

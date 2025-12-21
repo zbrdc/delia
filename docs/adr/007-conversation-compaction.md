@@ -43,7 +43,8 @@ Implement a conversation compaction system for Delia that:
 
 ### Core Components
 
-**`src/delia/compaction.py`** - Main compaction logic:
+- **`src/delia/semantic/compression.py`** - Main compaction logic:
+
 - `ConversationCompactor` class with configurable thresholds
 - `CompactionResult` dataclass for operation results
 - `CompactionMetadata` for tracking compaction history

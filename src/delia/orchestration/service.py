@@ -41,7 +41,8 @@ from .intrinsics import (
 )
 from ..tracing import trace, add_event
 from ..melons import get_reward_collector
-from ..compaction import get_compactor, DEFAULT_COMPACTION_THRESHOLD_TOKENS
+from ..semantic import get_conversation_compressor as get_compactor
+from ..semantic.compression import DEFAULT_COMPACTION_THRESHOLD_TOKENS
 
 if TYPE_CHECKING:
     from ..config import AffinityTracker, PrewarmTracker
@@ -200,7 +201,7 @@ class OrchestrationService:
             )
 
             try:
-                from ..compaction import compact_session
+                from ..semantic.compression import compact_session
                 result = await compact_session(session, force=True)
 
                 if result.success:

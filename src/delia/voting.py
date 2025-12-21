@@ -25,6 +25,25 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class AdaptiveVotingConfig:
+    """
+    Research-backed adaptive voting configuration.
+
+    Based on CISC 2025 (Confidence Improves Self-Consistency) which shows
+    46% compute reduction with confidence-weighted voting vs standard majority.
+
+    Key insight: High-confidence first responses often don't need voting at all.
+    """
+
+    initial_k: int = 1  # Start with no voting (single response)
+    max_k: int = 3  # Maximum votes if disagreement
+    confidence_skip_threshold: float = 0.85  # Skip voting if confidence >= this
+    disagreement_escalation: bool = True  # Increase k on disagreement
+    weighted_voting: bool = True  # Weight votes by confidence
+    min_confidence_for_consensus: float = 0.6  # Minimum avg confidence to accept
+
+
+@dataclass
 class VoteResult:
     """Result of adding a vote to consensus."""
 
@@ -32,6 +51,7 @@ class VoteResult:
     winning_response: str | None = None
     votes_for_winner: int = 0
     total_votes: int = 0
+    confidence: float = 0.0  # Model confidence for this response
     red_flagged: bool = False
     red_flag_reason: str | None = None
 
@@ -309,6 +329,235 @@ class VotingConsensus:
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count (rough: ~4 chars per token)."""
         return len(text) // 4
+
+
+class AdaptiveVotingConsensus:
+    """
+    Confidence-weighted adaptive voting per CISC 2025 research.
+
+    Key improvements over standard VotingConsensus:
+    1. Starts with k=1 (no voting) - only escalates on low confidence/disagreement
+    2. Weights votes by model confidence, not equal weight
+    3. Early stopping when high-confidence agreement is reached
+    4. 46% compute reduction vs standard majority voting (per CISC paper)
+
+    Usage:
+        consensus = AdaptiveVotingConsensus()
+
+        while consensus.should_continue():
+            response, confidence = await get_model_response()
+            result = consensus.add_vote(response, confidence)
+            if result.consensus_reached:
+                break
+
+        winner = consensus.get_weighted_winner()
+    """
+
+    def __init__(
+        self,
+        config: AdaptiveVotingConfig | None = None,
+        quality_validator: "ResponseQualityValidator | None" = None,
+        similarity_threshold: float = 0.9,
+    ):
+        self.config = config or AdaptiveVotingConfig()
+        self.validator = quality_validator
+        self.similarity_threshold = similarity_threshold
+
+        # Track votes with confidence: response_hash -> list[(response, confidence)]
+        self._votes: dict[str, list[tuple[str, float]]] = {}
+        self._vote_order: list[tuple[str, str, float]] = []  # (hash, response, confidence)
+        self._red_flagged: int = 0
+
+    @property
+    def total_votes(self) -> int:
+        return len(self._vote_order)
+
+    def should_continue(self) -> bool:
+        """
+        Determine if more votes are needed.
+
+        Returns False (stop voting) when:
+        - First response has confidence >= threshold
+        - We have agreement with good average confidence
+        - We've reached max_k votes
+        """
+        if not self._vote_order:
+            return True  # Need at least one vote
+
+        # Check if first vote is high confidence (skip voting entirely)
+        if len(self._vote_order) == 1:
+            _, _, confidence = self._vote_order[0]
+            if confidence >= self.config.confidence_skip_threshold:
+                return False  # High confidence, no voting needed
+
+        # Check if we've reached max votes
+        if len(self._vote_order) >= self.config.max_k:
+            return False
+
+        # Check for agreement with sufficient confidence
+        if len(self._vote_order) >= 2:
+            if self._has_confident_agreement():
+                return False
+
+        return True
+
+    def _has_confident_agreement(self) -> bool:
+        """Check if we have agreeing votes with good confidence."""
+        if len(self._votes) == 0:
+            return False
+
+        # Find the response with most votes
+        best_hash = max(self._votes.keys(), key=lambda h: len(self._votes[h]))
+        votes_for_best = self._votes[best_hash]
+
+        if len(votes_for_best) < 2:
+            return False  # Need at least 2 agreeing votes
+
+        # Check average confidence of agreeing votes
+        avg_confidence = sum(c for _, c in votes_for_best) / len(votes_for_best)
+        return avg_confidence >= self.config.min_confidence_for_consensus
+
+    def add_vote(self, response: str, confidence: float = 0.5) -> VoteResult:
+        """
+        Add a vote with confidence score.
+
+        Args:
+            response: The model response
+            confidence: Model's confidence in this response (0.0-1.0)
+
+        Returns:
+            VoteResult with consensus status
+        """
+        # Clamp confidence to valid range
+        confidence = max(0.0, min(1.0, confidence))
+
+        # Red-flag check
+        if self.validator:
+            validation = self.validator.validate(response)
+            if not validation.is_valid:
+                self._red_flagged += 1
+                return VoteResult(
+                    consensus_reached=False,
+                    total_votes=self.total_votes,
+                    confidence=confidence,
+                    red_flagged=True,
+                    red_flag_reason=validation.reason,
+                )
+
+        # Normalize and hash
+        normalized = self._normalize(response)
+        response_hash = self._semantic_hash(normalized)
+
+        # Find similar existing response
+        matched_hash = self._find_similar(normalized, response_hash)
+        use_hash = matched_hash or response_hash
+
+        # Add to votes
+        if use_hash not in self._votes:
+            self._votes[use_hash] = []
+        self._votes[use_hash].append((response, confidence))
+        self._vote_order.append((use_hash, response, confidence))
+
+        # Check for consensus
+        votes_for_this = self._votes[use_hash]
+
+        # Adaptive consensus: check if we should stop
+        if not self.should_continue():
+            winner = self.get_weighted_winner()
+            return VoteResult(
+                consensus_reached=True,
+                winning_response=winner.winning_response,
+                votes_for_winner=len(votes_for_this),
+                total_votes=self.total_votes,
+                confidence=confidence,
+            )
+
+        return VoteResult(
+            consensus_reached=False,
+            total_votes=self.total_votes,
+            confidence=confidence,
+        )
+
+    def get_weighted_winner(self) -> VoteResult:
+        """
+        Get winner using confidence-weighted voting.
+
+        Instead of simple majority (each vote = 1), weights by confidence:
+        - Response A: 2 votes at 0.6 confidence = 1.2 weighted
+        - Response B: 1 vote at 0.95 confidence = 0.95 weighted
+        - Response A wins (despite B having higher individual confidence)
+
+        This balances agreement with confidence per CISC 2025.
+        """
+        if not self._votes:
+            return VoteResult(
+                consensus_reached=False,
+                total_votes=0,
+            )
+
+        if self.config.weighted_voting:
+            # Confidence-weighted scoring
+            weighted_scores: dict[str, float] = {}
+            for response_hash, votes in self._votes.items():
+                weighted_scores[response_hash] = sum(conf for _, conf in votes)
+
+            best_hash = max(weighted_scores.keys(), key=lambda h: weighted_scores[h])
+        else:
+            # Standard majority (count only)
+            best_hash = max(self._votes.keys(), key=lambda h: len(self._votes[h]))
+
+        votes_for_best = self._votes[best_hash]
+        best_response = votes_for_best[0][0]  # Use first response text
+        avg_confidence = sum(c for _, c in votes_for_best) / len(votes_for_best)
+
+        return VoteResult(
+            consensus_reached=True,
+            winning_response=best_response,
+            votes_for_winner=len(votes_for_best),
+            total_votes=self.total_votes,
+            confidence=avg_confidence,
+        )
+
+    def get_metadata(self) -> ConsensusMetadata:
+        """Get metadata about the voting process."""
+        winner = self.get_weighted_winner()
+        return ConsensusMetadata(
+            total_votes=self.total_votes,
+            red_flagged_count=self._red_flagged,
+            unique_responses=len(self._votes),
+            winning_votes=winner.votes_for_winner,
+            k_used=self.config.max_k,
+        )
+
+    def reset(self) -> None:
+        """Reset for reuse."""
+        self._votes.clear()
+        self._vote_order.clear()
+        self._red_flagged = 0
+
+    # Reuse normalization methods from VotingConsensus
+    def _normalize(self, text: str) -> str:
+        text = text.lower()
+        text = re.sub(r"[*_`#\[\]()]", "", text)
+        text = re.sub(r"[.,!?;:]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _semantic_hash(self, normalized_text: str) -> str:
+        return hashlib.sha256(normalized_text.encode()).hexdigest()[:16]
+
+    def _find_similar(self, normalized: str, new_hash: str) -> str | None:
+        if new_hash in self._votes:
+            return new_hash
+
+        for existing_hash, votes in self._votes.items():
+            existing_response = votes[0][0]
+            existing_normalized = self._normalize(existing_response)
+            similarity = difflib.SequenceMatcher(None, normalized, existing_normalized).ratio()
+            if similarity >= self.similarity_threshold:
+                return existing_hash
+
+        return None
 
 
 def estimate_task_complexity(prompt: str) -> int:

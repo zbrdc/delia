@@ -1,0 +1,22 @@
+[
+  {
+    "content": "When answering simple questions, be concise and direct. Avoid unnecessary preamble.",
+    "id": "strat-quick-001",
+    "section": "communication",
+    "helpful_count": 5,
+    "harmful_count": 0,
+    "created_at": "2024-01-01T00:00:00",
+    "last_used": null,
+    "source_task": "system_init"
+  },
+  {
+    "content": "If the user greeting is casual, respond casually but professionally.",
+    "id": "strat-quick-002",
+    "section": "persona",
+    "helpful_count": 5,
+    "harmful_count": 0,
+    "created_at": "2024-01-01T00:00:00",
+    "last_used": null,
+    "source_task": "system_init"
+  }
+]

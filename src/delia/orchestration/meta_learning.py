@@ -152,11 +152,11 @@ class OrchestrationLearner:
     CONFIDENCE_THRESHOLD = 0.7
 
     # Modes available for ToT exploration
+    # ADR-008: COMPARISON removed (deprecated, redirects to VOTING)
     EXPLORABLE_MODES = [
         OrchestrationMode.VOTING,
         OrchestrationMode.AGENTIC,
         OrchestrationMode.DEEP_THINKING,
-        OrchestrationMode.COMPARISON,
     ]
 
     def __init__(self, data_dir: Path | None = None):

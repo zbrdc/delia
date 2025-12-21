@@ -48,9 +48,12 @@ EXCLUDED_PATTERNS = [
 # Priority order matters - first match wins in classify_model()
 # Note: "dispatcher" tier removed - dispatching now uses embeddings (faster, more accurate)
 TIER_KEYWORDS = {
-    "agentic": ["openthinker:7b", "openthinker-agent", "agent"],
+    # DeepSeek-R1 excels at agentic tasks (tool use, reasoning chains)
+    # Prefer larger R1 variants (32b > 14b > 8b) for complex tool use
+    "agentic": ["deepseek-r1:32b", "deepseek-r1:14b", "deepseek-r1", "openthinker:7b", "openthinker-agent", "agent"],
     "swe": ["devstral", "deepswe", "swe"],
-    "thinking": ["openthinker:32b", "openthinker", "think", "reason", "r1"],
+    # R1 is also great for thinking - but agentic takes priority in classification
+    "thinking": ["openthinker:32b", "openthinker", "think", "reason"],
     "coder": ["qwen3-coder:30b", "deepcoder:14b", "coder", "code"],
     "moe": ["nemotron-3-nano", "mixtral", "moe", "30b", "32b"],
     "quick": ["ministral", "7b", "8b", "small", "tiny"],

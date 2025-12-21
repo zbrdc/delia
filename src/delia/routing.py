@@ -707,17 +707,25 @@ class BackendScorer:
 class ModelRouter:
     """Intelligent model and backend selection for Delia."""
 
-    def __init__(self, config: "Config", backend_manager: "BackendManager", use_semantic_routing: bool = True):
+    def __init__(
+        self, 
+        config: "Config", 
+        backend_manager: "BackendManager", 
+        use_semantic_routing: bool = True,
+        model_queue: Any | None = None
+    ):
         """Initialize the model router with configuration and backend manager.
 
         Args:
             config: Configuration object with model tiers and task mappings
             backend_manager: Backend manager for retrieving active/enabled backends
             use_semantic_routing: Whether to use embeddings-based semantic routing
+            model_queue: Optional ModelQueue for OOM protection
         """
         self.config = config
         self.backend_manager = backend_manager
         self.use_semantic_routing = use_semantic_routing and SEMANTIC_ROUTING_ENABLED
+        self.model_queue = model_queue
         self._semantic_router = None
         self._profile_manager = None
 
@@ -755,10 +763,14 @@ class ModelRouter:
 
         Strategy:
         1. Honor explicit overrides
-        2. MoE tasks (plan, critique) always use MoE model
-        3. **SEMANTIC ROUTING** (if enabled): Use embeddings to classify content
-        4. Fallback: Regex-based code detection for content classification
-        5. Default to quick for everything else
+        2. Specialist Profile Matching
+        3. Tasks that REQUIRE MoE (plan, critique)
+        4. Agentic/SWE tasks
+        5. Explicit coder tasks (generate, review, analyze)
+        6. **SEMANTIC ROUTING** (if enabled): Use embeddings to classify content
+        7. Fallback: Regex-based code detection for content classification
+        8. Default to quick for everything else
+        9. **OOM FAIL-SAFE**: Downgrade tier if VRAM is insufficient
         """
         # Get models from active backend (settings.json is the single source of truth)
         backend = self.backend_manager.get_active_backend()
@@ -767,204 +779,162 @@ class ModelRouter:
             raise RuntimeError("No backend configured. Check ~/.delia/settings.json or run 'delia init' to setup.")
 
         def get_model(tier: str) -> str:
-            """Get a model for a tier, handling lists and defaults.
-
-            In single-GPU mode, uses model affinity to pick the best model
-            considering both quality and swap cost.
-            """
+            """Get a model for a tier, handling lists and defaults."""
             val = backend.models.get(tier)
             if not val:
-                # Fallback to current if tier not found
                 return "current"
             if isinstance(val, list):
                 if not val:
                     return "current"
 
-                # Check if we should use swap-aware model selection
                 if self.backend_manager.is_single_gpu() and len(val) > 1:
                     from .config import get_model_affinity_tracker
                     model_affinity = get_model_affinity_tracker()
                     swap_penalty = self.backend_manager.get_swap_penalty_ms()
 
-                    # Use model affinity to select best model
                     best = model_affinity.select_best_model(
                         candidates=val,
                         task_type=tier,
                         swap_penalty_ms=swap_penalty,
                     )
                     if best:
-                        log.debug(
-                            "swap_aware_model_selected",
-                            tier=tier,
-                            selected=best,
-                            current=model_affinity.get_current_model(),
-                        )
                         return best
-
-                # Fallback to random selection
                 return random.choice(val)
             return val
-
-        model_quick = get_model("quick")
-        model_coder = get_model("coder")
-        model_moe = get_model("moe")
-        model_thinking = get_model("thinking")
-        model_agentic = get_model("agentic")
-        model_swe = get_model("swe")
 
         # Helper to resolve tier name to model name
         def resolve_tier(tier_name):
             if tier_name == "quick":
-                return model_quick
+                return get_model("quick")
             if tier_name == "coder":
-                return model_coder
+                return get_model("coder")
             if tier_name == "moe":
-                return model_moe
+                return get_model("moe")
             if tier_name == "thinking":
-                return model_thinking
+                return get_model("thinking")
             if tier_name == "agentic":
                 # Fallback chain: agentic -> coder -> quick
-                if model_agentic != "current":
-                    return model_agentic
-                return model_coder if model_coder != "current" else model_quick
+                m = get_model("agentic")
+                if m != "current": return m
+                c = get_model("coder")
+                return c if c != "current" else get_model("quick")
             if tier_name == "swe":
                 # Fallback chain: swe -> moe -> coder
-                if model_swe != "current":
-                    return model_swe
-                return model_moe if model_moe != "current" else model_coder
-            # Note: "dispatcher" tier removed - dispatching now uses embeddings
-            return tier_name  # Assume it's a model name if not a tier
+                m = get_model("swe")
+                if m != "current": return m
+                moe = get_model("moe")
+                return moe if moe != "current" else get_model("coder")
+            return tier_name
 
-        # Priority 1: Explicit override
-        if model_override:
-            resolved = resolve_tier(model_override)
-            log.info("model_selected", source="override", tier=model_override, model=resolved)
-            return resolved
+        # Mapping of tiers to their "next smaller" fallback for OOM protection
+        TIER_DOWNGRADE_PATH = {
+            "swe": "moe",
+            "moe": "coder",
+            "coder": "quick",
+            "agentic": "coder",
+            "thinking": "moe",
+        }
 
-        # Priority 1.5: Specialist Profile Matching
-        # Check if a specialized fine-tuned model matches this task better than general tiers.
-        # A 3B SQL-specialist may outperform a 14B generalist for SQL queries.
-        if content:
-            profile_manager = self._get_profile_manager()
-            if profile_manager:
-                profile, score = profile_manager.find_best_profile(task_type, content)
-                if profile and score >= 0.6:  # Only use if confident match (task + specialization)
-                    log.info(
-                        "model_selected",
-                        source="specialist_profile",
-                        profile=profile.id,
-                        model=profile.model,
-                        score=f"{score:.2f}",
-                        specializations=profile.specializations[:3],
-                    )
-                    return profile.model
+        async def find_fitting_model(initial_tier: str) -> str:
+            """Recursively find a model tier that fits in available VRAM."""
+            if not self.model_queue:
+                return resolve_tier(initial_tier)
 
-        # Priority 2: Tasks that REQUIRE MoE (complex multi-step reasoning)
-        if task_type in self.config.moe_tasks:
-            log.info("model_selected", source="moe_task", task=task_type, tier="moe")
-            return model_moe
+            current_tier = initial_tier
+            while True:
+                model_name = resolve_tier(current_tier)
+                if model_name == "current":
+                    return "current"
 
-        # Priority 2.5: Agentic tasks use agent-trained models
-        # These models are trained on execution traces, not just instructions
-        if task_type in self.config.agentic_tasks or task_type == "agentic":
-            resolved = resolve_tier("agentic")
-            log.info("model_selected", source="agentic_task", task=task_type, tier="agentic", model=resolved)
-            return resolved
-
-        # Priority 2.6: SWE tasks use SWE-specialized models
-        # For repo-scale operations, multi-file reasoning, architecture changes
-        if task_type in self.config.swe_tasks or task_type == "swe":
-            resolved = resolve_tier("swe")
-            log.info("model_selected", source="swe_task", task=task_type, tier="swe", model=resolved)
-            return resolved
-
-        # Priority 2.7: Explicit coder tasks take precedence over semantic routing
-        # When the user/system explicitly requests a coder task (review, generate, analyze),
-        # we should use the coder model regardless of semantic classification
-        if task_type in self.config.coder_tasks:
-            log.info("model_selected", source="coder_task_explicit", task=task_type, tier="coder")
-            return model_coder
-
-        # Priority 2.8: Quick tasks skip semantic routing entirely (fast-path for greetings)
-        # No need to load expensive embedding models for simple chat
-        if task_type == "quick":
-            log.info("model_selected", source="quick_task_fastpath", task=task_type, tier="quick")
-            return model_quick
-
-        # Priority 3: Semantic routing (embeddings-based classification)
-        if content and self.use_semantic_routing:
-            semantic_router = await self._get_semantic_router()
-            if semantic_router:
-                try:
-                    tier, confidence, reasoning = await semantic_router.get_recommended_tier(content)
-                    if confidence > 0.5:  # Only use semantic routing if confident
-                        resolved = resolve_tier(tier)
-                        log.info(
-                            "model_selected",
-                            source="semantic",
-                            task=task_type,
-                            tier=tier,
-                            confidence=f"{confidence:.0%}",
-                            reasoning=reasoning,
-                            model=resolved,
+                # Check if this model fits (accounts for unloading others)
+                if self.model_queue.can_load_model(model_name):
+                    if current_tier != initial_tier:
+                        log.warning(
+                            "oom_fail_safe_triggered",
+                            original_tier=initial_tier,
+                            selected_tier=current_tier,
+                            model=model_name,
+                            reason="insufficient_vram_for_higher_tier"
                         )
-                        return resolved
-                    else:
-                        log.debug(
-                            "semantic_routing_low_confidence",
-                            confidence=f"{confidence:.0%}",
-                            reasoning=reasoning,
-                        )
-                except Exception as e:
-                    log.warning("semantic_routing_failed", error=str(e))
+                    return model_name
 
-        # Priority 4 (fallback): Regex-based code detection
-        code_detection = None
-        if content and (content_size > self.config.large_content_threshold or task_type in self.config.coder_tasks):
-            code_detection = detect_code_content(content)
-
-        # Large content handling
-        if content_size > self.config.large_content_threshold and code_detection:
-            is_code, confidence, reasoning = code_detection
-            if is_code and confidence > 0.5:
-                log.info(
-                    "model_selected",
-                    source="large_code_regex",
-                    content_kb=content_size // 1000,
-                    confidence=f"{confidence:.0%}",
-                    tier="coder",
-                    reasoning=reasoning,
-                )
-                return model_coder
-            else:
-                # Large text content benefits from MoE's reasoning
-                log.info(
-                    "model_selected",
-                    source="large_text_regex",
-                    content_kb=content_size // 1000,
-                    confidence=f"{1 - confidence:.0%}",
-                    tier="moe",
-                    reasoning=reasoning,
-                )
-                return model_moe
-
-        # Code-focused tasks: use coder model even without code in message
-        # The task_type detection already determined this is code-related
-        # task_type can be a tier name ("coder") or a task name ("generate", "review", etc.)
-        if task_type == "coder" or task_type in self.config.coder_tasks:
-            if code_detection:
-                is_code, confidence, reasoning = code_detection
-                if is_code:
-                    log.info("model_selected", source="coder_task_regex", task=task_type, tier="coder", reasoning=reasoning)
+                # Try to downgrade
+                next_tier = TIER_DOWNGRADE_PATH.get(current_tier)
+                if not next_tier or next_tier == current_tier:
+                    # Can't downgrade further - fallback to quick and hope for the best
+                    if current_tier == "quick":
+                        log.error("oom_critical_no_models_fit", model=model_name)
+                        return model_name
+                    current_tier = "quick"
                 else:
-                    log.info("model_selected", source="coder_task_intent", task=task_type, tier="coder", reasoning="code-related task detected")
-            else:
-                log.info("model_selected", source="coder_task_intent", task=task_type, tier="coder", reasoning="code-related task detected")
-            return model_coder
+                    current_tier = next_tier
 
-        # Priority 5: Default to quick (fastest model)
-        log.info("model_selected", source="default", task=task_type, tier="quick")
-        return model_quick
+        # Selection Logic
+        selected_tier = "quick"
+        path_taken = "default"
+
+        # 1. Explicit override
+        if model_override:
+            selected_tier = model_override
+            path_taken = "override"
+        
+        # 2. Specialist Profile Matching
+        elif content and (pm := self._get_profile_manager()):
+            profile, score = pm.find_best_profile(task_type, content)
+            if profile and score >= 0.6:
+                log.info("model_selected", source="specialist_profile", model=profile.model, score=f"{score:.2f}")
+                return profile.model # Profiles bypass OOM check for now
+        
+        # 3. MoE tasks
+        elif task_type in self.config.moe_tasks:
+            selected_tier = "moe"
+            path_taken = "moe_task"
+            
+        # 4. Agentic/SWE tasks
+        elif task_type in self.config.swe_tasks or task_type == "swe":
+            selected_tier = "swe"
+            path_taken = "swe_task"
+        elif task_type in self.config.agentic_tasks or task_type == "agentic":
+            selected_tier = "agentic"
+            path_taken = "agentic_task"
+            
+        # 5. Coder tasks
+        elif task_type in self.config.coder_tasks or task_type == "coder":
+            selected_tier = "coder"
+            path_taken = "coder_task"
+            
+        else:
+            # Only try semantic/regex if not already determined by task_type
+            
+            # 6. Semantic routing
+            semantic_confident = False
+            if content and self.use_semantic_routing:
+                if sr := await self._get_semantic_router():
+                    try:
+                        tier, conf, reasoning = await sr.get_recommended_tier(content)
+                        if conf > 0.5:
+                            selected_tier = tier
+                            path_taken = "semantic"
+                            semantic_confident = True
+                            log.info("model_selected", source="semantic", tier=tier, confidence=f"{conf:.0%}", reasoning=reasoning)
+                    except Exception: pass
+            
+            # 7. Regex fallback (if semantic failed or skipped)
+            if not semantic_confident and content:
+                is_code, conf, reasoning = detect_code_content(content)
+                if content_size > self.config.large_content_threshold:
+                    selected_tier = "coder" if is_code and conf > 0.5 else "moe"
+                    path_taken = "large_content_regex"
+                    log.info("model_selected", source=path_taken, tier=selected_tier, reasoning=reasoning)
+                elif is_code and conf > 0.5:
+                    selected_tier = "coder"
+                    path_taken = "code_regex"
+                    log.info("model_selected", source=path_taken, tier=selected_tier, reasoning=reasoning)
+
+        log.debug("routing_decision", task_type=task_type, path=path_taken, tier=selected_tier)
+
+        # Apply OOM protection and resolve to model name
+        return await find_fitting_model(selected_tier)
 
     async def select_optimal_backend(
         self,
