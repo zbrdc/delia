@@ -1,4 +1,18 @@
-# Delia: ACE Framework Enforcement
+# Delia: AI-Assisted Coding Enhancement
+
+## Why Use Delia's Tools?
+
+Delia makes you **faster and better** at coding tasks:
+
+| Tool | Benefit |
+|------|---------|
+| **auto_context / Playbooks** | Project-specific patterns learned over time. Don't reinvent - apply what works. |
+| **Memories** | Persistent knowledge survives context limits. Store architecture decisions, integration details. |
+| **LSP/Symbols** | Semantic code navigation. `lsp_find_references()` beats grep. Jump to definitions, rename safely. |
+| **CodeRAG** | Semantic code search. Find related code by meaning, not just text matching. |
+| **Profiles** | Framework-specific best practices (FastAPI, React, etc.) loaded automatically. |
+
+**Using these tools = better code, fewer mistakes, faster iteration.**
 
 ## MANDATORY: ACE Framework Workflow
 
@@ -13,6 +27,34 @@
    - NO need to manually pick task_type
 2. APPLY the returned bullets to your work
 ```
+
+### RE-CALL auto_context Frequently to Stay on Track
+**CRITICAL**: Call auto_context more often than you think necessary. Every task phase should load fresh context.
+
+**Call auto_context when ANY of these happen:**
+1. **Starting a new file** - Different file = potentially different patterns
+2. **Task type shifts** - coding → testing → git → deployment
+3. **User gives short response** - "yes", "do it", "sounds good" - use prior_context
+4. **After completing a subtask** - About to move on? Refresh context
+5. **Before git operations** - ALWAYS get git playbook before commit/push/PR
+6. **Switching languages/frameworks** - Python to TypeScript? Refresh
+
+| Trigger | Action |
+|---------|--------|
+| Starting work on user request | `auto_context(message)` |
+| Finished coding, now committing | `auto_context("commit this fix", prior_context="<your last message>")` |
+| Finished fixing, now testing | `auto_context("run tests")` |
+| User asks about git after coding work | `auto_context(message, prior_context="Would you like me to commit?")` |
+| About to push or create PR | `auto_context("push to remote")` |
+
+**Use `prior_context`** when user's response is short/ambiguous:
+```python
+# User says "yes" after you offered to commit
+auto_context(message="yes", prior_context="Would you like me to commit this fix to dev?")
+# -> Detects "git" instead of "project"
+```
+
+**Rule of thumb**: If you're about to perform an action that wasn't part of your last auto_context call, refresh it first.
 
 ### Alternative (Manual) - Only if auto_context unavailable
 ```
@@ -33,20 +75,28 @@
 | implement, add, create, build, write, refactor | `coding` |
 | test, pytest, coverage, mock, assert | `testing` |
 | bug, error, fix, debug, broken, failing | `debugging` |
-| design, architecture, pattern, ADR | `architecture` |
-| git, commit, branch, merge, PR | `git` |
-| deploy, docker, CI/CD, production | `deployment` |
+| design, architecture, pattern, ADR, plan, think through, approach, trade-off | `architecture` |
+| git, commit, branch, merge, PR, push, pull, check in, land, squash, amend, revert | `git` |
+| deploy, docker, CI/CD, production, ship | `deployment` |
 | security, auth, password, token | `security` |
 | how, what, where, explain, project | `project` |
 
 ## Delia's Complete Tool Suite
 
 ### ACE Framework Tools (Automatic)
-- **auto_context(message, path?)** - **PRIMARY TOOL** - Auto-detects task type and returns relevant bullets. Call ONCE at start.
+- **auto_context(message, path?, prior_context?)** - **PRIMARY TOOL** - Auto-detects task type and returns relevant bullets. Call at start AND when task shifts. Use `prior_context` to pass your last message when user's response is short.
+- **check_ace_status(path?)** - **CALL THIS FIRST** if unsure about project status. Returns whether playbooks exist and what's needed.
+- **read_initial_instructions()** - **CRITICAL** for MCP clients that don't show system prompts. Call immediately if you haven't read the ACE manual.
 - **get_playbook(task_type, limit?, path?)** - Manual fallback - Returns bullets for specific task type.
 - **get_project_context(path?)** - Returns project overview: tech stack, patterns, key directories
 - **report_feedback(bullet_id, task_type, helpful)** - Report whether a bullet helped. **Call AFTER completing task.**
-- **confirm_ace_compliance(task_description, bullets_applied, patterns_followed)** - Validate ACE workflow compliance
+
+### ACE Workflow Checkpoint Tools (call these to stay on track!)
+- **think_about_task_adherence()** - **ALWAYS call BEFORE modifying code**. Prompts you to verify alignment with project patterns.
+- **think_about_collected_info()** - **ALWAYS call after searching/reading**. Ensures you have enough information before proceeding.
+- **think_about_completion()** - **Call when you think you're done**. Verification checklist before declaring completion.
+
+### Playbook Management Tools
 - **playbook_stats(task_type?)** - See bullet effectiveness scores
 - **add_playbook_bullet(task_type, content, section?)** - Add strategic bullet to playbook
 - **write_playbook(task_type, bullets)** - Write/replace entire playbook
@@ -74,6 +124,16 @@
 - **lsp_insert_after_symbol(path, symbol_name, content)** - Insert code after symbol
 
 Supports: Python (pyright/pylsp), TypeScript, Rust (rust-analyzer), Go (gopls)
+
+### File Operation Tools (Standalone)
+- **read_file(path, start_line?, end_line?)** - Read file with line numbers
+- **write_file(path, content, create_dirs?)** - Write/create file
+- **edit_file(path, old_text, new_text)** - Search and replace in file
+- **list_dir(path?, recursive?, pattern?)** - List directory contents
+- **find_file(pattern, path?)** - Find files by glob pattern
+- **search_for_pattern(pattern, path?, file_pattern?, context_lines?)** - Grep-like search
+- **delete_file(path)** - Delete a file
+- **create_directory(path)** - Create a directory
 
 ### Memory System Tools
 - **list_memories(path?)** - List all memory files for project

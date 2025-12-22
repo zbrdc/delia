@@ -14,7 +14,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-Project Memory System - Claude Code-like Automatic Instruction Loading.
+Project Memory System - Automatic Instruction Loading.
 
 Automatically discovers and loads project instructions from:
 1. ./DELIA.md (project root)
@@ -117,8 +117,8 @@ class ProjectMemory:
     """
     Discovers and loads project instructions automatically.
 
-    Similar to Claude Code's CLAUDE.md system, this finds and loads
-    project-specific instructions from multiple locations.
+    Finds and loads project-specific instructions from multiple locations,
+    supporting all AI coding assistants.
     """
 
     def __init__(

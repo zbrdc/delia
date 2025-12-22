@@ -78,17 +78,41 @@ class DeliaLSPClient:
         if language_id == "python":
             # Prefer based on what's installed
             for srv in ["pyright-langserver", "pylsp"]:
-                if shutil.which(srv):
-                    return [srv, "--stdio"]
+                cmd = self._find_executable(srv)
+                if cmd:
+                    return [cmd, "--stdio"]
         elif language_id in ("typescript", "javascript"):
-            if shutil.which("typescript-language-server"):
-                return ["typescript-language-server", "--stdio"]
+            cmd = self._find_executable("typescript-language-server")
+            if cmd:
+                return [cmd, "--stdio"]
         elif language_id == "rust":
-            if shutil.which("rust-analyzer"):
-                return ["rust-analyzer"]
+            cmd = self._find_executable("rust-analyzer")
+            if cmd:
+                return [cmd]
         elif language_id == "go":
-            if shutil.which("gopls"):
-                return ["gopls"]
+            cmd = self._find_executable("gopls")
+            if cmd:
+                return [cmd]
+        return None
+
+    def _find_executable(self, name: str) -> Optional[str]:
+        """Find executable in PATH or project's venv."""
+        # Check PATH first
+        found = shutil.which(name)
+        if found:
+            return found
+
+        # Check project's .venv/bin
+        venv_bin = self.root_path / ".venv" / "bin" / name
+        if venv_bin.exists() and os.access(venv_bin, os.X_OK):
+            return str(venv_bin)
+
+        # Check common venv locations
+        for venv_dir in ["venv", ".venv", "env"]:
+            venv_bin = self.root_path / venv_dir / "bin" / name
+            if venv_bin.exists() and os.access(venv_bin, os.X_OK):
+                return str(venv_bin)
+
         return None
 
     async def goto_definition(self, file_path: str, line: int, character: int) -> List[dict]:
@@ -99,6 +123,12 @@ class DeliaLSPClient:
             return []
 
         abs_path = (self.root_path / file_path).resolve()
+        if not abs_path.exists():
+            return []
+
+        # Open the document first (required by LSP)
+        await self._open_document(client, abs_path, lang_id)
+
         params = lsp.DefinitionParams(
             text_document=lsp.TextDocumentIdentifier(uri=abs_path.as_uri()),
             position=lsp.Position(line=line - 1, character=character)
@@ -119,6 +149,12 @@ class DeliaLSPClient:
             return []
 
         abs_path = (self.root_path / file_path).resolve()
+        if not abs_path.exists():
+            return []
+
+        # Open the document first (required by LSP)
+        await self._open_document(client, abs_path, lang_id)
+
         params = lsp.ReferenceParams(
             text_document=lsp.TextDocumentIdentifier(uri=abs_path.as_uri()),
             position=lsp.Position(line=line - 1, character=character),
@@ -140,6 +176,12 @@ class DeliaLSPClient:
             return None
 
         abs_path = (self.root_path / file_path).resolve()
+        if not abs_path.exists():
+            return None
+
+        # Open the document first (required by LSP)
+        await self._open_document(client, abs_path, lang_id)
+
         params = lsp.HoverParams(
             text_document=lsp.TextDocumentIdentifier(uri=abs_path.as_uri()),
             position=lsp.Position(line=line - 1, character=character)
@@ -159,18 +201,24 @@ class DeliaLSPClient:
             log.error("lsp_hover_failed", error=str(e))
             return None
 
-    async def document_symbols(self, file_path: str) -> List[dict]:
+    async def document_symbols(self, file_path: str) -> List[dict] | dict:
         """Get all symbols in a document.
 
         Returns a hierarchical list of symbols (classes, functions, etc.)
-        with their ranges and kinds.
+        with their ranges and kinds. Returns a dict with 'error' key on failure.
         """
         lang_id = self._guess_language(file_path)
         client = await self.get_client(lang_id)
         if not client:
-            return []
+            return {"error": f"No language server for '{lang_id}'. Install pyright: uv add pyright"}
 
         abs_path = (self.root_path / file_path).resolve()
+        if not abs_path.exists():
+            return {"error": f"File not found: {file_path}"}
+
+        # Open the document first (required by LSP)
+        await self._open_document(client, abs_path, lang_id)
+
         params = lsp.DocumentSymbolParams(
             text_document=lsp.TextDocumentIdentifier(uri=abs_path.as_uri())
         )
@@ -180,7 +228,33 @@ class DeliaLSPClient:
             return self._format_symbols(result)
         except Exception as e:
             log.error("lsp_symbols_failed", error=str(e))
-            return []
+            return {"error": f"LSP error: {str(e)}"}
+
+    async def _open_document(self, client: LanguageClient, abs_path: Path, lang_id: str) -> None:
+        """Open a document in the language server if not already open."""
+        uri = abs_path.as_uri()
+        if not hasattr(self, '_opened_docs'):
+            self._opened_docs: set[str] = set()
+
+        if uri in self._opened_docs:
+            return
+
+        try:
+            content = abs_path.read_text()
+            params = lsp.DidOpenTextDocumentParams(
+                text_document=lsp.TextDocumentItem(
+                    uri=uri,
+                    language_id=lang_id,
+                    version=1,
+                    text=content
+                )
+            )
+            client.text_document_did_open(params)
+            self._opened_docs.add(uri)
+            # Give pyright a moment to process the file
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            log.warning("lsp_open_failed", path=str(abs_path), error=str(e))
 
     async def rename_symbol(
         self, file_path: str, line: int, character: int, new_name: str

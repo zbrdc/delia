@@ -46,8 +46,8 @@
   "test_hello.py": {
     "mtime": 1766116466.1520455,
     "imports": [
-      "unittest",
-      "subprocess"
+      "subprocess",
+      "unittest"
     ],
     "symbols": [
       {
@@ -63,9 +63,9 @@
   "spinning_ball.py": {
     "mtime": 1766116500.1589499,
     "imports": [
+      "pygame",
       "math",
-      "sys",
-      "pygame"
+      "sys"
     ],
     "symbols": [
       {
@@ -109,8 +109,8 @@
     "mtime": 1766244171.51796,
     "imports": [
       "asyncio",
-      "delia.tools",
-      "delia"
+      "delia",
+      "delia.tools"
     ],
     "symbols": [],
     "edge_summaries": {}
@@ -131,7 +131,7 @@
     "edge_summaries": {}
   },
   "pyproject.toml": {
-    "mtime": 1766351431.3950257,
+    "mtime": 1766409006.1678283,
     "imports": [],
     "symbols": [],
     "edge_summaries": {}
@@ -178,8 +178,8 @@
   "dashboard/visualize_index.py": {
     "mtime": 1766284688.9613836,
     "imports": [
-      "sys",
       "pathlib",
+      "sys",
       "json"
     ],
     "symbols": [
@@ -196,9 +196,9 @@
   "dashboard/test_architectural_awareness.py": {
     "mtime": 1766286744.2437594,
     "imports": [
-      "sys",
       "pathlib",
-      "asyncio"
+      "asyncio",
+      "sys"
     ],
     "symbols": [
       {
@@ -220,10 +220,10 @@
   "tests/conftest.py": {
     "mtime": 1766251792.9842262,
     "imports": [
-      "hypothesis",
+      "pytest",
       "tempfile",
       "os",
-      "pytest"
+      "hypothesis"
     ],
     "symbols": [
       {
@@ -281,12 +281,12 @@
   "tests/test_actual_bugs.py": {
     "mtime": 1766035775.5017128,
     "imports": [
-      "pathlib",
-      "unittest.mock",
-      "asyncio",
       "json",
+      "asyncio",
       "os",
-      "pytest"
+      "unittest.mock",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -366,12 +366,12 @@
     "mtime": 1766035775.5017128,
     "imports": [
       "sys",
-      "pathlib",
+      "json",
       "asyncio",
       "uuid",
-      "json",
       "os",
-      "pytest"
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -471,12 +471,12 @@
   "tests/test_backend_manager.py": {
     "mtime": 1766035775.5017128,
     "imports": [
-      "pathlib",
-      "tempfile",
       "json",
       "delia.backend_manager",
       "shutil",
-      "pytest"
+      "tempfile",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -493,11 +493,11 @@
     "mtime": 1766035775.5017128,
     "imports": [
       "sys",
-      "pathlib",
-      "time",
       "json",
+      "time",
       "os",
-      "pytest"
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -577,10 +577,10 @@
     "mtime": 1766192231.8928893,
     "imports": [
       "sys",
-      "pathlib",
-      "unittest.mock",
       "os",
-      "pytest"
+      "unittest.mock",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -694,18 +694,18 @@
   "tests/test_bug_hunting.py": {
     "mtime": 1766035775.5019765,
     "imports": [
-      "pathlib",
-      "unittest.mock",
       "delia.config",
-      "hypothesis.stateful",
-      "tempfile",
-      "time",
-      "asyncio",
       "json",
+      "asyncio",
+      "time",
+      "tempfile",
       "os",
       "delia.backend_manager",
+      "unittest.mock",
+      "hypothesis.stateful",
+      "pytest",
       "hypothesis",
-      "pytest"
+      "pathlib"
     ],
     "symbols": [
       {
@@ -770,13 +770,13 @@
   "tests/test_cli.py": {
     "mtime": 1766035775.5019765,
     "imports": [
-      "sys",
-      "pathlib",
-      "signal",
-      "time",
       "subprocess",
+      "sys",
+      "time",
       "os",
-      "pytest"
+      "pytest",
+      "pathlib",
+      "signal"
     ],
     "symbols": [
       {
@@ -842,8 +842,8 @@
     "mtime": 1766243385.5521212,
     "imports": [
       "asyncio",
-      "pytest",
-      "delia.api"
+      "delia.api",
+      "pytest"
     ],
     "symbols": [
       {
@@ -881,13 +881,13 @@
     "mtime": 1766035775.5019765,
     "imports": [
       "sys",
-      "pathlib",
-      "unittest.mock",
       "contextvars",
+      "typing",
       "asyncio",
-      "delia.mcp_server",
+      "unittest.mock",
       "pytest",
-      "typing"
+      "pathlib",
+      "delia.mcp_server"
     ],
     "symbols": [
       {
@@ -952,14 +952,14 @@
   "tests/test_dashboard_api.py": {
     "mtime": 1766035775.5019765,
     "imports": [
-      "sys",
-      "pathlib",
-      "unittest.mock",
-      "time",
       "httpx",
+      "sys",
       "json",
+      "time",
       "os",
-      "pytest"
+      "unittest.mock",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -1038,14 +1038,14 @@
   "tests/test_error_handling.py": {
     "mtime": 1766246566.7793548,
     "imports": [
-      "sys",
-      "pathlib",
-      "unittest.mock",
-      "asyncio",
       "httpx",
+      "sys",
       "json",
+      "asyncio",
       "os",
-      "pytest"
+      "unittest.mock",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -1125,13 +1125,13 @@
     "mtime": 1766035775.5019765,
     "imports": [
       "sys",
-      "pathlib",
-      "unittest.mock",
-      "time",
-      "asyncio",
       "json",
+      "asyncio",
+      "time",
       "os",
-      "pytest"
+      "unittest.mock",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -1204,8 +1204,8 @@
     "mtime": 1766035775.5019765,
     "imports": [
       "asyncio",
-      "unittest.mock",
-      "pytest"
+      "pytest",
+      "unittest.mock"
     ],
     "symbols": [
       {
@@ -1236,10 +1236,10 @@
     "mtime": 1766035775.5019765,
     "imports": [
       "sys",
-      "pathlib",
-      "asyncio",
       "delia.backend_manager",
-      "pytest"
+      "asyncio",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -1304,13 +1304,13 @@
   "tests/test_integration.py": {
     "mtime": 1766035775.5019765,
     "imports": [
-      "sys",
-      "signal",
-      "unittest",
-      "time",
       "subprocess",
+      "unittest",
+      "sys",
+      "requests",
+      "time",
       "os",
-      "requests"
+      "signal"
     ],
     "symbols": [
       {
@@ -1328,9 +1328,9 @@
     "imports": [
       "sys",
       "delia.config",
+      "delia.backend_manager",
       "asyncio",
       "os",
-      "delia.backend_manager",
       "delia.providers"
     ],
     "symbols": [
@@ -1347,9 +1347,9 @@
   "tests/test_mcp_client.py": {
     "mtime": 1766035775.5019765,
     "imports": [
-      "unittest.mock",
+      "delia.tools.mcp_client",
       "pytest",
-      "delia.tools.mcp_client"
+      "unittest.mock"
     ],
     "symbols": [
       {
@@ -1400,15 +1400,15 @@
   "tests/test_mcp_detection.py": {
     "mtime": 1766035775.5019765,
     "imports": [
-      "sys",
-      "pathlib",
-      "unittest.mock",
-      "tempfile",
-      "time",
       "subprocess",
+      "sys",
       "json",
+      "time",
+      "tempfile",
       "os",
-      "pytest"
+      "unittest.mock",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -1466,16 +1466,16 @@
   "tests/test_mcp_protocol.py": {
     "mtime": 1766243707.9496675,
     "imports": [
-      "sys",
-      "pathlib",
-      "unittest.mock",
-      "time",
       "subprocess",
-      "asyncio",
+      "sys",
       "httpx",
       "json",
+      "asyncio",
+      "time",
       "os",
-      "pytest"
+      "unittest.mock",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -1555,12 +1555,12 @@
     "mtime": 1766344376.488748,
     "imports": [
       "sys",
-      "pathlib",
-      "unittest.mock",
-      "asyncio",
       "json",
+      "asyncio",
       "os",
-      "pytest"
+      "unittest.mock",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -1654,12 +1654,12 @@
     "mtime": 1766035775.5019765,
     "imports": [
       "sys",
-      "pathlib",
-      "time",
-      "asyncio",
       "json",
+      "asyncio",
+      "time",
       "os",
-      "pytest"
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -1731,9 +1731,9 @@
   "tests/test_native_tool_calling.py": {
     "mtime": 1766035775.5029764,
     "imports": [
-      "unittest.mock",
       "json",
       "delia.backend_manager",
+      "unittest.mock",
       "pytest",
       "delia.tools"
     ],
@@ -1786,11 +1786,11 @@
   "tests/test_prewarm.py": {
     "mtime": 1766035775.5029764,
     "imports": [
-      "pathlib",
-      "tempfile",
       "json",
-      "datetime",
-      "pytest"
+      "tempfile",
+      "pytest",
+      "pathlib",
+      "datetime"
     ],
     "symbols": [
       {
@@ -1908,10 +1908,10 @@
     "mtime": 1766035775.5029764,
     "imports": [
       "sys",
-      "pathlib",
       "asyncio",
-      "delia.mcp_server",
-      "pytest"
+      "pytest",
+      "pathlib",
+      "delia.mcp_server"
     ],
     "symbols": [
       {
@@ -1983,10 +1983,10 @@
   "tests/test_routing.py": {
     "mtime": 1766035775.5029764,
     "imports": [
-      "unittest.mock",
-      "pytest",
       "delia.backend_manager",
-      "delia"
+      "delia",
+      "pytest",
+      "unittest.mock"
     ],
     "symbols": [
       {
@@ -2009,8 +2009,8 @@
   "tests/test_session_backends.py": {
     "mtime": 1766035775.5029764,
     "imports": [
-      "delia.session_backends",
       "pathlib",
+      "delia.session_backends",
       "pytest",
       "tempfile"
     ],
@@ -2049,14 +2049,14 @@
   "tests/test_session_manager.py": {
     "mtime": 1766035775.5029764,
     "imports": [
-      "pathlib",
-      "unittest.mock",
-      "time",
       "json",
+      "time",
       "os",
-      "datetime",
+      "unittest.mock",
       "pytest",
-      "threading"
+      "threading",
+      "pathlib",
+      "datetime"
     ],
     "symbols": [
       {
@@ -2101,11 +2101,11 @@
     "mtime": 1766035775.5029764,
     "imports": [
       "sys",
-      "pathlib",
-      "time",
       "json",
+      "time",
       "os",
-      "pytest"
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -2192,11 +2192,11 @@
     "mtime": 1766035775.5029764,
     "imports": [
       "sys",
-      "pathlib",
       "delia.stats",
       "asyncio",
-      "delia.mcp_server",
-      "pytest"
+      "pytest",
+      "pathlib",
+      "delia.mcp_server"
     ],
     "symbols": [
       {
@@ -2261,9 +2261,9 @@
   "tests/test_structured_outputs.py": {
     "mtime": 1766035775.5029764,
     "imports": [
-      "delia.orchestration.outputs",
+      "json",
       "pytest",
-      "json"
+      "delia.orchestration.outputs"
     ],
     "symbols": [
       {
@@ -2321,9 +2321,9 @@
   "tests/test_task_chain.py": {
     "mtime": 1766035775.5029764,
     "imports": [
+      "pytest",
       "os",
       "unittest.mock",
-      "pytest",
       "json"
     ],
     "symbols": [
@@ -2368,9 +2368,9 @@
   "tests/test_task_workflow.py": {
     "mtime": 1766035775.5029764,
     "imports": [
+      "pytest",
       "os",
       "unittest.mock",
-      "pytest",
       "json"
     ],
     "symbols": [
@@ -2422,10 +2422,10 @@
   "tests/test_validation.py": {
     "mtime": 1766035775.5029764,
     "imports": [
-      "hypothesis",
       "pathlib",
+      "pytest",
       "delia.mcp_server",
-      "pytest"
+      "hypothesis"
     ],
     "symbols": [
       {
@@ -2535,12 +2535,12 @@
   "tests/test_voting_edge_cases.py": {
     "mtime": 1766192297.288639,
     "imports": [
-      "unittest.mock",
       "math",
       "asyncio",
+      "unittest.mock",
       "delia.quality",
-      "delia.voting",
-      "pytest"
+      "pytest",
+      "delia.voting"
     ],
     "symbols": [
       {
@@ -2591,12 +2591,12 @@
   "tests/test_voting_stats.py": {
     "mtime": 1766035775.5029764,
     "imports": [
-      "pathlib",
-      "delia.voting_stats",
       "math",
-      "tempfile",
       "json",
-      "pytest"
+      "delia.voting_stats",
+      "tempfile",
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -2671,12 +2671,12 @@
   "tests/test_workspace.py": {
     "mtime": 1766035775.5029764,
     "imports": [
+      "tempfile",
+      "delia.types",
+      "pytest",
       "pathlib",
       "delia.tools.builtins",
-      "tempfile",
-      "delia.tools.executor",
-      "pytest",
-      "delia.types"
+      "delia.tools.executor"
     ],
     "symbols": [
       {
@@ -2720,10 +2720,10 @@
   "tests/verify_gemini_connection.py": {
     "mtime": 1766035775.5029764,
     "imports": [
-      "sys",
-      "asyncio",
       "delia.backend_manager",
-      "os"
+      "asyncio",
+      "os",
+      "sys"
     ],
     "symbols": [
       {
@@ -2739,9 +2739,9 @@
   "tests/test_feedback_loop.py": {
     "mtime": 1766116466.1520455,
     "imports": [
-      "unittest.mock",
+      "delia.tools",
       "pytest",
-      "delia.tools"
+      "unittest.mock"
     ],
     "symbols": [
       {
@@ -2765,12 +2765,12 @@
     "mtime": 1766116466.1520455,
     "imports": [
       "sys",
-      "pathlib",
-      "tempfile",
       "json",
+      "tempfile",
       "os",
       "shutil",
-      "pytest"
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -2800,14 +2800,14 @@
   "tests/test_llm_integration.py": {
     "mtime": 1766116466.1520455,
     "imports": [
-      "sys",
-      "pathlib",
-      "tempfile",
-      "asyncio",
       "httpx",
+      "sys",
       "json",
+      "asyncio",
+      "tempfile",
       "os",
-      "pytest"
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -2872,13 +2872,13 @@
   "tests/test_paths.py": {
     "mtime": 1766116466.1520455,
     "imports": [
-      "sys",
-      "pathlib",
       "unittest",
+      "sys",
       "tempfile",
       "os",
       "shutil",
-      "pytest"
+      "pytest",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -2922,11 +2922,11 @@
   "tests/test_lsp.py": {
     "mtime": 1766246879.5829387,
     "imports": [
-      "pathlib",
-      "unittest.mock",
       "tempfile",
+      "delia.types",
+      "unittest.mock",
       "pytest",
-      "delia.types"
+      "pathlib"
     ],
     "symbols": [
       {
@@ -2971,10 +2971,10 @@
     "mtime": 1766182166.39546,
     "imports": [
       "sys",
-      "unittest.mock",
       "asyncio",
-      "delia.orchestration.result",
       "os",
+      "unittest.mock",
+      "delia.orchestration.result",
       "delia.orchestration.service"
     ],
     "symbols": [
@@ -2991,10 +2991,10 @@
   "tests/test_fuzz_parser.py": {
     "mtime": 1766247620.8768098,
     "imports": [
-      "delia.tools.parser",
       "pytest",
-      "json",
-      "hypothesis"
+      "hypothesis",
+      "delia.tools.parser",
+      "json"
     ],
     "symbols": [
       {
@@ -3073,9 +3073,9 @@
   "tests/test_fuzz_routing.py": {
     "mtime": 1766247663.134933,
     "imports": [
-      "hypothesis",
+      "delia.routing",
       "pytest",
-      "delia.routing"
+      "hypothesis"
     ],
     "symbols": [
       {
@@ -3119,11 +3119,11 @@
   "tests/test_fuzz_scorer.py": {
     "mtime": 1766247731.0735226,
     "imports": [
-      "math",
       "delia.routing",
+      "math",
       "delia.backend_manager",
-      "hypothesis",
-      "pytest"
+      "pytest",
+      "hypothesis"
     ],
     "symbols": [
       {
@@ -3167,13 +3167,13 @@
   "tests/test_fuzz_stream.py": {
     "mtime": 1766247753.1264198,
     "imports": [
-      "unittest.mock",
-      "asyncio",
       "json",
-      "delia.providers.ollama",
       "delia.backend_manager",
+      "asyncio",
+      "unittest.mock",
+      "pytest",
       "hypothesis",
-      "pytest"
+      "delia.providers.ollama"
     ],
     "symbols": [
       {
@@ -3203,9 +3203,9 @@
   "tests/test_fuzz_voting.py": {
     "mtime": 1766247772.3463323,
     "imports": [
-      "hypothesis",
       "delia.voting",
-      "pytest"
+      "pytest",
+      "hypothesis"
     ],
     "symbols": [
       {
@@ -3242,14 +3242,14 @@
   "tests/test_fuzz_security.py": {
     "mtime": 1766248273.382508,
     "imports": [
-      "pathlib",
-      "unittest.mock",
-      "delia.tools.builtins",
-      "delia.tools.executor",
       "os",
-      "hypothesis",
+      "unittest.mock",
+      "delia.types",
       "pytest",
-      "delia.types"
+      "hypothesis",
+      "pathlib",
+      "delia.tools.builtins",
+      "delia.tools.executor"
     ],
     "symbols": [
       {
@@ -3293,11 +3293,11 @@
   "tests/test_chaos_failover.py": {
     "mtime": 1766338277.5974991,
     "imports": [
-      "unittest.mock",
-      "delia.delegation",
-      "asyncio",
       "json",
       "delia.backend_manager",
+      "asyncio",
+      "delia.delegation",
+      "unittest.mock",
       "pytest"
     ],
     "symbols": [
@@ -3328,12 +3328,12 @@
   "tests/test_api_integration.py": {
     "mtime": 1766262677.3539484,
     "imports": [
-      "unittest.mock",
-      "delia.api",
-      "asyncio",
       "httpx",
       "json",
-      "pytest"
+      "asyncio",
+      "unittest.mock",
+      "pytest",
+      "delia.api"
     ],
     "symbols": [
       {
@@ -3363,14 +3363,14 @@
   "tests/test_coding_tools_hardened.py": {
     "mtime": 1766262969.280571,
     "imports": [
-      "pathlib",
-      "unittest.mock",
+      "delia.tools.editing",
       "delia.tools.coding",
       "asyncio",
-      "hypothesis",
+      "unittest.mock",
+      "delia.types",
       "pytest",
-      "delia.tools.editing",
-      "delia.types"
+      "hypothesis",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -3421,10 +3421,10 @@
   "tests/test_compaction.py": {
     "mtime": 1766343316.7497525,
     "imports": [
-      "delia.semantic.compression",
       "delia.session_manager",
-      "pytest",
-      "datetime"
+      "delia.semantic.compression",
+      "datetime",
+      "pytest"
     ],
     "symbols": [
       {
@@ -3468,13 +3468,13 @@
   "tests/test_compaction_comprehensive.py": {
     "mtime": 1766343321.7537248,
     "imports": [
-      "unittest.mock",
-      "delia.session_manager",
+      "json",
       "asyncio",
       "delia.semantic.compression",
-      "json",
-      "datetime",
-      "pytest"
+      "delia.session_manager",
+      "unittest.mock",
+      "pytest",
+      "datetime"
     ],
     "symbols": [
       {
@@ -3567,8 +3567,8 @@
   "tests/test_project_memory.py": {
     "mtime": 1766267133.5740943,
     "imports": [
-      "delia.project_memory",
       "pathlib",
+      "delia.project_memory",
       "pytest"
     ],
     "symbols": [
@@ -3627,14 +3627,14 @@
   "tests/test_concurrency_stress.py": {
     "mtime": 1766338319.8055246,
     "imports": [
-      "unittest.mock",
-      "delia.delegation",
-      "time",
-      "asyncio",
       "delia.backend_manager",
-      "delia.container",
+      "asyncio",
+      "time",
+      "delia.delegation",
+      "unittest.mock",
       "random",
-      "pytest"
+      "pytest",
+      "delia.container"
     ],
     "symbols": [
       {
@@ -3657,11 +3657,11 @@
   "tests/test_discovery_fuzz.py": {
     "mtime": 1766278402.545697,
     "imports": [
-      "unittest.mock",
-      "asyncio",
-      "hypothesis",
       "delia.discovery",
-      "pytest"
+      "asyncio",
+      "unittest.mock",
+      "pytest",
+      "hypothesis"
     ],
     "symbols": [
       {
@@ -3698,9 +3698,9 @@
   "tests/test_dispatcher_embed.py": {
     "mtime": 1766280516.217994,
     "imports": [
-      "delia.orchestration.result",
       "pytest",
-      "delia.orchestration.dispatcher"
+      "delia.orchestration.dispatcher",
+      "delia.orchestration.result"
     ],
     "symbols": [
       {
@@ -3723,14 +3723,14 @@
   "tests/test_tools.py": {
     "mtime": 1766328997.491082,
     "imports": [
-      "pathlib",
-      "unittest.mock",
       "delia.tools.parser",
-      "tempfile",
-      "delia.tools.executor",
       "json",
+      "tempfile",
+      "unittest.mock",
       "pytest",
-      "delia.tools"
+      "delia.tools",
+      "pathlib",
+      "delia.tools.executor"
     ],
     "symbols": [
       {
@@ -3781,15 +3781,15 @@
   "tests/test_fuzz_stateful.py": {
     "mtime": 1766329017.3529606,
     "imports": [
-      "pathlib",
-      "hypothesis.stateful",
-      "tempfile",
       "delia.melons",
+      "tempfile",
       "os",
       "shutil",
-      "hypothesis",
+      "hypothesis.stateful",
       "delia.session_manager",
-      "pytest"
+      "pytest",
+      "hypothesis",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -3805,15 +3805,15 @@
   "tests/test_progression_system.py": {
     "mtime": 1766329078.5775976,
     "imports": [
-      "unittest.mock",
-      "delia.tools.builtins",
-      "delia.session_manager",
-      "asyncio",
       "json",
-      "delia.orchestration.intent",
+      "asyncio",
+      "delia.session_manager",
       "delia.orchestration.executor",
-      "datetime",
+      "unittest.mock",
       "pytest",
+      "delia.tools.builtins",
+      "delia.orchestration.intent",
+      "datetime",
       "delia.queue"
     ],
     "symbols": [
@@ -3858,15 +3858,15 @@
   "tests/test_extracted_modules.py": {
     "mtime": 1766329078.6915967,
     "imports": [
-      "unittest.mock",
-      "delia.validation",
-      "asyncio",
       "delia.routing",
+      "delia.validation",
+      "hypothesis",
+      "asyncio",
+      "unittest.mock",
+      "pytest",
       "re",
       "delia.tokens",
-      "hypothesis",
       "datetime",
-      "pytest",
       "delia.queue"
     ],
     "symbols": [
@@ -3918,12 +3918,12 @@
   "tests/test_e2e_chat.py": {
     "mtime": 1766329173.5010643,
     "imports": [
-      "pathlib",
-      "unittest.mock",
+      "delia.backend_manager",
       "asyncio",
       "delia.orchestration.result",
-      "delia.backend_manager",
+      "unittest.mock",
       "pytest",
+      "pathlib",
       "delia.orchestration.service"
     ],
     "symbols": [
@@ -3947,11 +3947,11 @@
   "tests/test_v6_dispatch_logic.py": {
     "mtime": 1766329220.5618114,
     "imports": [
-      "unittest.mock",
+      "delia.orchestration.intrinsics",
+      "json",
       "asyncio",
       "delia.orchestration.dispatcher",
-      "json",
-      "delia.orchestration.intrinsics",
+      "unittest.mock",
       "pytest"
     ],
     "symbols": [
@@ -3968,11 +3968,11 @@
   "tests/test_chain.py": {
     "mtime": 1766330411.714666,
     "imports": [
-      "unittest.mock",
       "delia.prompts",
+      "unittest.mock",
       "delia.orchestration.meta_learning",
-      "delia.orchestration.intent",
-      "pytest"
+      "pytest",
+      "delia.orchestration.intent"
     ],
     "symbols": [
       {
@@ -4002,13 +4002,13 @@
   "tests/test_fuzz_mcp.py": {
     "mtime": 1766338442.6884947,
     "imports": [
-      "unittest.mock",
-      "delia.delegation",
-      "asyncio",
       "json",
+      "asyncio",
+      "delia.delegation",
+      "unittest.mock",
+      "pytest",
       "delia.tools.handlers",
-      "hypothesis",
-      "pytest"
+      "hypothesis"
     ],
     "symbols": [
       {
@@ -4039,8 +4039,8 @@
     "mtime": 1766035775.5029764,
     "imports": [
       "glob",
-      "os",
-      "re"
+      "re",
+      "os"
     ],
     "symbols": [
       {
@@ -4113,7 +4113,7 @@
     "edge_summaries": {}
   },
   ".claude/settings.local.json": {
-    "mtime": 1766363597.6971414,
+    "mtime": 1766409455.6970668,
     "imports": [],
     "symbols": [],
     "edge_summaries": {}
@@ -4128,17 +4128,17 @@
     "mtime": 1766257247.0478415,
     "imports": [
       "sys",
-      "pathlib",
-      "__future__",
-      "time",
-      "asyncio",
       "json",
-      "re",
-      "random",
       "argparse",
-      "dataclasses",
+      "asyncio",
+      "time",
+      "typing",
+      "__future__",
+      "random",
+      "re",
       "yaml",
-      "typing"
+      "pathlib",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -4225,15 +4225,15 @@
     "mtime": 1766282176.9999418,
     "imports": [
       "sys",
-      "pathlib",
-      "__future__",
-      "time",
-      "asyncio",
       "json",
-      "re",
       "argparse",
-      "dataclasses",
-      "typing"
+      "asyncio",
+      "time",
+      "typing",
+      "__future__",
+      "re",
+      "pathlib",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -4313,12 +4313,12 @@
     "mtime": 1766291764.9658618,
     "imports": [
       "sys",
-      "pathlib",
-      "__future__",
-      "time",
-      "asyncio",
       "json",
       "argparse",
+      "asyncio",
+      "time",
+      "__future__",
+      "pathlib",
       "dataclasses"
     ],
     "symbols": [
@@ -4377,20 +4377,20 @@
   "unsloth_compiled_cache/UnslothBCOTrainer.py": {
     "mtime": 1766259723.7582648,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "trl.trainer.bco_trainer",
-      "contextlib",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "trl.trainer.bco_trainer",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "os",
-      "torch.nn",
-      "functools",
-      "types",
+      "packaging.version",
+      "numpy",
+      "contextlib",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -4462,20 +4462,20 @@
   "unsloth_compiled_cache/UnslothCPOTrainer.py": {
     "mtime": 1766259723.8002517,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "contextlib",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "os",
+      "packaging.version",
+      "numpy",
+      "contextlib",
       "trl.trainer.cpo_trainer",
-      "torch.nn",
-      "functools",
-      "types",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -4547,20 +4547,20 @@
   "unsloth_compiled_cache/UnslothDPOTrainer.py": {
     "mtime": 1766259723.8583393,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "contextlib",
-      "trl.trainer.dpo_trainer",
       "torch",
-      "numpy",
-      "transformers.training_args",
-      "os",
-      "torch.nn",
+      "transformers",
       "functools",
-      "types",
-      "dataclasses",
+      "torch.nn",
+      "trl.trainer.dpo_trainer",
       "inspect",
-      "typing"
+      "transformers.training_args",
+      "typing",
+      "os",
+      "packaging.version",
+      "numpy",
+      "contextlib",
+      "dataclasses",
+      "types"
     ],
     "symbols": [
       {
@@ -4632,20 +4632,20 @@
   "unsloth_compiled_cache/UnslothGKDTrainer.py": {
     "mtime": 1766259723.8875334,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "trl.trainer.gkd_trainer",
-      "contextlib",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "os",
-      "torch.nn",
-      "functools",
-      "types",
+      "packaging.version",
+      "numpy",
+      "contextlib",
+      "trl.trainer.gkd_trainer",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -4717,20 +4717,20 @@
   "unsloth_compiled_cache/UnslothGRPOTrainer.py": {
     "mtime": 1766259723.9595032,
     "imports": [
-      "transformers",
-      "trl.trainer.grpo_trainer",
-      "packaging.version",
-      "contextlib",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "os",
-      "torch.nn",
-      "functools",
-      "types",
+      "packaging.version",
+      "numpy",
+      "contextlib",
+      "trl.trainer.grpo_trainer",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -4851,20 +4851,20 @@
   "unsloth_compiled_cache/UnslothKTOTrainer.py": {
     "mtime": 1766259724.016096,
     "imports": [
-      "transformers",
-      "trl.trainer.kto_trainer",
-      "packaging.version",
-      "contextlib",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "os",
-      "torch.nn",
-      "functools",
-      "types",
+      "packaging.version",
+      "numpy",
+      "contextlib",
+      "trl.trainer.kto_trainer",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -4936,20 +4936,20 @@
   "unsloth_compiled_cache/UnslothNashMDTrainer.py": {
     "mtime": 1766259724.04651,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "contextlib",
       "torch",
-      "trl.trainer.nash_md_trainer",
-      "numpy",
-      "transformers.training_args",
-      "os",
-      "torch.nn",
+      "transformers",
       "functools",
-      "types",
-      "dataclasses",
+      "torch.nn",
       "inspect",
-      "typing"
+      "types",
+      "transformers.training_args",
+      "typing",
+      "os",
+      "packaging.version",
+      "numpy",
+      "contextlib",
+      "dataclasses",
+      "trl.trainer.nash_md_trainer"
     ],
     "symbols": [
       {
@@ -5021,20 +5021,20 @@
   "unsloth_compiled_cache/UnslothOnlineDPOTrainer.py": {
     "mtime": 1766259724.097582,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "contextlib",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "os",
+      "packaging.version",
+      "numpy",
+      "contextlib",
       "trl.trainer.online_dpo_trainer",
-      "torch.nn",
-      "functools",
-      "types",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -5113,20 +5113,20 @@
   "unsloth_compiled_cache/UnslothORPOTrainer.py": {
     "mtime": 1766259724.1364257,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "contextlib",
       "torch",
-      "numpy",
-      "transformers.training_args",
-      "os",
-      "trl.trainer.orpo_trainer",
-      "torch.nn",
+      "transformers",
       "functools",
-      "types",
-      "dataclasses",
+      "torch.nn",
       "inspect",
-      "typing"
+      "typing",
+      "transformers.training_args",
+      "trl.trainer.orpo_trainer",
+      "os",
+      "packaging.version",
+      "numpy",
+      "contextlib",
+      "dataclasses",
+      "types"
     ],
     "symbols": [
       {
@@ -5198,20 +5198,20 @@
   "unsloth_compiled_cache/UnslothPPOTrainer.py": {
     "mtime": 1766259724.1727474,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "contextlib",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "trl.trainer.ppo_trainer",
       "os",
-      "torch.nn",
-      "functools",
-      "types",
+      "packaging.version",
+      "numpy",
+      "contextlib",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -5283,20 +5283,20 @@
   "unsloth_compiled_cache/UnslothPRMTrainer.py": {
     "mtime": 1766259724.1965458,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "contextlib",
       "torch",
-      "numpy",
-      "transformers.training_args",
-      "trl.trainer.prm_trainer",
-      "os",
-      "torch.nn",
+      "transformers",
       "functools",
-      "types",
-      "dataclasses",
+      "torch.nn",
       "inspect",
-      "typing"
+      "typing",
+      "transformers.training_args",
+      "os",
+      "packaging.version",
+      "numpy",
+      "trl.trainer.prm_trainer",
+      "contextlib",
+      "dataclasses",
+      "types"
     ],
     "symbols": [
       {
@@ -5368,20 +5368,20 @@
   "unsloth_compiled_cache/UnslothRewardTrainer.py": {
     "mtime": 1766259724.222141,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "trl.trainer.reward_trainer",
-      "contextlib",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "os",
-      "torch.nn",
-      "functools",
-      "types",
+      "packaging.version",
+      "numpy",
+      "trl.trainer.reward_trainer",
+      "contextlib",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -5453,20 +5453,20 @@
   "unsloth_compiled_cache/UnslothRLOOTrainer.py": {
     "mtime": 1766259724.2812555,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "trl.trainer.rloo_trainer",
-      "contextlib",
       "torch",
-      "numpy",
-      "transformers.training_args",
-      "os",
-      "torch.nn",
+      "transformers",
       "functools",
-      "types",
-      "dataclasses",
+      "torch.nn",
       "inspect",
-      "typing"
+      "typing",
+      "transformers.training_args",
+      "trl.trainer.rloo_trainer",
+      "os",
+      "packaging.version",
+      "numpy",
+      "contextlib",
+      "dataclasses",
+      "types"
     ],
     "symbols": [
       {
@@ -5545,20 +5545,20 @@
   "unsloth_compiled_cache/UnslothSFTTrainer.py": {
     "mtime": 1766259724.3191335,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "trl.trainer.sft_trainer",
-      "contextlib",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "os",
-      "torch.nn",
-      "functools",
-      "types",
+      "packaging.version",
+      "trl.trainer.sft_trainer",
+      "numpy",
+      "contextlib",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -5630,20 +5630,20 @@
   "unsloth_compiled_cache/UnslothXPOTrainer.py": {
     "mtime": 1766259724.3493476,
     "imports": [
-      "transformers",
-      "packaging.version",
-      "contextlib",
-      "trl.trainer.xpo_trainer",
       "torch",
-      "numpy",
+      "transformers",
+      "functools",
+      "torch.nn",
+      "inspect",
+      "typing",
       "transformers.training_args",
       "os",
-      "torch.nn",
-      "functools",
-      "types",
+      "packaging.version",
+      "numpy",
+      "trl.trainer.xpo_trainer",
+      "contextlib",
       "dataclasses",
-      "inspect",
-      "typing"
+      "types"
     ],
     "symbols": [
       {
@@ -5715,9 +5715,9 @@
   "unsloth_compiled_cache/AqlmLoraLinear_peft_forward.py": {
     "mtime": 1766259724.9074025,
     "imports": [
-      "torch.nn",
       "torch",
       "peft.tuners.lora.aqlm",
+      "torch.nn",
       "typing"
     ],
     "symbols": [
@@ -5741,10 +5741,10 @@
   "unsloth_compiled_cache/AwqLoraLinear_peft_forward.py": {
     "mtime": 1766259724.9161892,
     "imports": [
-      "torch.nn",
-      "typing",
       "torch",
-      "peft.tuners.lora.awq"
+      "peft.tuners.lora.awq",
+      "torch.nn",
+      "typing"
     ],
     "symbols": [
       {
@@ -5767,9 +5767,9 @@
   "unsloth_compiled_cache/Linear4bit_peft_forward.py": {
     "mtime": 1766259724.9253106,
     "imports": [
-      "torch.nn",
       "torch",
       "peft.tuners.lora.bnb",
+      "torch.nn",
       "typing"
     ],
     "symbols": [
@@ -5793,11 +5793,11 @@
   "unsloth_compiled_cache/Linear8bitLt_peft_forward.py": {
     "mtime": 1766259724.934092,
     "imports": [
-      "torch._dynamo",
       "torch",
       "torch.nn",
+      "typing",
       "peft.tuners.lora.bnb",
-      "typing"
+      "torch._dynamo"
     ],
     "symbols": [
       {
@@ -5828,8 +5828,8 @@
     "mtime": 1766259724.9423912,
     "imports": [
       "peft.tuners.lora.gptq",
-      "torch.nn",
       "torch",
+      "torch.nn",
       "typing"
     ],
     "symbols": [
@@ -5853,9 +5853,9 @@
   "unsloth_compiled_cache/Linear_peft_forward.py": {
     "mtime": 1766259724.9521518,
     "imports": [
+      "torch",
       "peft.tuners.lora.inc",
       "torch.nn",
-      "torch",
       "typing"
     ],
     "symbols": [
@@ -5879,9 +5879,9 @@
   "unsloth_compiled_cache/LoraParallelLinear_peft_forward.py": {
     "mtime": 1766259724.9610457,
     "imports": [
-      "torch.nn",
       "peft.tuners.lora.tp_layer",
       "torch",
+      "torch.nn",
       "typing"
     ],
     "symbols": [
@@ -5905,17 +5905,17 @@
   "unsloth_compiled_cache/unsloth_compiled_module_siglip.py": {
     "mtime": 1766259725.040857,
     "imports": [
-      "unsloth_zoo",
-      "logging",
-      "math",
       "torch",
-      "os",
+      "unsloth_zoo.loss_utils",
+      "unsloth_zoo",
+      "math",
+      "torch.nn",
       "typing",
       "transformers.modeling_flash_attention_utils",
-      "torch.nn",
+      "os",
+      "logging",
       "transformers.models.siglip.modeling_siglip",
-      "importlib.util",
-      "unsloth_zoo.loss_utils"
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6078,14 +6078,14 @@
   "unsloth_compiled_cache/Conv1d.py": {
     "mtime": 1766279828.0493517,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6101,14 +6101,14 @@
   "unsloth_compiled_cache/Conv2d.py": {
     "mtime": 1766279828.0577068,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6124,14 +6124,14 @@
   "unsloth_compiled_cache/Conv3d.py": {
     "mtime": 1766279828.0657818,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6147,15 +6147,15 @@
   "unsloth_compiled_cache/ConvTranspose1d.py": {
     "mtime": 1766279828.073734,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "transformers.models.gemma3.modeling_gemma3",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "transformers.models.gemma3.modeling_gemma3",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6171,15 +6171,15 @@
   "unsloth_compiled_cache/ConvTranspose2d.py": {
     "mtime": 1766279828.0814106,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "transformers.models.gemma3.modeling_gemma3",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "transformers.models.gemma3.modeling_gemma3",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6195,15 +6195,15 @@
   "unsloth_compiled_cache/ConvTranspose3d.py": {
     "mtime": 1766279828.0894196,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "transformers.models.gemma3.modeling_gemma3",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "transformers.models.gemma3.modeling_gemma3",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6219,15 +6219,15 @@
   "unsloth_compiled_cache/BatchNorm1d.py": {
     "mtime": 1766279828.096985,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "transformers.models.gemma3.modeling_gemma3",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "transformers.models.gemma3.modeling_gemma3",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6243,15 +6243,15 @@
   "unsloth_compiled_cache/BatchNorm2d.py": {
     "mtime": 1766279828.1049938,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "transformers.models.gemma3.modeling_gemma3",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "transformers.models.gemma3.modeling_gemma3",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6267,15 +6267,15 @@
   "unsloth_compiled_cache/BatchNorm3d.py": {
     "mtime": 1766279828.113355,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "transformers.models.gemma3.modeling_gemma3",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "transformers.models.gemma3.modeling_gemma3",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6291,14 +6291,14 @@
   "unsloth_compiled_cache/GroupNorm.py": {
     "mtime": 1766279828.1211514,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6314,15 +6314,15 @@
   "unsloth_compiled_cache/RMSNorm.py": {
     "mtime": 1766279828.1288097,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "transformers.models.gemma3.modeling_gemma3",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "transformers.models.gemma3.modeling_gemma3",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6338,14 +6338,14 @@
   "unsloth_compiled_cache/LayerNorm.py": {
     "mtime": 1766279828.136801,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "os",
-      "torch.nn",
       "unsloth_zoo",
-      "importlib.util",
-      "typing"
+      "math",
+      "torch.nn",
+      "typing",
+      "os",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6361,17 +6361,17 @@
   "unsloth_compiled_cache/unsloth_compiled_module_gemma3.py": {
     "mtime": 1766259725.2990093,
     "imports": [
-      "logging",
-      "math",
       "torch",
-      "transformers.models.gemma3.modeling_gemma3",
-      "os",
+      "unsloth_zoo.loss_utils",
+      "unsloth_zoo",
+      "math",
+      "torch.nn",
       "typing",
       "transformers.modeling_flash_attention_utils",
-      "torch.nn",
-      "unsloth_zoo",
-      "importlib.util",
-      "unsloth_zoo.loss_utils"
+      "os",
+      "transformers.models.gemma3.modeling_gemma3",
+      "logging",
+      "importlib.util"
     ],
     "symbols": [
       {
@@ -6580,10 +6580,10 @@
   "tui/src/cli.tsx": {
     "mtime": 1766330042.7906568,
     "imports": [
+      "./App.js",
       "react",
       "meow",
-      "ink",
-      "./App.js"
+      "ink"
     ],
     "symbols": [],
     "edge_summaries": {}
@@ -6591,11 +6591,11 @@
   "tui/src/App.tsx": {
     "mtime": 1766330136.5475032,
     "imports": [
-      "ink",
+      "./api.js",
       "react",
       "ink-spinner",
-      "ink-text-input",
-      "./api.js"
+      "ink",
+      "ink-text-input"
     ],
     "symbols": [
       {
@@ -6691,14 +6691,14 @@
   "tests/comprehensive/test_tool_matrix.py": {
     "mtime": 1766244115.730373,
     "imports": [
-      "pathlib",
-      "unittest.mock",
-      "delia.tools.builtins",
+      "delia.tools.editing",
       "tempfile",
       "os",
+      "unittest.mock",
+      "delia.types",
       "pytest",
-      "delia.tools.editing",
-      "delia.types"
+      "pathlib",
+      "delia.tools.builtins"
     ],
     "symbols": [
       {
@@ -6721,9 +6721,9 @@
   "tests/comprehensive/test_mdap_math.py": {
     "mtime": 1766241602.5991886,
     "imports": [
-      "math",
       "delia.voting",
       "pytest",
+      "math",
       "hypothesis"
     ],
     "symbols": [
@@ -6741,8 +6741,8 @@
     "mtime": 1766240698.4216983,
     "imports": [
       "pathlib",
-      "pytest",
       "delia.tools.executor",
+      "pytest",
       "delia.types"
     ],
     "symbols": [
@@ -6773,10 +6773,10 @@
   "tests/comprehensive/test_session_stability.py": {
     "mtime": 1766241130.8112278,
     "imports": [
+      "uuid",
       "delia.session_manager",
-      "pytest",
       "delia.types",
-      "uuid"
+      "pytest"
     ],
     "symbols": [
       {
@@ -6813,12 +6813,12 @@
   "tests/comprehensive/test_parallel_stress.py": {
     "mtime": 1766242996.7902427,
     "imports": [
-      "unittest.mock",
-      "time",
       "asyncio",
-      "delia.tools.executor",
+      "time",
+      "unittest.mock",
+      "pytest",
       "delia.tools.registry",
-      "pytest"
+      "delia.tools.executor"
     ],
     "symbols": [
       {
@@ -6863,8 +6863,8 @@
     "mtime": 1766241030.370571,
     "imports": [
       "delia.orchestration.intent",
-      "delia.orchestration.result",
-      "pytest"
+      "pytest",
+      "delia.orchestration.result"
     ],
     "symbols": [
       {
@@ -6887,12 +6887,12 @@
   "tests/comprehensive/test_embeddings_deep.py": {
     "mtime": 1766257237.7358503,
     "imports": [
-      "unittest.mock",
-      "asyncio",
-      "numpy",
-      "hypothesis",
       "delia.embeddings",
-      "pytest"
+      "asyncio",
+      "unittest.mock",
+      "numpy",
+      "pytest",
+      "hypothesis"
     ],
     "symbols": [
       {
@@ -6929,11 +6929,11 @@
   "tests/comprehensive/test_system_logic.py": {
     "mtime": 1766326072.4045386,
     "imports": [
-      "unittest.mock",
-      "delia.config",
-      "delia.orchestration.result",
-      "delia.melons",
       "delia.orchestration.intrinsics",
+      "delia.config",
+      "delia.melons",
+      "delia.orchestration.result",
+      "unittest.mock",
       "pytest",
       "delia.orchestration.service"
     ],
@@ -6958,13 +6958,13 @@
   "tests/comprehensive/test_dispatcher_deep.py": {
     "mtime": 1766326325.4966497,
     "imports": [
-      "unittest.mock",
-      "asyncio",
-      "delia.orchestration.result",
       "json",
+      "asyncio",
       "delia.orchestration.dispatcher",
-      "hypothesis",
-      "pytest"
+      "delia.orchestration.result",
+      "unittest.mock",
+      "pytest",
+      "hypothesis"
     ],
     "symbols": [
       {
@@ -7001,10 +7001,10 @@
   "tests/comprehensive/test_intent_coverage.py": {
     "mtime": 1766331858.5718977,
     "imports": [
-      "delia.orchestration.intent",
-      "delia.orchestration.result",
       "unittest.mock",
-      "pytest"
+      "delia.orchestration.intent",
+      "pytest",
+      "delia.orchestration.result"
     ],
     "symbols": [
       {
@@ -7041,10 +7041,10 @@
   "tests/comprehensive/test_intent_deep_scan.py": {
     "mtime": 1766331873.8478098,
     "imports": [
-      "delia.orchestration.intent",
-      "delia.orchestration.result",
       "unittest.mock",
-      "pytest"
+      "delia.orchestration.intent",
+      "pytest",
+      "delia.orchestration.result"
     ],
     "symbols": [
       {
@@ -7067,10 +7067,10 @@
   "tests/comprehensive/test_orchestration_logic.py": {
     "mtime": 1766331890.963711,
     "imports": [
-      "unittest.mock",
       "asyncio",
-      "delia.orchestration.result",
       "delia.orchestration.executor",
+      "delia.orchestration.result",
+      "unittest.mock",
       "pytest"
     ],
     "symbols": [
@@ -7087,11 +7087,11 @@
   "tests/comprehensive/test_orchestration_stress.py": {
     "mtime": 1766331907.2736173,
     "imports": [
-      "unittest.mock",
-      "asyncio",
-      "delia.orchestration.result",
-      "delia.orchestration.executor",
       "delia.backend_manager",
+      "asyncio",
+      "delia.orchestration.executor",
+      "delia.orchestration.result",
+      "unittest.mock",
       "pytest"
     ],
     "symbols": [
@@ -7115,14 +7115,14 @@
   "tests/comprehensive/test_tot_meta_orchestration.py": {
     "mtime": 1766331975.4883804,
     "imports": [
-      "pathlib",
-      "unittest.mock",
       "math",
       "delia.orchestration.result",
+      "unittest.mock",
       "delia.orchestration.meta_learning",
-      "delia.orchestration.intent",
+      "pytest",
       "delia.orchestration.critic",
-      "pytest"
+      "pathlib",
+      "delia.orchestration.intent"
     ],
     "symbols": [
       {
@@ -7186,16 +7186,16 @@
   "tests/benchmarks/test_delia_value_benchmarks.py": {
     "mtime": 1766249308.777919,
     "imports": [
+      "math",
+      "json",
+      "typing",
+      "asyncio",
+      "time",
       "unittest.mock",
       "__future__",
-      "math",
-      "time",
-      "asyncio",
-      "json",
-      "re",
       "pytest",
-      "dataclasses",
-      "typing"
+      "re",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -7316,18 +7316,18 @@
   "tests/benchmarks/test_delia_integration_benchmarks.py": {
     "mtime": 1766331932.9974694,
     "imports": [
+      "delia.routing",
+      "math",
+      "typing",
+      "asyncio",
+      "delia.melons",
+      "delia.orchestration",
       "unittest.mock",
       "__future__",
-      "math",
-      "asyncio",
-      "delia.routing",
       "delia.orchestration.meta_learning",
-      "delia.melons",
-      "typing",
       "random",
       "pytest",
-      "dataclasses",
-      "delia.orchestration"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -7406,22 +7406,22 @@
   "src/delia/auth.py": {
     "mtime": 1766035775.496664,
     "imports": [
-      "structlog",
-      "collections.abc",
-      "contextlib",
-      "httpx_oauth.clients.microsoft",
-      "fastapi_users.db",
-      "uuid",
-      "fastapi",
-      "REL:1:",
       "sqlalchemy.orm",
+      "httpx_oauth.clients.microsoft",
       "fastapi_users",
+      "collections.abc",
+      "uuid",
+      "typing",
       "os",
-      "sqlalchemy.ext.asyncio",
-      "fastapi_users.authentication",
-      "sqlalchemy",
+      "fastapi",
+      "structlog",
       "fastapi_users.router",
-      "typing"
+      "sqlalchemy",
+      "sqlalchemy.ext.asyncio",
+      "contextlib",
+      "REL:1:",
+      "fastapi_users.authentication",
+      "fastapi_users.db"
     ],
     "symbols": [
       {
@@ -7556,14 +7556,14 @@
   "src/delia/auth_routes.py": {
     "mtime": 1766035775.496664,
     "imports": [
-      "structlog",
-      "__future__",
-      "starlette.requests",
-      "starlette.responses",
-      "uuid",
       "pydantic",
+      "typing",
+      "uuid",
+      "__future__",
+      "structlog",
       "secrets",
-      "typing"
+      "starlette.responses",
+      "starlette.requests"
     ],
     "symbols": [
       {
@@ -7651,15 +7651,15 @@
   "src/delia/language.py": {
     "mtime": 1766335946.431267,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
-      "pygments.util",
-      "re",
-      "pygments.lexers",
       "REL:1:prompts",
-      "datetime",
-      "typing"
+      "pygments.util",
+      "pygments.lexers",
+      "typing",
+      "__future__",
+      "structlog",
+      "re",
+      "pathlib",
+      "datetime"
     ],
     "symbols": [
       {
@@ -7769,17 +7769,17 @@
   "src/delia/multi_user_tracking.py": {
     "mtime": 1766035775.4979765,
     "imports": [
-      "pathlib",
-      "structlog",
-      "contextlib",
+      "json",
+      "typing",
+      "asyncio",
       "time",
       "limits",
-      "asyncio",
-      "json",
-      "REL:1:",
       "hashlib",
-      "dataclasses",
-      "typing"
+      "structlog",
+      "contextlib",
+      "pathlib",
+      "REL:1:",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -7837,9 +7837,9 @@
   "src/delia/quality.py": {
     "mtime": 1766035775.4995599,
     "imports": [
-      "re",
-      "dataclasses",
       "collections",
+      "dataclasses",
+      "re",
       "typing"
     ],
     "symbols": [
@@ -7889,19 +7889,19 @@
     "edge_summaries": {}
   },
   "src/delia/session_backends.py": {
-    "mtime": 1766035775.4999764,
+    "mtime": 1766368445.9126453,
     "imports": [
-      "pathlib",
-      "sqlite3",
-      "structlog",
-      "__future__",
-      "abc",
-      "json",
       "REL:1:",
-      "dataclasses",
+      "sqlite3",
+      "json",
+      "typing",
+      "__future__",
+      "structlog",
       "datetime",
       "threading",
-      "typing"
+      "pathlib",
+      "abc",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -7921,21 +7921,21 @@
       {
         "name": "SQLiteSessionBackend",
         "kind": "class",
-        "line": 192,
+        "line": 195,
         "file_path": "src/delia/session_backends.py",
         "summary": null
       },
       {
         "name": "migrate_json_to_sqlite",
         "kind": "function",
-        "line": 536,
+        "line": 539,
         "file_path": "src/delia/session_backends.py",
         "summary": null
       },
       {
         "name": "get_session_backend",
         "kind": "function",
-        "line": 588,
+        "line": 591,
         "file_path": "src/delia/session_backends.py",
         "summary": null
       }
@@ -7984,16 +7984,16 @@
   "src/delia/stats.py": {
     "mtime": 1766035775.4999764,
     "imports": [
-      "aiofiles",
-      "pathlib",
-      "structlog",
-      "asyncio",
-      "collections",
-      "json",
       "REL:1:",
+      "json",
+      "typing",
+      "asyncio",
+      "structlog",
       "datetime",
       "threading",
-      "typing"
+      "pathlib",
+      "aiofiles",
+      "collections"
     ],
     "symbols": [
       {
@@ -8009,14 +8009,14 @@
   "src/delia/task_chain.py": {
     "mtime": 1766035775.4999764,
     "imports": [
-      "structlog",
-      "__future__",
-      "time",
       "json",
-      "re",
+      "typing",
+      "time",
       "REL:1:delegation",
-      "dataclasses",
-      "typing"
+      "__future__",
+      "structlog",
+      "re",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8067,15 +8067,15 @@
   "src/delia/task_workflow.py": {
     "mtime": 1766035775.4999764,
     "imports": [
-      "structlog",
-      "__future__",
-      "time",
-      "asyncio",
       "json",
-      "re",
+      "typing",
+      "asyncio",
+      "time",
       "REL:1:delegation",
-      "dataclasses",
-      "typing"
+      "__future__",
+      "structlog",
+      "re",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8192,15 +8192,15 @@
   "src/delia/tracing.py": {
     "mtime": 1766035775.5009766,
     "imports": [
-      "structlog",
-      "__future__",
       "contextvars",
-      "contextlib",
-      "time",
+      "typing",
       "uuid",
+      "time",
+      "__future__",
+      "structlog",
+      "contextlib",
       "datetime",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8287,9 +8287,9 @@
     "mtime": 1766035775.5009766,
     "imports": [
       "pathlib",
+      "enum",
       "__future__",
-      "dataclasses",
-      "enum"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8370,17 +8370,17 @@
   "src/delia/voting_stats.py": {
     "mtime": 1766035775.5009766,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
       "math",
-      "time",
       "json",
       "typing",
-      "dataclasses",
-      "collections",
+      "time",
+      "REL:1:paths",
+      "__future__",
+      "structlog",
       "threading",
-      "REL:1:paths"
+      "pathlib",
+      "collections",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8438,13 +8438,13 @@
   "src/delia/discovery.py": {
     "mtime": 1766127666.1580546,
     "imports": [
-      "structlog",
-      "__future__",
-      "socket",
       "REL:1:backend_manager",
+      "typing",
       "asyncio",
+      "__future__",
+      "structlog",
       "zeroconf",
-      "typing"
+      "socket"
     ],
     "symbols": [
       {
@@ -8472,17 +8472,17 @@
     "edge_summaries": {}
   },
   "src/delia/lsp_client.py": {
-    "mtime": 1766362142.044603,
+    "mtime": 1766409434.4080539,
     "imports": [
-      "structlog",
-      "pathlib",
-      "__future__",
-      "asyncio",
+      "typing",
       "pygls.lsp.client",
-      "os",
+      "asyncio",
       "lsprotocol",
       "shutil",
-      "typing"
+      "os",
+      "__future__",
+      "structlog",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -8495,7 +8495,7 @@
       {
         "name": "get_lsp_client",
         "kind": "function",
-        "line": 427,
+        "line": 501,
         "file_path": "src/delia/lsp_client.py",
         "summary": null
       }
@@ -8505,14 +8505,14 @@
   "src/delia/economics.py": {
     "mtime": 1766250309.4070492,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
       "math",
       "json",
+      "typing",
+      "__future__",
+      "structlog",
+      "pathlib",
       "REL:1:",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8556,13 +8556,13 @@
   "src/delia/melons.py": {
     "mtime": 1766253382.1919985,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
       "json",
+      "typing",
+      "__future__",
+      "structlog",
+      "pathlib",
       "REL:1:",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8648,18 +8648,18 @@
   "src/delia/llm.py": {
     "mtime": 1766259615.574799,
     "imports": [
-      "structlog",
-      "__future__",
-      "collections.abc",
       "REL:1:backend_manager",
-      "asyncio",
       "REL:1:providers.gemini",
-      "REL:1:config",
-      "REL:1:providers.ollama",
       "REL:1:providers.base",
       "REL:1:errors",
+      "typing",
+      "collections.abc",
+      "asyncio",
+      "REL:1:config",
+      "__future__",
       "REL:1:providers.llamacpp",
-      "typing"
+      "structlog",
+      "REL:1:providers.ollama"
     ],
     "symbols": [
       {
@@ -8694,18 +8694,18 @@
     "edge_summaries": {}
   },
   "src/delia/session_manager.py": {
-    "mtime": 1766343252.649107,
+    "mtime": 1766368379.3890927,
     "imports": [
-      "pathlib",
-      "structlog",
-      "threading",
+      "REL:1:",
+      "json",
+      "typing",
       "uuid",
       "REL:1:tokens",
-      "json",
-      "REL:1:",
+      "structlog",
+      "threading",
+      "pathlib",
       "datetime",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8732,14 +8732,14 @@
       {
         "name": "get_session_manager",
         "kind": "function",
-        "line": 930,
+        "line": 938,
         "file_path": "src/delia/session_manager.py",
         "summary": null
       },
       {
         "name": "create_sqlite_session_manager",
         "kind": "function",
-        "line": 950,
+        "line": 958,
         "file_path": "src/delia/session_manager.py",
         "summary": null
       }
@@ -8749,17 +8749,17 @@
   "src/delia/embeddings.py": {
     "mtime": 1766283731.6436415,
     "imports": [
-      "pathlib",
-      "structlog",
-      "asyncio",
-      "numpy",
+      "functools",
       "httpx",
       "json",
-      "os",
       "typing",
-      "functools",
-      "dataclasses",
-      "REL:1:paths"
+      "asyncio",
+      "REL:1:paths",
+      "os",
+      "structlog",
+      "numpy",
+      "pathlib",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8852,14 +8852,14 @@
   "src/delia/profiles.py": {
     "mtime": 1766266588.7818787,
     "imports": [
-      "pathlib",
-      "structlog",
-      "uuid",
       "json",
-      "REL:1:",
+      "typing",
+      "uuid",
+      "structlog",
       "datetime",
-      "dataclasses",
-      "typing"
+      "pathlib",
+      "REL:1:",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8894,11 +8894,11 @@
     "edge_summaries": {}
   },
   "src/delia/paths.py": {
-    "mtime": 1766267158.2040937,
+    "mtime": 1766368405.324918,
     "imports": [
+      "pathlib",
       "functools",
-      "os",
-      "pathlib"
+      "os"
     ],
     "symbols": [
       {
@@ -8925,7 +8925,7 @@
       {
         "name": "ensure_directories",
         "kind": "function",
-        "line": 150,
+        "line": 146,
         "file_path": "src/delia/paths.py",
         "summary": null
       }
@@ -8933,15 +8933,15 @@
     "edge_summaries": {}
   },
   "src/delia/project_memory.py": {
-    "mtime": 1766267271.049083,
+    "mtime": 1766408073.8783965,
     "imports": [
-      "pathlib",
-      "structlog",
+      "typing",
       "__future__",
+      "structlog",
       "re",
+      "pathlib",
       "REL:1:",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -8999,14 +8999,14 @@
   "src/delia/queue.py": {
     "mtime": 1766340007.2350729,
     "imports": [
-      "structlog",
-      "__future__",
+      "REL:1:messages",
+      "typing",
       "asyncio",
       "heapq",
-      "REL:1:messages",
+      "__future__",
+      "structlog",
       "datetime",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -9030,23 +9030,23 @@
     "mtime": 1766337547.540776,
     "imports": [
       "REL:1:file_helpers",
-      "pathlib",
-      "structlog",
-      "__future__",
-      "REL:1:backend_manager",
-      "time",
-      "asyncio",
-      "REL:1:validation",
-      "json",
-      "REL:1:language",
-      "re",
-      "REL:1:routing",
-      "REL:1:tokens",
       "REL:1:quality",
+      "REL:1:backend_manager",
+      "json",
+      "typing",
+      "asyncio",
+      "time",
       "REL:1:config",
       "REL:1:text_utils",
+      "__future__",
+      "REL:1:routing",
+      "structlog",
+      "REL:1:tokens",
+      "re",
+      "pathlib",
+      "REL:1:language",
       "dataclasses",
-      "typing"
+      "REL:1:validation"
     ],
     "symbols": [
       {
@@ -9167,14 +9167,14 @@
   "src/delia/frustration.py": {
     "mtime": 1766292498.3454106,
     "imports": [
-      "structlog",
-      "__future__",
-      "time",
-      "re",
-      "hashlib",
-      "dataclasses",
       "enum",
-      "typing"
+      "typing",
+      "time",
+      "hashlib",
+      "__future__",
+      "structlog",
+      "re",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -9225,11 +9225,11 @@
   "src/delia/personas.py": {
     "mtime": 1766294200.220771,
     "imports": [
-      "structlog",
-      "__future__",
-      "dataclasses",
       "enum",
-      "typing"
+      "typing",
+      "__future__",
+      "structlog",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -9303,17 +9303,17 @@
   "src/delia/backend_manager.py": {
     "mtime": 1766299359.969811,
     "imports": [
-      "pathlib",
-      "structlog",
-      "time",
-      "asyncio",
       "httpx",
       "json",
-      "REL:1:",
+      "typing",
+      "asyncio",
+      "time",
       "os",
+      "structlog",
       "warnings",
-      "dataclasses",
-      "typing"
+      "pathlib",
+      "REL:1:",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -9357,15 +9357,15 @@
   "src/delia/config.py": {
     "mtime": 1766337404.1713166,
     "imports": [
-      "pathlib",
+      "functools",
+      "typing",
       "time",
+      "os",
       "collections",
       "re",
+      "pathlib",
       "REL:1:",
-      "os",
-      "functools",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -9577,14 +9577,14 @@
   "src/delia/routing.py": {
     "mtime": 1766341075.4409578,
     "imports": [
-      "structlog",
       "math",
-      "re",
-      "os",
+      "typing",
       "REL:1:config",
+      "os",
       "random",
-      "dataclasses",
-      "typing"
+      "structlog",
+      "re",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -9656,12 +9656,12 @@
   "src/delia/sandbox.py": {
     "mtime": 1766325296.8510451,
     "imports": [
-      "structlog",
-      "__future__",
-      "asyncio",
-      "dataclasses",
       "enum",
-      "typing"
+      "typing",
+      "asyncio",
+      "__future__",
+      "structlog",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -9733,19 +9733,19 @@
   "src/delia/security.py": {
     "mtime": 1766326425.5431,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
-      "time",
-      "asyncio",
+      "enum",
       "json",
-      "REL:1:",
+      "typing",
+      "asyncio",
+      "time",
       "shutil",
       "hashlib",
+      "__future__",
+      "structlog",
       "datetime",
-      "dataclasses",
-      "enum",
-      "typing"
+      "pathlib",
+      "REL:1:",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -9817,13 +9817,13 @@
   "src/delia/voting.py": {
     "mtime": 1766331108.456428,
     "imports": [
-      "__future__",
       "math",
+      "typing",
+      "hashlib",
+      "__future__",
       "re",
       "difflib",
-      "hashlib",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -9906,31 +9906,31 @@
   "src/delia/api.py": {
     "mtime": 1766343307.8588018,
     "imports": [
-      "REL:1:queue",
-      "starlette.routing",
-      "REL:1:backend_manager",
-      "REL:1:stats",
-      "json",
       "REL:1:tools.agent",
-      "REL:1:routing",
-      "dataclasses",
-      "starlette.middleware.cors",
-      "REL:1:tools.parser",
-      "starlette.applications",
-      "starlette.requests",
-      "REL:1:types",
-      "REL:1:orchestration",
-      "REL:1:tools.executor",
       "typing",
-      "structlog",
-      "__future__",
-      "REL:1:tools.builtins",
-      "contextlib",
-      "time",
+      "REL:1:types",
+      "starlette.middleware.cors",
       "starlette.responses",
-      "uuid",
+      "starlette.requests",
+      "REL:1:orchestration",
+      "REL:1:llm",
+      "REL:1:queue",
+      "starlette.applications",
+      "dataclasses",
+      "REL:1:tools.executor",
       "asyncio",
-      "REL:1:llm"
+      "time",
+      "REL:1:stats",
+      "contextlib",
+      "REL:1:tools.builtins",
+      "REL:1:tools.parser",
+      "REL:1:backend_manager",
+      "json",
+      "uuid",
+      "__future__",
+      "REL:1:routing",
+      "structlog",
+      "starlette.routing"
     ],
     "symbols": [
       {
@@ -10135,17 +10135,17 @@
   "src/delia/logging_service.py": {
     "mtime": 1766334457.2766917,
     "imports": [
-      "sys",
-      "pathlib",
-      "structlog",
-      "__future__",
-      "logging",
       "structlog.types",
+      "sys",
       "json",
+      "typing",
       "os",
-      "datetime",
+      "__future__",
+      "structlog",
+      "logging",
       "threading",
-      "typing"
+      "pathlib",
+      "datetime"
     ],
     "symbols": [
       {
@@ -10193,14 +10193,14 @@
   "src/delia/middleware.py": {
     "mtime": 1766335647.5930173,
     "imports": [
-      "structlog",
-      "fastmcp.server.dependencies",
-      "__future__",
       "fastmcp.server.middleware",
-      "time",
+      "typing",
+      "fastmcp.server.dependencies",
       "uuid",
-      "REL:1:container",
-      "typing"
+      "time",
+      "__future__",
+      "structlog",
+      "REL:1:container"
     ],
     "symbols": [
       {
@@ -10216,14 +10216,14 @@
   "src/delia/hardware.py": {
     "mtime": 1766339986.8222039,
     "imports": [
-      "structlog",
-      "__future__",
       "subprocess",
-      "asyncio",
+      "typing",
       "psutil",
+      "asyncio",
       "shutil",
-      "dataclasses",
-      "typing"
+      "__future__",
+      "structlog",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -10258,63 +10258,64 @@
     "edge_summaries": {}
   },
   "src/delia/mcp_server.py": {
-    "mtime": 1766363460.242145,
+    "mtime": 1766408330.9074073,
     "imports": [
-      "REL:1:orchestration.service",
-      "REL:1:providers",
       "pygments.util",
-      "humanize",
-      "REL:1:middleware",
-      "REL:1:voting",
-      "REL:1:language",
-      "pygments.lexers",
-      "REL:1:queue",
-      "REL:1:task_chain",
-      "REL:1:tools.handlers",
-      "pathlib",
-      "REL:1:tools",
-      "contextvars",
-      "REL:1:backend_manager",
       "REL:1:session_manager",
-      "structlog.types",
-      "httpx",
-      "json",
-      "REL:1:",
-      "REL:1:routing",
-      "os",
-      "REL:1:tokens",
-      "REL:1:stats",
-      "REL:1:quality",
-      "REL:1:voting_stats",
-      "REL:1:text_utils",
-      "REL:1:delegation",
-      "aiofiles",
-      "REL:1:file_helpers",
-      "REL:1:types",
-      "pydantic",
-      "REL:1:tools.resources",
-      "REL:1:profiles",
-      "REL:1:config",
-      "datetime",
-      "tenacity",
-      "REL:1:container",
+      "contextvars",
       "typing",
-      "structlog",
-      "fastmcp",
+      "REL:1:tools.handlers",
+      "REL:1:text_utils",
+      "REL:1:types",
+      "REL:1:",
+      "collections",
+      "REL:1:profiles",
       "REL:1:tools.admin",
+      "structlog.types",
+      "pydantic",
       "collections.abc",
-      "logging",
+      "REL:1:config",
+      "os",
+      "fastmcp",
+      "REL:1:llm",
+      "tenacity",
+      "REL:1:tokens",
+      "REL:1:queue",
+      "REL:1:multi_user_tracking",
+      "REL:1:tools.resources",
+      "REL:1:voting_stats",
+      "pathlib",
+      "aiofiles",
+      "REL:1:providers",
+      "datetime",
+      "REL:1:language",
+      "REL:1:middleware",
+      "pygments.lexers",
+      "REL:1:voting",
       "asyncio",
       "time",
-      "uuid",
+      "REL:1:stats",
+      "REL:1:orchestration.service",
+      "REL:1:tools.consolidated",
+      "REL:1:container",
+      "humanize",
       "REL:1:messages",
-      "REL:1:validation",
-      "REL:1:multi_user_tracking",
-      "re",
-      "collections",
+      "REL:1:file_helpers",
+      "REL:1:quality",
+      "REL:1:backend_manager",
+      "httpx",
+      "json",
+      "REL:1:task_workflow",
+      "uuid",
+      "REL:1:delegation",
+      "REL:1:routing",
+      "structlog",
+      "REL:1:tools",
+      "logging",
       "threading",
-      "REL:1:llm",
-      "REL:1:task_workflow"
+      "re",
+      "REL:1:task_chain",
+      "REL:1:validation"
     ],
     "symbols": [
       {
@@ -10425,7 +10426,7 @@
       {
         "name": "get_model_info",
         "kind": "function",
-        "line": 690,
+        "line": 688,
         "file_path": "src/delia/mcp_server.py",
         "summary": null
       },
@@ -10528,44 +10529,51 @@
         "summary": null
       },
       {
-        "name": "resource_memories",
+        "name": "resource_playbook",
         "kind": "async_function",
         "line": 1301,
         "file_path": "src/delia/mcp_server.py",
         "summary": null
       },
       {
+        "name": "resource_memories",
+        "kind": "async_function",
+        "line": 1333,
+        "file_path": "src/delia/mcp_server.py",
+        "summary": null
+      },
+      {
         "name": "_init_database",
         "kind": "async_function",
-        "line": 1320,
+        "line": 1352,
         "file_path": "src/delia/mcp_server.py",
         "summary": null
       },
       {
         "name": "_startup_handler",
         "kind": "async_function",
-        "line": 1329,
+        "line": 1361,
         "file_path": "src/delia/mcp_server.py",
         "summary": null
       },
       {
         "name": "_shutdown_handler",
         "kind": "async_function",
-        "line": 1362,
+        "line": 1394,
         "file_path": "src/delia/mcp_server.py",
         "summary": null
       },
       {
         "name": "run_server",
         "kind": "function",
-        "line": 1379,
+        "line": 1411,
         "file_path": "src/delia/mcp_server.py",
         "summary": null
       },
       {
         "name": "main",
         "kind": "function",
-        "line": 1476,
+        "line": 1508,
         "file_path": "src/delia/mcp_server.py",
         "summary": null
       }
@@ -10575,14 +10583,14 @@
   "src/delia/playbook.py": {
     "mtime": 1766364441.5111208,
     "imports": [
-      "pathlib",
-      "structlog",
-      "uuid",
-      "json",
       "pydantic",
-      "REL:1:",
+      "json",
+      "typing",
+      "uuid",
+      "structlog",
       "datetime",
-      "typing"
+      "pathlib",
+      "REL:1:"
     ],
     "symbols": [
       {
@@ -10775,8 +10783,8 @@
     "imports": [
       "pathlib",
       "REL:1:config",
-      "structlog",
-      "re"
+      "re",
+      "structlog"
     ],
     "symbols": [
       {
@@ -10848,24 +10856,24 @@
     "edge_summaries": {}
   },
   "src/delia/cli.py": {
-    "mtime": 1766352980.829285,
+    "mtime": 1766408047.4805934,
     "imports": [
-      "sys",
-      "pathlib",
-      "__future__",
       "typer",
+      "subprocess",
+      "sys",
+      "json",
+      "typing",
+      "httpx",
       "time",
       "platform",
-      "subprocess",
-      "httpx",
-      "json",
-      "REL:1:model_detection",
       "os",
-      "typing",
       "shutil",
+      "REL:1:paths",
+      "__future__",
       "warnings",
+      "pathlib",
       "dataclasses",
-      "REL:1:paths"
+      "REL:1:model_detection"
     ],
     "symbols": [
       {
@@ -11138,32 +11146,46 @@
     "edge_summaries": {}
   },
   "src/delia/agent_sync.py": {
-    "mtime": 1766353217.4741366,
+    "mtime": 1766407900.930654,
     "imports": [
-      "pathlib",
       "__future__",
       "structlog",
+      "pathlib",
       "typing"
     ],
     "symbols": [
       {
+        "name": "generate_agent_instructions",
+        "kind": "function",
+        "line": 55,
+        "file_path": "src/delia/agent_sync.py",
+        "summary": null
+      },
+      {
+        "name": "extract_project_rules",
+        "kind": "function",
+        "line": 121,
+        "file_path": "src/delia/agent_sync.py",
+        "summary": null
+      },
+      {
         "name": "detect_ai_agents",
         "kind": "function",
-        "line": 20,
+        "line": 188,
         "file_path": "src/delia/agent_sync.py",
         "summary": null
       },
       {
         "name": "sync_agent_instruction_files",
         "kind": "function",
-        "line": 90,
+        "line": 258,
         "file_path": "src/delia/agent_sync.py",
         "summary": null
       },
       {
         "name": "get_agent_summary",
         "kind": "function",
-        "line": 162,
+        "line": 340,
         "file_path": "src/delia/agent_sync.py",
         "summary": null
       }
@@ -11173,16 +11195,16 @@
   "src/delia/orchestration/llm_classifier.py": {
     "mtime": 1766121202.5948372,
     "imports": [
-      "REL:1:result",
-      "structlog",
-      "__future__",
-      "time",
-      "REL:2:prompts",
-      "json",
-      "re",
-      "hashlib",
       "functools",
-      "typing"
+      "json",
+      "typing",
+      "time",
+      "hashlib",
+      "__future__",
+      "structlog",
+      "re",
+      "REL:1:result",
+      "REL:2:prompts"
     ],
     "symbols": [
       {
@@ -11226,11 +11248,11 @@
   "src/delia/orchestration/result.py": {
     "mtime": 1766246108.2304442,
     "imports": [
+      "pydantic",
+      "typing",
       "__future__",
       "REL:2:prompts",
-      "pydantic",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -11260,15 +11282,15 @@
   "src/delia/orchestration/planner.py": {
     "mtime": 1766116080.8081157,
     "imports": [
-      "REL:1:result",
-      "structlog",
-      "__future__",
-      "time",
-      "REL:2:prompts",
-      "json",
       "pydantic",
+      "json",
+      "typing",
+      "time",
       "REL:2:text_utils",
-      "typing"
+      "__future__",
+      "structlog",
+      "REL:1:result",
+      "REL:2:prompts"
     ],
     "symbols": [
       {
@@ -11298,14 +11320,14 @@
   "src/delia/orchestration/critic.py": {
     "mtime": 1766247818.9631271,
     "imports": [
-      "REL:1:result",
-      "structlog",
-      "__future__",
-      "REL:2:prompts",
       "json",
+      "typing",
+      "__future__",
+      "structlog",
       "re",
-      "dataclasses",
-      "typing"
+      "REL:1:result",
+      "REL:2:prompts",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -11335,16 +11357,16 @@
   "src/delia/orchestration/__init__.py": {
     "mtime": 1766247976.0444992,
     "imports": [
-      "REL:1:outputs",
-      "REL:1:result",
-      "REL:1:intent",
-      "REL:1:executor",
-      "REL:1:critic",
-      "REL:1:meta_learning",
-      "REL:1:llm_classifier",
       "REL:1:prompts",
+      "REL:1:executor",
+      "REL:1:meta_learning",
+      "REL:1:outputs",
+      "REL:1:critic",
       "REL:1:exemplars",
       "REL:1:semantic",
+      "REL:1:llm_classifier",
+      "REL:1:result",
+      "REL:1:intent",
       "REL:1:service"
     ],
     "symbols": [],
@@ -11353,14 +11375,14 @@
   "src/delia/orchestration/stakes.py": {
     "mtime": 1766258344.0618896,
     "imports": [
-      "structlog",
-      "__future__",
       "math",
+      "enum",
+      "typing",
+      "__future__",
+      "structlog",
       "numpy",
       "re",
-      "dataclasses",
-      "enum",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -11425,12 +11447,12 @@
   "src/delia/orchestration/tuning.py": {
     "mtime": 1766259534.57754,
     "imports": [
-      "structlog",
-      "__future__",
-      "re",
-      "dataclasses",
       "enum",
-      "typing"
+      "typing",
+      "__future__",
+      "structlog",
+      "re",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -11495,16 +11517,16 @@
   "src/delia/orchestration/semantic.py": {
     "mtime": 1766265952.2872975,
     "imports": [
-      "REL:1:result",
-      "structlog",
-      "__future__",
-      "time",
-      "numpy",
-      "REL:2:prompts",
-      "REL:1:exemplars",
       "functools",
-      "dataclasses",
-      "typing"
+      "typing",
+      "time",
+      "REL:1:exemplars",
+      "__future__",
+      "structlog",
+      "numpy",
+      "REL:1:result",
+      "REL:2:prompts",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -11548,10 +11570,10 @@
   "src/delia/orchestration/dispatcher_embed.py": {
     "mtime": 1766280442.7411005,
     "imports": [
+      "__future__",
       "functools",
       "numpy",
-      "structlog",
-      "__future__"
+      "structlog"
     ],
     "symbols": [
       {
@@ -11581,10 +11603,10 @@
   "src/delia/orchestration/dispatcher.py": {
     "mtime": 1766281160.1396363,
     "imports": [
-      "REL:1:result",
-      "structlog",
       "__future__",
-      "typing"
+      "structlog",
+      "typing",
+      "REL:1:result"
     ],
     "symbols": [
       {
@@ -11731,17 +11753,17 @@
   "src/delia/orchestration/context.py": {
     "mtime": 1766364134.807106,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
-      "REL:1:graph",
-      "REL:2:language",
-      "REL:1:summarizer",
       "pydantic",
-      "re",
-      "REL:2:project_memory",
+      "REL:1:summarizer",
       "REL:2:file_helpers",
-      "typing"
+      "typing",
+      "REL:2:project_memory",
+      "__future__",
+      "structlog",
+      "REL:2:language",
+      "REL:1:graph",
+      "re",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -11792,13 +11814,13 @@
   "src/delia/orchestration/intrinsics.py": {
     "mtime": 1766292324.4635086,
     "imports": [
-      "structlog",
-      "__future__",
-      "json",
-      "re",
-      "dataclasses",
       "enum",
-      "typing"
+      "json",
+      "typing",
+      "__future__",
+      "structlog",
+      "re",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -11862,22 +11884,22 @@
   "src/delia/orchestration/service.py": {
     "mtime": 1766343303.6918252,
     "imports": [
-      "REL:1:result",
-      "structlog",
-      "REL:1:intent",
-      "__future__",
-      "REL:2:semantic",
+      "pydantic",
+      "REL:1:executor",
+      "typing",
       "REL:2:semantic.compression",
+      "REL:2:semantic",
       "time",
       "REL:1:intrinsics",
       "asyncio",
-      "REL:1:context",
-      "REL:1:executor",
-      "pydantic",
-      "REL:2:tracing",
       "REL:2:melons",
-      "dataclasses",
-      "typing"
+      "__future__",
+      "REL:1:context",
+      "structlog",
+      "REL:2:tracing",
+      "REL:1:result",
+      "REL:1:intent",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -11928,19 +11950,19 @@
   "src/delia/orchestration/meta_learning.py": {
     "mtime": 1766331698.1388292,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
       "math",
-      "uuid",
-      "REL:2:prompts",
       "json",
-      "re",
-      "REL:2:",
+      "typing",
+      "uuid",
+      "__future__",
       "random",
+      "structlog",
+      "REL:2:prompts",
+      "REL:2:",
+      "re",
+      "pathlib",
       "datetime",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -11977,12 +11999,12 @@
   "src/delia/orchestration/intent.py": {
     "mtime": 1766333044.049007,
     "imports": [
-      "REL:1:result",
-      "structlog",
+      "typing",
       "__future__",
+      "structlog",
       "re",
-      "dataclasses",
-      "typing"
+      "REL:1:result",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -12020,8 +12042,8 @@
     "mtime": 1766333122.4956553,
     "imports": [
       "__future__",
-      "dataclasses",
-      "REL:2:prompts"
+      "REL:2:prompts",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -12065,29 +12087,29 @@
   "src/delia/orchestration/executor.py": {
     "mtime": 1766345831.956404,
     "imports": [
-      "REL:1:intent",
-      "REL:1:result",
-      "REL:2:config",
-      "REL:2:text_utils",
-      "REL:2:personas",
-      "json",
-      "REL:2:file_helpers",
-      "REL:2:playbook",
-      "REL:1:outputs",
-      "REL:1:tuning",
-      "pydantic",
-      "REL:2:llm",
-      "REL:2:routing",
+      "REL:1:prompts",
       "typing",
-      "structlog",
-      "__future__",
-      "collections.abc",
-      "time",
-      "asyncio",
+      "REL:1:outputs",
+      "REL:2:config",
+      "REL:2:llm",
+      "REL:2:personas",
       "REL:2:session_manager",
+      "pydantic",
+      "collections.abc",
+      "REL:2:playbook",
       "REL:2:prompts",
+      "REL:2:file_helpers",
+      "asyncio",
+      "time",
+      "json",
+      "REL:2:text_utils",
+      "REL:1:tuning",
+      "__future__",
+      "structlog",
       "re",
-      "REL:1:prompts"
+      "REL:1:result",
+      "REL:1:intent",
+      "REL:2:routing"
     ],
     "symbols": [
       {
@@ -12124,10 +12146,10 @@
   "src/delia/orchestration/prompts.py": {
     "mtime": 1766333265.119002,
     "imports": [
-      "REL:1:result",
-      "REL:2:language",
       "__future__",
-      "REL:2:prompts"
+      "REL:2:prompts",
+      "REL:2:language",
+      "REL:1:result"
     ],
     "symbols": [
       {
@@ -12157,17 +12179,17 @@
   "src/delia/orchestration/graph.py": {
     "mtime": 1766348344.3877566,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
-      "ast",
-      "asyncio",
-      "json",
-      "re",
       "REL:1:constants",
-      "dataclasses",
+      "json",
       "REL:2:file_helpers",
-      "typing"
+      "asyncio",
+      "typing",
+      "__future__",
+      "structlog",
+      "ast",
+      "re",
+      "pathlib",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -12202,17 +12224,17 @@
     "edge_summaries": {}
   },
   "src/delia/orchestration/summarizer.py": {
-    "mtime": 1766350908.2883332,
+    "mtime": 1766368431.4697423,
     "imports": [
-      "structlog",
-      "pathlib",
-      "__future__",
-      "time",
-      "asyncio",
       "json",
       "typing",
-      "dataclasses",
+      "asyncio",
+      "time",
       "REL:2:file_helpers",
+      "__future__",
+      "structlog",
+      "pathlib",
+      "dataclasses",
       "REL:2:routing"
     ],
     "symbols": [
@@ -12233,7 +12255,7 @@
       {
         "name": "get_summarizer",
         "kind": "function",
-        "line": 573,
+        "line": 575,
         "file_path": "src/delia/orchestration/summarizer.py",
         "summary": null
       }
@@ -12243,12 +12265,12 @@
   "src/delia/providers/__init__.py": {
     "mtime": 1766035775.4989765,
     "imports": [
-      "REL:1:base",
       "REL:1:ollama",
-      "REL:1:gemini",
       "REL:1:llamacpp",
-      "REL:1:models",
-      "REL:1:registry"
+      "REL:1:gemini",
+      "REL:1:base",
+      "REL:1:registry",
+      "REL:1:models"
     ],
     "symbols": [],
     "edge_summaries": {}
@@ -12314,9 +12336,9 @@
   "src/delia/providers/registry.py": {
     "mtime": 1766035775.4995599,
     "imports": [
-      "REL:2:backend_manager",
+      "typing",
       "REL:1:base",
-      "typing"
+      "REL:2:backend_manager"
     ],
     "symbols": [
       {
@@ -12346,10 +12368,10 @@
   "src/delia/providers/base.py": {
     "mtime": 1766256551.9391224,
     "imports": [
-      "REL:2:backend_manager",
+      "typing",
       "collections.abc",
       "dataclasses",
-      "typing"
+      "REL:2:backend_manager"
     ],
     "symbols": [
       {
@@ -12400,22 +12422,22 @@
   "src/delia/providers/llamacpp.py": {
     "mtime": 1766256551.9392538,
     "imports": [
-      "structlog",
-      "REL:1:base",
-      "collections.abc",
       "REL:2:messages",
-      "time",
-      "REL:2:backend_manager",
-      "humanize",
-      "REL:2:config",
+      "pydantic",
       "httpx",
       "json",
-      "pydantic",
       "REL:2:tokens",
-      "REL:1:models",
-      "tenacity",
+      "collections.abc",
+      "time",
       "REL:1:ollama",
-      "typing"
+      "REL:2:config",
+      "typing",
+      "tenacity",
+      "structlog",
+      "REL:1:base",
+      "REL:1:models",
+      "REL:2:backend_manager",
+      "humanize"
     ],
     "symbols": [
       {
@@ -12431,21 +12453,21 @@
   "src/delia/providers/ollama.py": {
     "mtime": 1766267618.6089957,
     "imports": [
-      "structlog",
-      "REL:1:base",
-      "collections.abc",
       "REL:2:messages",
-      "time",
-      "REL:2:backend_manager",
-      "humanize",
-      "REL:2:config",
+      "pydantic",
       "httpx",
       "json",
-      "re",
-      "pydantic",
+      "typing",
+      "collections.abc",
+      "time",
+      "REL:2:config",
       "tenacity",
+      "structlog",
+      "REL:1:base",
       "REL:1:models",
-      "typing"
+      "re",
+      "REL:2:backend_manager",
+      "humanize"
     ],
     "symbols": [
       {
@@ -12475,18 +12497,18 @@
   "src/delia/providers/gemini.py": {
     "mtime": 1766267684.0169728,
     "imports": [
-      "structlog",
-      "REL:1:base",
-      "collections.abc",
       "REL:2:messages",
+      "REL:2:tokens",
+      "typing",
+      "collections.abc",
       "time",
-      "humanize",
       "asyncio",
       "REL:2:config",
       "os",
-      "REL:2:tokens",
+      "structlog",
+      "REL:1:base",
       "REL:2:backend_manager",
-      "typing"
+      "humanize"
     ],
     "symbols": [
       {
@@ -12516,14 +12538,14 @@
   "src/delia/tools/mcp_client.py": {
     "mtime": 1766035775.5007021,
     "imports": [
-      "structlog",
-      "__future__",
+      "json",
+      "typing",
       "asyncio",
       "uuid",
-      "json",
       "os",
-      "dataclasses",
-      "typing"
+      "__future__",
+      "structlog",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -12567,13 +12589,13 @@
   "src/delia/tools/parser.py": {
     "mtime": 1766261237.058371,
     "imports": [
-      "structlog",
-      "__future__",
-      "uuid",
       "json",
+      "typing",
+      "uuid",
+      "__future__",
+      "structlog",
       "re",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -12645,12 +12667,12 @@
   "src/delia/tools/registry.py": {
     "mtime": 1766244393.2907832,
     "imports": [
-      "__future__",
-      "json",
       "functools",
-      "dataclasses",
       "enum",
-      "typing"
+      "json",
+      "typing",
+      "__future__",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -12680,12 +12702,12 @@
   "src/delia/tools/web_search.py": {
     "mtime": 1766035775.5009766,
     "imports": [
-      "structlog",
-      "__future__",
+      "typing",
       "asyncio",
+      "__future__",
+      "structlog",
       "re",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -12736,10 +12758,10 @@
   "src/delia/tools/interaction.py": {
     "mtime": 1766239482.5625384,
     "imports": [
-      "prompt_toolkit",
       "prompt_toolkit.formatted_text",
       "asyncio",
-      "__future__"
+      "__future__",
+      "prompt_toolkit"
     ],
     "symbols": [
       {
@@ -12755,21 +12777,21 @@
   "src/delia/tools/builtins.py": {
     "mtime": 1766340179.5409467,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
       "subprocess",
-      "asyncio",
-      "REL:2:types",
+      "httpx",
       "REL:1:executor",
       "json",
-      "httpx",
-      "REL:1:editing",
-      "os",
+      "asyncio",
+      "typing",
       "shutil",
+      "os",
       "fnmatch",
+      "REL:2:types",
+      "__future__",
+      "structlog",
       "REL:1:registry",
-      "typing"
+      "REL:1:editing",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -12869,11 +12891,11 @@
   "src/delia/tools/editing.py": {
     "mtime": 1766277776.744652,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
+      "REL:1:executor",
       "REL:2:types",
-      "REL:1:executor"
+      "__future__",
+      "structlog",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -12896,16 +12918,16 @@
   "src/delia/tools/agent.py": {
     "mtime": 1766340164.9230475,
     "imports": [
-      "structlog",
-      "__future__",
       "REL:1:parser",
-      "time",
-      "asyncio",
-      "REL:1:executor",
-      "dataclasses",
-      "REL:1:registry",
       "inspect",
-      "typing"
+      "REL:1:executor",
+      "typing",
+      "asyncio",
+      "time",
+      "__future__",
+      "structlog",
+      "REL:1:registry",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -12942,11 +12964,11 @@
   "src/delia/tools/orchestration.py": {
     "mtime": 1766296870.0985682,
     "imports": [
-      "structlog",
-      "__future__",
+      "typing",
       "json",
+      "__future__",
       "REL:1:registry",
-      "typing"
+      "structlog"
     ],
     "symbols": [
       {
@@ -13053,17 +13075,17 @@
   "src/delia/tools/executor.py": {
     "mtime": 1766298477.5005636,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
       "REL:1:parser",
-      "time",
+      "typing",
       "asyncio",
+      "time",
       "REL:2:types",
-      "dataclasses",
-      "REL:2:security",
+      "__future__",
+      "structlog",
       "REL:1:registry",
-      "typing"
+      "REL:2:security",
+      "pathlib",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -13112,15 +13134,15 @@
     "edge_summaries": {}
   },
   "src/delia/tools/lsp.py": {
-    "mtime": 1766362252.5008795,
+    "mtime": 1766409189.0322752,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
+      "typing",
       "REL:2:types",
-      "REL:2:",
+      "__future__",
+      "structlog",
       "REL:1:registry",
-      "typing"
+      "REL:2:",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -13161,35 +13183,35 @@
       {
         "name": "lsp_rename_symbol",
         "kind": "async_function",
-        "line": 227,
+        "line": 232,
         "file_path": "src/delia/tools/lsp.py",
         "summary": null
       },
       {
         "name": "lsp_find_symbol",
         "kind": "async_function",
-        "line": 310,
+        "line": 315,
         "file_path": "src/delia/tools/lsp.py",
         "summary": null
       },
       {
         "name": "lsp_replace_symbol_body",
         "kind": "async_function",
-        "line": 384,
+        "line": 397,
         "file_path": "src/delia/tools/lsp.py",
         "summary": null
       },
       {
         "name": "lsp_insert_before_symbol",
         "kind": "async_function",
-        "line": 447,
+        "line": 460,
         "file_path": "src/delia/tools/lsp.py",
         "summary": null
       },
       {
         "name": "lsp_insert_after_symbol",
         "kind": "async_function",
-        "line": 502,
+        "line": 515,
         "file_path": "src/delia/tools/lsp.py",
         "summary": null
       }
@@ -13199,14 +13221,14 @@
   "src/delia/tools/__init__.py": {
     "mtime": 1766298786.287458,
     "imports": [
-      "REL:1:builtins",
-      "REL:1:coding",
       "REL:1:parser",
-      "REL:1:mcp_client",
       "REL:1:executor",
+      "REL:1:coding",
       "REL:1:agent",
+      "REL:1:registry",
       "REL:1:lsp",
-      "REL:1:registry"
+      "REL:1:mcp_client",
+      "REL:1:builtins"
     ],
     "symbols": [],
     "edge_summaries": {}
@@ -13214,19 +13236,19 @@
   "src/delia/tools/coding.py": {
     "mtime": 1766298831.488442,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
-      "REL:1:builtins",
-      "tempfile",
       "subprocess",
-      "REL:2:types",
       "REL:1:executor",
       "json",
-      "re",
-      "dataclasses",
+      "typing",
+      "tempfile",
+      "REL:2:types",
+      "__future__",
+      "structlog",
       "REL:1:registry",
-      "typing"
+      "re",
+      "pathlib",
+      "dataclasses",
+      "REL:1:builtins"
     ],
     "symbols": [
       {
@@ -13347,9 +13369,9 @@
   "src/delia/tools/sandbox_tools.py": {
     "mtime": 1766325307.879019,
     "imports": [
-      "REL:2:sandbox",
+      "__future__",
       "structlog",
-      "__future__"
+      "REL:2:sandbox"
     ],
     "symbols": [
       {
@@ -13377,32 +13399,32 @@
     "edge_summaries": {}
   },
   "src/delia/tools/handlers.py": {
-    "mtime": 1766364869.0217092,
+    "mtime": 1766408747.4880033,
     "imports": [
-      "REL:2:language",
-      "REL:2:config",
-      "REL:2:orchestration.result",
-      "REL:2:quality",
-      "REL:2:text_utils",
-      "pathlib",
-      "json",
-      "REL:2:",
-      "REL:2:voting",
-      "REL:2:container",
-      "REL:2:orchestration.executor",
-      "REL:2:delegation",
-      "REL:2:messages",
-      "REL:2:validation",
-      "REL:2:routing",
       "typing",
-      "structlog",
+      "REL:2:config",
+      "REL:2:quality",
+      "REL:2:types",
+      "REL:2:language",
+      "REL:2:orchestration.executor",
+      "REL:2:voting_stats",
       "fastmcp",
-      "__future__",
-      "REL:2:orchestration.service",
+      "REL:2:validation",
+      "pathlib",
+      "REL:2:orchestration.result",
+      "REL:2:messages",
+      "REL:2:container",
       "asyncio",
       "time",
-      "REL:2:voting_stats",
-      "REL:2:types"
+      "REL:2:orchestration.service",
+      "REL:2:delegation",
+      "REL:2:voting",
+      "json",
+      "REL:2:text_utils",
+      "__future__",
+      "structlog",
+      "REL:2:",
+      "REL:2:routing"
     ],
     "symbols": [
       {
@@ -13537,12 +13559,12 @@
   "src/delia/tools/resources.py": {
     "mtime": 1766335085.2101524,
     "imports": [
-      "structlog",
-      "fastmcp",
-      "__future__",
       "json",
       "REL:2:container",
-      "typing"
+      "typing",
+      "fastmcp",
+      "__future__",
+      "structlog"
     ],
     "symbols": [
       {
@@ -13558,16 +13580,16 @@
   "src/delia/tools/admin.py": {
     "mtime": 1766362839.3620446,
     "imports": [
-      "structlog",
+      "json",
+      "REL:2:container",
+      "typing",
+      "REL:2:routing",
+      "REL:2:config",
       "fastmcp",
       "__future__",
-      "humanize",
-      "REL:2:config",
-      "json",
-      "REL:2:routing",
+      "structlog",
       "REL:2:agent_sync",
-      "REL:2:container",
-      "typing"
+      "humanize"
     ],
     "symbols": [
       {
@@ -13583,10 +13605,10 @@
   "src/delia/semantic/__init__.py": {
     "mtime": 1766258859.753729,
     "imports": [
+      "REL:1:playbook_search",
       "REL:1:coherence",
-      "REL:1:cache",
       "REL:1:compression",
-      "REL:1:playbook_search"
+      "REL:1:cache"
     ],
     "symbols": [],
     "edge_summaries": {}
@@ -13594,16 +13616,16 @@
   "src/delia/semantic/compression.py": {
     "mtime": 1766343498.0367322,
     "imports": [
-      "structlog",
-      "__future__",
+      "REL:2:tokens",
+      "json",
+      "typing",
       "asyncio",
       "REL:2:config",
-      "json",
+      "__future__",
+      "structlog",
       "re",
-      "REL:2:tokens",
       "datetime",
-      "dataclasses",
-      "typing"
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -13647,12 +13669,12 @@
   "src/delia/semantic/coherence.py": {
     "mtime": 1766343189.4264526,
     "imports": [
-      "structlog",
-      "__future__",
+      "typing",
       "asyncio",
+      "__future__",
+      "structlog",
       "numpy",
-      "REL:2:embeddings",
-      "typing"
+      "REL:2:embeddings"
     ],
     "symbols": [
       {
@@ -13675,13 +13697,13 @@
   "src/delia/semantic/playbook_search.py": {
     "mtime": 1766343193.8788803,
     "imports": [
-      "structlog",
-      "__future__",
+      "typing",
       "asyncio",
+      "__future__",
+      "structlog",
       "numpy",
       "REL:2:embeddings",
-      "REL:2:playbook",
-      "typing"
+      "REL:2:playbook"
     ],
     "symbols": [
       {
@@ -13704,14 +13726,14 @@
   "src/delia/semantic/cache.py": {
     "mtime": 1766348360.4997008,
     "imports": [
-      "pathlib",
-      "structlog",
-      "__future__",
-      "asyncio",
-      "numpy",
       "json",
+      "typing",
+      "asyncio",
+      "__future__",
+      "structlog",
+      "numpy",
       "REL:2:embeddings",
-      "typing"
+      "pathlib"
     ],
     "symbols": [
       {
@@ -13746,8 +13768,8 @@
   "dashboard/src/app/layout.tsx": {
     "mtime": 1766035775.4944806,
     "imports": [
-      "next",
-      "next/font/google"
+      "next/font/google",
+      "next"
     ],
     "symbols": [
       {
@@ -13763,12 +13785,12 @@
   "dashboard/src/app/page.tsx": {
     "mtime": 1766287399.8178577,
     "imports": [
-      "recharts",
-      "react",
-      "next/dynamic",
-      "@/components/ui/card",
       "@/components/ui/select",
-      "@/components/ui/badge"
+      "recharts",
+      "@/components/ui/card",
+      "@/components/ui/badge",
+      "react",
+      "next/dynamic"
     ],
     "symbols": [
       {
@@ -13799,9 +13821,9 @@
     "mtime": 1766035775.4950557,
     "imports": [
       "url",
-      "path",
+      "fs",
       "os",
-      "fs"
+      "path"
     ],
     "symbols": [
       {
@@ -13894,8 +13916,8 @@
   "dashboard/src/lib/utils.ts": {
     "mtime": 1766035775.4951866,
     "imports": [
-      "clsx",
-      "tailwind-merge"
+      "tailwind-merge",
+      "clsx"
     ],
     "symbols": [
       {
@@ -13912,9 +13934,9 @@
     "mtime": 1766035775.4950166,
     "imports": [
       "react",
+      "@radix-ui/react-slot",
       "@/lib/utils",
-      "class-variance-authority",
-      "@radix-ui/react-slot"
+      "class-variance-authority"
     ],
     "symbols": [
       {
@@ -13930,8 +13952,8 @@
   "dashboard/src/components/ui/card.tsx": {
     "mtime": 1766035775.4950557,
     "imports": [
-      "@/lib/utils",
-      "react"
+      "react",
+      "@/lib/utils"
     ],
     "symbols": [
       {
@@ -13989,8 +14011,8 @@
   "dashboard/src/components/ui/chart.tsx": {
     "mtime": 1766035775.4950557,
     "imports": [
-      "@/lib/utils",
       "recharts",
+      "@/lib/utils",
       "react"
     ],
     "symbols": [
@@ -14035,10 +14057,10 @@
   "dashboard/src/components/ui/select.tsx": {
     "mtime": 1766035775.4950557,
     "imports": [
-      "@/lib/utils",
-      "react",
+      "@radix-ui/react-select",
       "lucide-react",
-      "@radix-ui/react-select"
+      "react",
+      "@/lib/utils"
     ],
     "symbols": [
       {
@@ -14608,6 +14630,185 @@
         "kind": "class",
         "line": 126,
         "file_path": "src/delia/tools/models.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/cleanup.py": {
+    "mtime": 1766368830.8471053,
+    "imports": [
+      "pathlib",
+      "structlog",
+      "shutil"
+    ],
+    "symbols": [
+      {
+        "name": "cleanup_legacy_global_data",
+        "kind": "function",
+        "line": 17,
+        "file_path": "src/delia/cleanup.py",
+        "summary": null
+      },
+      {
+        "name": "cleanup_project_delia_dir",
+        "kind": "function",
+        "line": 92,
+        "file_path": "src/delia/cleanup.py",
+        "summary": null
+      },
+      {
+        "name": "migrate_global_sessions_to_project",
+        "kind": "function",
+        "line": 165,
+        "file_path": "src/delia/cleanup.py",
+        "summary": null
+      },
+      {
+        "name": "cleanup_all",
+        "kind": "function",
+        "line": 241,
+        "file_path": "src/delia/cleanup.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/context_detector.py": {
+    "mtime": 1766407606.3215551,
+    "imports": [
+      "typing",
+      "json",
+      "__future__",
+      "structlog",
+      "re",
+      "pathlib",
+      "datetime",
+      "dataclasses"
+    ],
+    "symbols": [
+      {
+        "name": "DetectedContext",
+        "kind": "class",
+        "line": 149,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "detect_task_type",
+        "kind": "function",
+        "line": 161,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "get_relevant_profiles",
+        "kind": "function",
+        "line": 238,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "ContextManager",
+        "kind": "class",
+        "line": 276,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "get_context_manager",
+        "kind": "function",
+        "line": 364,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "LearnedPattern",
+        "kind": "class",
+        "line": 379,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "PatternLearner",
+        "kind": "class",
+        "line": 417,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "get_pattern_learner",
+        "kind": "function",
+        "line": 679,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "detect_with_learning",
+        "kind": "function",
+        "line": 687,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/consolidated.py": {
+    "mtime": 1766376938.849391,
+    "imports": [
+      "__future__",
+      "structlog",
+      "typing",
+      "json"
+    ],
+    "symbols": [
+      {
+        "name": "playbook_tool",
+        "kind": "async_function",
+        "line": 25,
+        "file_path": "src/delia/tools/consolidated.py",
+        "summary": null
+      },
+      {
+        "name": "memory_tool",
+        "kind": "async_function",
+        "line": 190,
+        "file_path": "src/delia/tools/consolidated.py",
+        "summary": null
+      },
+      {
+        "name": "session_tool",
+        "kind": "async_function",
+        "line": 296,
+        "file_path": "src/delia/tools/consolidated.py",
+        "summary": null
+      },
+      {
+        "name": "profiles_tool",
+        "kind": "async_function",
+        "line": 372,
+        "file_path": "src/delia/tools/consolidated.py",
+        "summary": null
+      },
+      {
+        "name": "project_tool",
+        "kind": "async_function",
+        "line": 451,
+        "file_path": "src/delia/tools/consolidated.py",
+        "summary": null
+      },
+      {
+        "name": "admin_tool",
+        "kind": "async_function",
+        "line": 551,
+        "file_path": "src/delia/tools/consolidated.py",
+        "summary": null
+      },
+      {
+        "name": "register_consolidated_tools",
+        "kind": "function",
+        "line": 635,
+        "file_path": "src/delia/tools/consolidated.py",
         "summary": null
       }
     ],

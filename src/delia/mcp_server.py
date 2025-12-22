@@ -645,9 +645,9 @@ def _build_dynamic_instructions(project_path: str | None = None) -> str:
     pm = get_playbook_manager()
     pm.set_project(Path(path))
     
-    # Load playbook bullets for high-priority task types
-    # NOTE: Only include the most commonly needed ones to avoid overwhelming
-    priority_task_types = ["coding", "testing", "architecture", "project"]
+    # Load playbook bullets for ALL task types
+    # All are important - agents need full context
+    priority_task_types = ["coding", "testing", "architecture", "debugging", "project", "git"]
     playbook_sections = []
     
     for task_type in priority_task_types:
@@ -1196,6 +1196,195 @@ async def mcp_servers(
 
 
 # ============================================================
+# FILE OPERATIONS (Standalone file system tools)
+# ============================================================
+
+
+@mcp.tool()
+async def read_file(
+    path: str,
+    start_line: int = 1,
+    end_line: int | None = None,
+) -> str:
+    """
+    Read file contents with optional line range.
+
+    Args:
+        path: Path to the file (relative to project root or absolute)
+        start_line: Starting line number (1-indexed, default 1)
+        end_line: Ending line number (inclusive, default None for all)
+
+    Returns:
+        File contents with line numbers
+
+    Example:
+        read_file(path="src/main.py")
+        read_file(path="src/main.py", start_line=10, end_line=50)
+    """
+    from .tools.files import read_file as _read_file
+    return await _read_file(path, start_line, end_line)
+
+
+@mcp.tool()
+async def write_file(
+    path: str,
+    content: str,
+    create_dirs: bool = True,
+) -> str:
+    """
+    Write content to a file.
+
+    Args:
+        path: Path to the file (relative to project root or absolute)
+        content: Content to write
+        create_dirs: Create parent directories if needed (default True)
+
+    Returns:
+        Success message or error
+
+    Example:
+        write_file(path="src/new_file.py", content="# New file\\nprint('hello')")
+    """
+    from .tools.files import write_file as _write_file
+    return await _write_file(path, content, create_dirs)
+
+
+@mcp.tool()
+async def edit_file(
+    path: str,
+    old_text: str,
+    new_text: str,
+) -> str:
+    """
+    Edit a file by replacing text.
+
+    Args:
+        path: Path to the file
+        old_text: Text to find and replace
+        new_text: Replacement text
+
+    Returns:
+        Success message with number of replacements or error
+
+    Example:
+        edit_file(path="src/main.py", old_text="old_function", new_text="new_function")
+    """
+    from .tools.files import edit_file as _edit_file
+    return await _edit_file(path, old_text, new_text)
+
+
+@mcp.tool()
+async def list_dir(
+    path: str = ".",
+    recursive: bool = False,
+    pattern: str | None = None,
+) -> str:
+    """
+    List directory contents.
+
+    Args:
+        path: Directory path (default current directory)
+        recursive: List recursively (default False)
+        pattern: Glob pattern to filter files (e.g., "*.py")
+
+    Returns:
+        List of files and directories
+
+    Example:
+        list_dir(path="src")
+        list_dir(path=".", recursive=True, pattern="*.py")
+    """
+    from .tools.files import list_dir as _list_dir
+    return await _list_dir(path, recursive, pattern)
+
+
+@mcp.tool()
+async def find_file(
+    pattern: str,
+    path: str = ".",
+) -> str:
+    """
+    Find files matching a glob pattern.
+
+    Args:
+        pattern: Glob pattern (e.g., "**/*.py", "src/**/test_*.py")
+        path: Base directory to search from
+
+    Returns:
+        List of matching file paths
+
+    Example:
+        find_file(pattern="**/*.py")
+        find_file(pattern="test_*.py", path="tests")
+    """
+    from .tools.files import find_file as _find_file
+    return await _find_file(pattern, path)
+
+
+@mcp.tool()
+async def search_for_pattern(
+    pattern: str,
+    path: str = ".",
+    file_pattern: str | None = None,
+    context_lines: int = 0,
+) -> str:
+    """
+    Search for a regex pattern in files (grep-like).
+
+    Args:
+        pattern: Regex pattern to search for
+        path: Directory or file to search in
+        file_pattern: Glob pattern to filter files (e.g., "*.py")
+        context_lines: Number of context lines to show (default 0)
+
+    Returns:
+        Matching lines with file paths and line numbers
+
+    Example:
+        search_for_pattern(pattern="def main")
+        search_for_pattern(pattern="TODO", file_pattern="*.py", context_lines=2)
+    """
+    from .tools.files import search_for_pattern as _search_for_pattern
+    return await _search_for_pattern(pattern, path, file_pattern, context_lines)
+
+
+@mcp.tool()
+async def delete_file(path: str) -> str:
+    """
+    Delete a file.
+
+    Args:
+        path: Path to the file to delete
+
+    Returns:
+        Success message or error
+
+    Example:
+        delete_file(path="temp/old_file.txt")
+    """
+    from .tools.files import delete_file as _delete_file
+    return await _delete_file(path)
+
+
+@mcp.tool()
+async def create_directory(path: str) -> str:
+    """
+    Create a directory.
+
+    Args:
+        path: Path to the directory to create
+
+    Returns:
+        Success message or error
+
+    Example:
+        create_directory(path="src/new_module")
+    """
+    from .tools.files import create_directory as _create_directory
+    return await _create_directory(path)
+
+
+# ============================================================
 # MCP RESOURCES (Expose data for cross-server communication)
 # ============================================================
 
@@ -1295,6 +1484,38 @@ async def resource_config() -> str:
         ],
     }
     return json.dumps(config_data, indent=2)
+
+
+@mcp.resource("delia://playbook", name="Active Playbook", description="Current project playbook bullets - READ THIS to stay on track")
+async def resource_playbook() -> str:
+    """
+    Get current playbook bullets for all task types.
+
+    This resource provides dynamic access to project-specific
+    playbook guidance. Read this regularly to ensure you're
+    following project patterns.
+    """
+    from .playbook import get_playbook_manager
+
+    pm = get_playbook_manager()
+    path = current_project_path.get() or str(Path.cwd())
+    pm.set_project(Path(path))
+
+    all_bullets = {}
+    for task_type in ["coding", "testing", "architecture", "debugging", "git", "project"]:
+        bullets = pm.get_top_bullets(task_type, limit=5)
+        if bullets:
+            all_bullets[task_type] = [
+                {"id": b.id, "content": b.content, "utility": b.utility_score}
+                for b in bullets
+            ]
+
+    return json.dumps({
+        "project_path": path,
+        "task_types": list(all_bullets.keys()),
+        "bullets": all_bullets,
+        "reminder": "Apply these patterns to your work. Call report_feedback() when done.",
+    }, indent=2)
 
 
 @mcp.resource("delia://memories", name="Available Memories", description="List of Delia's memory files")

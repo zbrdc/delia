@@ -196,13 +196,18 @@ async def lsp_get_symbols(
     Returns:
         Hierarchical list of symbols with their locations and types
     """
-    import json
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
-    symbols = await client.document_symbols(path)
+    result = await client.document_symbols(path)
+
+    # Handle error response
+    if isinstance(result, dict) and "error" in result:
+        return f"LSP Error: {result['error']}"
+
+    symbols = result
     if not symbols:
-        return "No symbols found."
+        return "No symbols found in file."
 
     # Format as readable output
     lines = [f"Found {len(symbols)} symbol(s) in {path}:"]
@@ -325,16 +330,18 @@ async def lsp_find_symbol(
     Returns:
         List of matching symbols with their locations
     """
-    import json
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
     matches = []
+    last_error = None
 
     if path:
         # Search in specific file
-        symbols = await client.document_symbols(path)
-        for sym in symbols:
+        result = await client.document_symbols(path)
+        if isinstance(result, dict) and "error" in result:
+            return f"LSP Error: {result['error']}"
+        for sym in result:
             if name.lower() in sym.get("name", "").lower():
                 if kind is None or sym.get("kind", "").lower() == kind.lower():
                     sym["file"] = path
@@ -352,8 +359,12 @@ async def lsp_find_symbol(
             for code_file in src_path.rglob("*"):
                 if code_file.is_file() and code_file.suffix in code_extensions:
                     rel_path = str(code_file.relative_to(root))
-                    symbols = await client.document_symbols(rel_path)
-                    for sym in symbols:
+                    result = await client.document_symbols(rel_path)
+                    # Check for error on first file to give feedback
+                    if isinstance(result, dict) and "error" in result:
+                        last_error = result["error"]
+                        continue
+                    for sym in result:
                         if name.lower() in sym.get("name", "").lower():
                             if kind is None or sym.get("kind", "").lower() == kind.lower():
                                 sym["file"] = rel_path
@@ -362,6 +373,8 @@ async def lsp_find_symbol(
                 break  # Found matches in first src dir
 
     if not matches:
+        if last_error:
+            return f"No symbols matching '{name}' found. LSP Error: {last_error}"
         return f"No symbols matching '{name}' found."
 
     lines = [f"Found {len(matches)} symbol(s) matching '{name}':"]

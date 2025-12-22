@@ -32,6 +32,16 @@ from .executor import execute_tool, ToolResult
 from .builtins import get_default_tools
 from .coding import get_coding_tools
 from .lsp import get_lsp_tools
+from .files import (
+    read_file,
+    write_file,
+    edit_file,
+    list_dir,
+    find_file,
+    search_for_pattern,
+    delete_file,
+    create_directory,
+)
 from .agent import run_agent_loop, AgentConfig, AgentResult
 from .mcp_client import (
     MCPClient,
@@ -57,6 +67,15 @@ __all__ = [
     "get_coding_tools",
     # LSP tools
     "get_lsp_tools",
+    # File tools
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_dir",
+    "find_file",
+    "search_for_pattern",
+    "delete_file",
+    "create_directory",
     # Agent
     "run_agent_loop",
     "AgentConfig",

@@ -209,8 +209,8 @@ def detect_ai_agents(project_root: Path) -> dict[str, dict[str, Any]]:
             "description": "Claude Code (.claude/)",
         },
         "gemini": {
-            "dir": project_root,
-            "file": "GEMINI.md",
+            "dir": project_root / ".gemini",
+            "file": "instructions.md",
             "description": "Google Gemini",
         },
         "copilot": {
@@ -324,18 +324,10 @@ def sync_agent_instruction_files(
             if not agent["dir"].exists():
                 agent["dir"].mkdir(parents=True, exist_ok=True)
 
-            # Generate agent-specific content
-            # Claude agents get the full CLAUDE.md content
-            # Other agents get their own generated instructions
-            if agent_id in ("claude_root", "claude_dir"):
-                agent_content = content
-            else:
-                agent_content = generate_agent_instructions(
-                    agent_id=agent_id,
-                    project_name=project_name,
-                    project_rules=project_rules,
-                    project_overview=project_overview,
-                )
+            # All agents get the same comprehensive content
+            # Since all major agents now support MCP, they should have identical instructions
+            # This ensures consistent behavior across Claude, Gemini, Copilot, Cursor, etc.
+            agent_content = content
 
             file_path.write_text(agent_content)
             files_written.append(str(file_path.relative_to(project_root)))

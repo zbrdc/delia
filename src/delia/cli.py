@@ -1277,7 +1277,7 @@ def _generate_claude_md(project_name: str, tech_stack: dict[str, Any], project_r
     # Build the CLAUDE.md content
     content = f'''# {project_name} Development Instructions
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding assistants when working with code in this repository.
 
 ---
 

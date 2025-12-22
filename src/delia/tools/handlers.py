@@ -786,26 +786,39 @@ def register_tool_handlers(mcp: FastMCP):
     async def auto_context(
         message: str,
         path: str | None = None,
+        prior_context: str | None = None,
     ) -> str:
         """
-        Automatically detect context and load relevant playbooks from user message.
+        Automatically detect context and load relevant playbooks from message + conversation.
 
         Call this ONCE at the start of processing a user request. It analyzes the
         message, detects the task type (coding/testing/debugging/etc), and returns
         all relevant playbook bullets and profile recommendations.
+
+        IMPORTANT: Pass prior_context when the conversation has shifted topics.
+        For example, if the assistant offered "Would you like me to commit this fix?"
+        and the user says "yes", pass that assistant message as prior_context so
+        git patterns are detected.
 
         This replaces the need to manually call get_playbook with a task_type.
 
         Args:
             message: The user's message or request to analyze
             path: Optional project path. If not provided, uses current directory.
+            prior_context: Optional recent assistant response(s) to include in detection.
+                          Use this when the user's message is short/ambiguous but the
+                          conversation context makes the task type clear.
 
         Returns:
             JSON with detected context, relevant bullets, and profile recommendations
 
         Example:
-            auto_context(message="Fix the bug in the login handler")
-            -> Returns debugging + coding bullets automatically
+            auto_context(message="yes, do it")
+            -> Detects "project" (ambiguous)
+
+            auto_context(message="yes, do it",
+                        prior_context="Would you like me to commit this fix to dev?")
+            -> Detects "git" (context-aware)
         """
         from pathlib import Path as PyPath
         from ..context_detector import (
@@ -818,8 +831,16 @@ def register_tool_handlers(mcp: FastMCP):
         # Set project path first
         project_path = PyPath(path).resolve() if path else PyPath.cwd()
 
+        # Combine message with prior context for detection
+        # Prior context (e.g., assistant's last message) helps when user response is short
+        detection_text = message
+        if prior_context:
+            # Weight prior context less than current message by putting it second
+            # The detection will pick up keywords from both
+            detection_text = f"{message}\n\n[Prior context]: {prior_context}"
+
         # Detect context using learning-enhanced detection
-        context = detect_with_learning(message, project_path)
+        context = detect_with_learning(detection_text, project_path)
 
         # Also update the context manager for backwards compatibility
         ctx_mgr = get_context_manager()
@@ -852,6 +873,7 @@ def register_tool_handlers(mcp: FastMCP):
                 "secondary_tasks": context.secondary_tasks,
                 "confidence": context.confidence,
                 "matched_keywords": context.matched_keywords[:5],
+                "used_prior_context": prior_context is not None,
             },
             "bullets": all_bullets,
             "profiles_to_load": profiles,
@@ -860,9 +882,212 @@ def register_tool_handlers(mcp: FastMCP):
                 f"Apply the {len(all_bullets)} bullets above to your work. "
                 f"After completing, call report_feedback() for each bullet_id."
             ),
+            "re_call_triggers": [
+                "Task type changes (e.g., coding → testing → git)",
+                "User asks about different aspect of codebase",
+                "About to perform git operations (commit, push, PR)",
+                "Switching between files of different languages/frameworks",
+            ],
         }
 
         return json.dumps(result, indent=2)
+
+    # =========================================================================
+    # ACE Workflow Checkpoint Tools
+    # =========================================================================
+
+    @mcp.tool()
+    async def check_ace_status(path: str | None = None) -> str:
+        """
+        Check whether ACE workflow was followed and what actions are needed.
+
+        **IMPORTANT**: Call this tool at the start of EVERY conversation to see
+        if onboarding/playbooks are available and what context to load.
+
+        This is a gate check - it directs you to the proper workflow based on
+        what's already been set up for the project.
+
+        Args:
+            path: Optional project path
+
+        Returns:
+            JSON with ACE status, available playbooks, and recommended actions
+        """
+        from pathlib import Path as PyPath
+        from ..playbook import get_playbook_manager
+        from ..context_detector import get_context_manager
+
+        project_path = PyPath(path).resolve() if path else PyPath.cwd()
+        pm = get_playbook_manager()
+        pm.set_project(project_path)
+
+        stats = pm.get_stats()
+        tracker = get_ace_tracker()
+
+        # Check if playbooks exist
+        has_playbooks = stats.get("total_bullets", 0) > 0
+        playbook_queried = tracker.was_playbook_queried(str(project_path))
+
+        if not has_playbooks:
+            return json.dumps({
+                "status": "no_playbooks",
+                "message": "ACE Framework not initialized for this project.",
+                "action_required": f"Run `init_project(path='{project_path}')` to initialize ACE Framework.",
+                "alternative": "Or manually call `scan_codebase()` followed by `analyze_and_index()`",
+            }, indent=2)
+
+        if not playbook_queried:
+            return json.dumps({
+                "status": "playbook_not_loaded",
+                "message": "Playbooks available but not loaded for this session.",
+                "action_required": "Call `auto_context(message='<your task>')` to load relevant playbooks.",
+                "available_playbooks": stats.get("playbooks", {}),
+                "bullet_count": stats.get("total_bullets", 0),
+            }, indent=2)
+
+        return json.dumps({
+            "status": "ready",
+            "message": "ACE Framework active. Playbooks loaded.",
+            "playbook_stats": stats,
+            "reminder": "Apply playbook bullets to your work. Call report_feedback() when done.",
+        }, indent=2)
+
+    @mcp.tool()
+    async def think_about_task_adherence() -> str:
+        """
+        Reflect on whether you are still on track with the current task.
+
+        **IMPORTANT**: This tool should ALWAYS be called BEFORE you insert,
+        replace, or delete code. It prompts you to verify alignment with
+        project patterns and user intent.
+
+        Returns:
+            Reflection prompts to ensure task adherence
+        """
+        return json.dumps({
+            "reflection_prompts": [
+                "Are you deviating from the task at hand?",
+                "Have you loaded all relevant playbook bullets for this task type?",
+                "Is your implementation aligned with the project's code style and conventions?",
+                "Do you need any additional information before modifying code?",
+                "Would it be better to ask the user for clarification first?",
+            ],
+            "checklist": {
+                "playbook_loaded": "Did you call auto_context() for this task?",
+                "patterns_applied": "Are you applying the bullets from the playbook?",
+                "style_consistent": "Does your code match existing project patterns?",
+                "scope_appropriate": "Are changes scoped to what was requested?",
+            },
+            "guidance": (
+                "If the conversation has drifted from the original task, "
+                "acknowledge this and suggest how to proceed. "
+                "It's better to pause and clarify than to make large changes "
+                "that might not align with user intent."
+            ),
+        }, indent=2)
+
+    @mcp.tool()
+    async def think_about_collected_info() -> str:
+        """
+        Reflect on whether you have collected enough information.
+
+        **IMPORTANT**: This tool should ALWAYS be called after a non-trivial
+        sequence of searching/reading operations (find_symbol, grep, read_file, etc).
+
+        Returns:
+            Reflection prompts to assess information completeness
+        """
+        return json.dumps({
+            "reflection_prompts": [
+                "Have you collected all the information needed for this task?",
+                "Is there missing context that could be acquired with available tools?",
+                "Should you use LSP tools (lsp_find_references, lsp_goto_definition) for deeper understanding?",
+                "Are there memory files that might contain relevant project knowledge?",
+                "Do you need to ask the user for clarification on any points?",
+            ],
+            "tool_suggestions": {
+                "semantic_navigation": ["lsp_find_references", "lsp_goto_definition", "lsp_get_symbols"],
+                "pattern_search": ["search_for_pattern", "find_symbol"],
+                "knowledge_retrieval": ["read_memory", "list_memories"],
+            },
+            "guidance": (
+                "Think step by step about what information is missing. "
+                "If you can acquire it with available tools, do so. "
+                "If not, ask the user for clarification before proceeding."
+            ),
+        }, indent=2)
+
+    @mcp.tool()
+    async def think_about_completion() -> str:
+        """
+        Reflect on whether the task is truly complete.
+
+        **IMPORTANT**: Call this tool when you believe the task is done.
+        It prompts verification steps before declaring completion.
+
+        Returns:
+            Completion verification checklist
+        """
+        return json.dumps({
+            "reflection_prompts": [
+                "Have you performed ALL steps required by the task?",
+                "Is it appropriate to run tests? If so, have you done that?",
+                "Should linting/formatting be run? If so, have you done that?",
+                "Are there non-code files (docs, config) that should be updated?",
+                "Should new tests be written to cover the changes?",
+            ],
+            "checklist": {
+                "code_changes": "All required code changes complete?",
+                "tests": "Tests passing? New tests needed?",
+                "linting": "Code formatted and linted?",
+                "documentation": "Docs updated if needed?",
+                "feedback": "Called report_feedback() for applied bullets?",
+            },
+            "guidance": (
+                "Read relevant memory files to see what should be done when a task completes. "
+                "For exploration-only tasks, tests and linting may not be needed. "
+                "For code changes, verify the full validation workflow."
+            ),
+        }, indent=2)
+
+    @mcp.tool()
+    async def read_initial_instructions() -> str:
+        """
+        Get the Delia ACE Framework instructions manual.
+
+        **CRITICAL**: If you haven't already read the ACE Framework instructions,
+        call this tool IMMEDIATELY at the start of the conversation. Some MCP
+        clients do not automatically display system prompts.
+
+        Returns:
+            Complete ACE Framework instructions for this project
+        """
+        from pathlib import Path as PyPath
+        from ..playbook import get_playbook_manager
+        from ..mcp_server import _build_dynamic_instructions
+
+        project_path = PyPath.cwd()
+        pm = get_playbook_manager()
+        pm.set_project(project_path)
+
+        # Get full dynamic instructions
+        instructions = _build_dynamic_instructions()
+
+        stats = pm.get_stats()
+
+        return json.dumps({
+            "message": "Delia ACE Framework Instructions Manual",
+            "instructions": instructions,
+            "playbook_summary": stats,
+            "quick_start": [
+                "1. Call auto_context(message='<task>') to load relevant playbooks",
+                "2. Apply returned bullets to your work",
+                "3. Call think_about_task_adherence() before modifying code",
+                "4. Call think_about_completion() when you think you're done",
+                "5. Call report_feedback(bullet_id, task_type, helpful) to close the loop",
+            ],
+            "note": "You have hereby read the ACE Framework manual and do not need to read it again.",
+        }, indent=2)
 
     @mcp.tool()
     async def record_detection_feedback(

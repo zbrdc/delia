@@ -53,6 +53,14 @@ TASK_PATTERNS_WEIGHTED: dict[TaskType, list[tuple[str, int]]] = {
         (r"\b(adr|decision|refactor|redesign)\b", 3),
         (r"\b(dependency|interface|abstract|coupling)\b", 2),
         (r"\b(singleton|factory|strategy|observer|repository)\b", 3),
+        # Planning/thinking patterns
+        (r"\b(plan|planning|planned)\b", 3),
+        (r"\b(think|thinking|thought).*(through|about|over)\b", 2),
+        (r"\b(approach|strategy|strategize)\b", 2),
+        (r"\b(consider|considering|evaluate|evaluating)\b", 2),
+        (r"\b(trade.?off|pros?.and.cons?|compare|comparison)\b", 3),
+        (r"\b(breakdown|break\s+down|decompose)\b", 2),
+        (r"\b(how.should|what.approach|best.way)\b", 3),
     ],
     "git": [
         (r"\b(git|commit|branch|merge|rebase)\b", 3),
@@ -61,6 +69,13 @@ TASK_PATTERNS_WEIGHTED: dict[TaskType, list[tuple[str, int]]] = {
         (r"\b(pull.?request|merge.?request)\b", 3),
         (r"\b(checkout|stash|diff|cherry.?pick)\b", 2),
         (r"\b(conflict|remote|origin|upstream)\b", 2),
+        # Colloquial/conversational git patterns
+        (r"\bcheck.?(this.?)?in\b", 3),  # old VCS terminology
+        (r"\bland.*(on|to|this|it)\b", 2),  # "land this on main"
+        (r"\bsquash\b", 3),  # git squash
+        (r"\b(main|master|dev|develop)\s+branch\b", 2),  # branch name mentions
+        (r"\bversion.?control\b", 2),  # explicit VCS reference
+        (r"\b(amend|revert|reset)\b", 3),  # git commands
     ],
     "security": [
         (r"\b(security|secure|insecure)\b", 3),
