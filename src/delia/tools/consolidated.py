@@ -265,7 +265,7 @@ async def memory_tool(
         return json.dumps({
             "status": "written",
             "name": name,
-            "path": str(memory_file.relative_to(Path.cwd())),
+            "path": str(memory_file.relative_to(project_path)),
             "size": len(content),
             "mode": "append" if append else "write"
         })
