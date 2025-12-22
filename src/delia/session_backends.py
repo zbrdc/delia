@@ -133,9 +133,12 @@ class JSONSessionBackend(SessionBackend):
     Each session is stored as a separate JSON file.
     Backwards compatible with existing Delia sessions.
     """
-    
+
     def __init__(self, session_dir: Path | None = None):
-        self.session_dir = session_dir or paths.SESSIONS_DIR
+        # PER-PROJECT ISOLATION: Default to project-specific sessions
+        if session_dir is None:
+            session_dir = Path.cwd() / ".delia" / "sessions"
+        self.session_dir = session_dir
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         
@@ -540,9 +543,9 @@ def migrate_json_to_sqlite(
 ) -> int:
     """
     Migrate existing JSON sessions to SQLite.
-    
+
     Args:
-        json_dir: Source JSON directory (default: paths.SESSIONS_DIR)
+        json_dir: Source JSON directory (default: <project>/.delia/sessions/)
         sqlite_path: Target SQLite database (default: paths.DATA_DIR / "sessions.db")
         delete_json: Whether to delete JSON files after migration
         

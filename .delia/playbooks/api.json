@@ -1,0 +1,14 @@
+[
+  {
+    "content": "MCP tools registered via @mcp.tool() decorator in FastMCP.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Tool functions return JSON strings for complex responses.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Use Pydantic models for tool parameter validation.",
+    "section": "general_strategies"
+  }
+]

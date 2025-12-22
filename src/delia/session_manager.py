@@ -329,13 +329,21 @@ class SessionManager:
         Initialize the session manager.
 
         Args:
-            session_dir: Optional session directory path. Defaults to paths.SESSIONS_DIR
+            session_dir: Optional session directory path. Defaults to <project>/.delia/sessions/
             ttl_seconds: Time-to-live for sessions in seconds (default 24 hours)
             max_sessions: Maximum number of sessions before LRU eviction
             max_messages_per_session: Maximum messages per session
             backend: Optional SessionBackend (SQLite, JSON, etc.). If None, uses JSON.
         """
-        self.session_dir = session_dir or paths.SESSIONS_DIR
+        # PER-PROJECT ISOLATION: Auto-detect project from cwd if not provided
+        if session_dir is None:
+            project_path = Path.cwd()
+            session_dir = project_path / ".delia" / "sessions"
+            session_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            session_dir = Path(session_dir)
+
+        self.session_dir = session_dir
         self.ttl_seconds = ttl_seconds
         self.max_sessions = max_sessions
         self.max_messages_per_session = max_messages_per_session

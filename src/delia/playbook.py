@@ -25,28 +25,38 @@ stored as JSON to prevent 'Context Collapse' caused by monolithic prompt rewriti
 
 import json
 import uuid
-from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import structlog
+from pydantic import BaseModel, Field, computed_field
+
 from . import paths
 
 log = structlog.get_logger()
 
-@dataclass
-class PlaybookBullet:
+
+def _generate_bullet_id() -> str:
+    return f"strat-{uuid.uuid4().hex[:8]}"
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat()
+
+
+class PlaybookBullet(BaseModel):
     """A single unit of strategic knowledge."""
     content: str
-    id: str = field(default_factory=lambda: f"strat-{uuid.uuid4().hex[:8]}")
-    section: str = "general_strategies"  # e.g., 'coding', 'api_usage', 'safety'
-    helpful_count: int = 0
-    harmful_count: int = 0
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    id: str = Field(default_factory=_generate_bullet_id)
+    section: str = Field(default="general_strategies", description="e.g., 'coding', 'api_usage', 'safety'")
+    helpful_count: int = Field(default=0, ge=0)
+    harmful_count: int = Field(default=0, ge=0)
+    created_at: str = Field(default_factory=_now_iso)
     last_used: str | None = None
-    source_task: str | None = None  # Reference to the task that generated this
-    
+    source_task: str | None = Field(default=None, description="Reference to the task that generated this")
+
+    @computed_field
     @property
     def utility_score(self) -> float:
         """Calculate a utility score based on usage history."""
@@ -56,11 +66,27 @@ class PlaybookBullet:
         return self.helpful_count / total
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return self.model_dump()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlaybookBullet":
-        return cls(**data)
+        # Map alternative field names from agent-written files
+        mapped = {}
+        field_mapping = {
+            "created": "created_at",
+            "use_count": "helpful_count",  # Approximate mapping
+        }
+        
+        # Fields that are properties/computed, not stored
+        skip_fields = {"utility_score"}
+        
+        for key, value in data.items():
+            if key in skip_fields:
+                continue
+            mapped_key = field_mapping.get(key, key)
+            mapped[mapped_key] = value
+        
+        return cls(**mapped)
 
 
 class PlaybookManager:
@@ -76,6 +102,20 @@ class PlaybookManager:
         self._ensure_dir()
         # Cache for loaded bullets {task_type: [bullets]}
         self._cache: dict[str, list[PlaybookBullet]] = {}
+    
+    def set_project(self, project_path: Path | str):
+        """Switch to a different project's playbooks.
+        
+        Call this when the working project changes (e.g., MCP request from different dir).
+        Clears the cache and updates the playbook directory.
+        """
+        project_path = Path(project_path) if isinstance(project_path, str) else project_path
+        new_dir = project_path / ".delia" / "playbooks"
+        if new_dir != self.playbook_dir:
+            self.playbook_dir = new_dir
+            self._cache.clear()
+            self._ensure_dir()
+            log.info("playbook_project_switched", path=str(new_dir))
 
     def _ensure_dir(self):
         """Ensure the playbooks directory exists."""
@@ -97,7 +137,19 @@ class PlaybookManager:
         try:
             with open(path, "r") as f:
                 data = json.load(f)
-                bullets = [PlaybookBullet.from_dict(b) for b in data]
+                
+                # Handle both formats:
+                # 1. Flat array: [{"content": ...}, ...]
+                # 2. Wrapped object: {"bullets": [...], "playbook": ...}
+                if isinstance(data, dict) and "bullets" in data:
+                    bullet_list = data["bullets"]
+                elif isinstance(data, list):
+                    bullet_list = data
+                else:
+                    log.warning("playbook_unknown_format", task_type=task_type)
+                    return []
+                
+                bullets = [PlaybookBullet.from_dict(b) for b in bullet_list]
                 self._cache[task_type] = bullets
                 return bullets
         except Exception as e:
@@ -167,6 +219,81 @@ class PlaybookManager:
             formatted += f"- [{b.id}] {b.content}\n"
         return formatted
 
+    def detect_task_type(self, content: str) -> str:
+        """Detect the task type from content for automatic playbook selection.
+        
+        Uses keyword matching to determine which playbook is most relevant.
+        """
+        content_lower = content.lower()
+        
+        # Keywords for each task type (ordered by specificity)
+        patterns = [
+            ("testing", ["test", "pytest", "coverage", "assert", "mock", "fixture", "spec"]),
+            ("debugging", ["error", "bug", "fix", "stack trace", "exception", "crash", "fail"]),
+            ("security", ["auth", "security", "password", "token", "encrypt", "vulnerability", "xss", "sql injection"]),
+            ("deployment", ["deploy", "ci/cd", "docker", "kubernetes", "pipeline", "release", "production"]),
+            ("performance", ["optimize", "performance", "slow", "latency", "cache", "profil", "benchmark"]),
+            ("architecture", ["design", "architect", "adr", "refactor", "pattern", "structure", "module"]),
+            ("api", ["api", "endpoint", "rest", "graphql", "request", "response", "route"]),
+            ("git", ["commit", "branch", "merge", "pull request", "pr", "rebase", "git"]),
+            ("coding", ["implement", "add", "create", "write", "function", "class", "method", "code"]),
+        ]
+        
+        for task_type, keywords in patterns:
+            for kw in keywords:
+                if kw in content_lower:
+                    return task_type
+        
+        # Default to coding if no pattern matches
+        return "coding"
+
+    def get_auto_injection_bullets(
+        self, 
+        content: str, 
+        include_project: bool = True,
+        limit: int = 5,
+    ) -> str:
+        """Get automatically-selected playbook bullets for prompt injection.
+        
+        This is the primary entry point for ACE Framework enforcement.
+        Called by ContextEngine.prepare_content() to ensure playbook guidance
+        is ALWAYS included in prompts.
+        
+        Args:
+            content: The task/prompt to analyze
+            include_project: Also include project-specific bullets
+            limit: Max bullets per category
+        
+        Returns:
+            Formatted string for injection, or empty string if no bullets
+        """
+        task_type = self.detect_task_type(content)
+        
+        parts = []
+        
+        # Task-specific bullets
+        task_bullets = self.get_top_bullets(task_type, limit)
+        if task_bullets:
+            parts.append(f"#### {task_type.title()} Guidance")
+            for b in task_bullets:
+                parts.append(f"- [{b.id}] {b.content}")
+        
+        # Always include project bullets for context
+        if include_project:
+            project_bullets = self.get_top_bullets("project", limit=3)
+            if project_bullets:
+                parts.append("#### Project Context")
+                for b in project_bullets:
+                    parts.append(f"- [{b.id}] {b.content}")
+        
+        if not parts:
+            return ""
+        
+        header = "### ACE PLAYBOOK (Apply These Learned Strategies)"
+        footer = "_Report feedback with: report_feedback(bullet_id, helpful=True/False)_"
+        
+        return f"{header}\n" + "\n".join(parts) + f"\n\n{footer}"
+
     def get_all_bullets(self) -> dict[str, list[PlaybookBullet]]:
         """Get all bullets across all task types for MCP exposure."""
         result = {}
@@ -217,6 +344,11 @@ class PlaybookManager:
 
 # Global manager instance
 playbook_manager = PlaybookManager()
+
+
+def get_playbook_manager() -> PlaybookManager:
+    """Get the global playbook manager instance."""
+    return playbook_manager
 
 
 # =============================================================================
@@ -389,3 +521,856 @@ async def generate_project_playbook(summarizer: Any = None) -> int:
 
     log.info("project_playbook_generated", count=len(bullets), tech_stack=tech_stack)
     return len(bullets)
+
+
+# =============================================================================
+# PROFILE RECOMMENDATIONS
+# =============================================================================
+
+# Mapping of tech stack patterns to relevant profiles
+PROFILE_MAPPINGS: dict[str, list[str]] = {
+    # Languages - ONLY the base language profile, not framework profiles
+    "Python": ["python.md"],
+    "TypeScript": ["typescript.md"],
+    "JavaScript": ["typescript.md"],  # Use TS profile for JS too
+    "Go": ["golang.md"],
+    "Rust": ["rust.md"],
+    "Swift": ["ios.md"],
+    "Kotlin": ["android.md"],
+    "Dart": ["flutter.md"],
+    "PHP": ["laravel.md"],
+    "Solidity": ["solidity.md"],
+    "C": ["c.md"],
+    "C++": ["cpp.md"],
+    # Frameworks - detected from dependencies, add specific profiles
+    "FastAPI": ["fastapi.md", "api.md"],
+    "Django": ["django.md", "api.md"],
+    "Flask": ["api.md"],
+    "React": ["react.md"],
+    "Vue": ["vue.md"],
+    "Next.js": ["nextjs.md", "react.md"],
+    "NestJS": ["nestjs.md", "api.md"],
+    "Express": ["api.md"],
+    "Svelte": ["svelte.md"],
+    "Angular": ["angular.md"],
+    "Pydantic": ["fastapi.md"],
+    "SQLAlchemy": ["api.md"],
+    "PyTorch": ["deeplearning.md", "ml.md"],
+    "TensorFlow": ["deeplearning.md", "ml.md"],
+    "scikit-learn": ["ml.md"],
+    "LangChain": ["llm.md"],
+    "Playwright": ["testing.md"],
+    "pytest": ["testing.md"],
+    "Jest": ["testing.md"],
+}
+
+# Best practice patterns to check for
+BEST_PRACTICE_PATTERNS: dict[str, dict[str, Any]] = {
+    "python": {
+        "type_hints": {
+            "pattern": r"def \w+\([^)]*\)\s*->",
+            "description": "Function type hints",
+            "recommendation": "Add return type hints to functions for better code documentation and IDE support",
+        },
+        "async_patterns": {
+            "pattern": r"async def",
+            "description": "Async/await usage",
+            "recommendation": "Consider using async/await for I/O-bound operations",
+        },
+        "pydantic_models": {
+            "pattern": r"class \w+\(BaseModel\)",
+            "description": "Pydantic models",
+            "recommendation": "Use Pydantic models for data validation and configuration",
+        },
+        "structured_logging": {
+            "pattern": r"structlog|log\.\w+\([\"']\w+[\"'],",
+            "description": "Structured logging",
+            "recommendation": "Use structured logging (structlog) with event names and context",
+        },
+    },
+    "typescript": {
+        "strict_types": {
+            "pattern": r'"strict":\s*true',
+            "description": "Strict TypeScript mode",
+            "recommendation": "Enable strict mode in tsconfig.json for better type safety",
+        },
+        "interface_usage": {
+            "pattern": r"interface \w+",
+            "description": "Interface definitions",
+            "recommendation": "Use interfaces for object shapes and contracts",
+        },
+    },
+    "react": {
+        "memo_usage": {
+            "pattern": r"React\.memo|useMemo|useCallback",
+            "description": "Memoization patterns",
+            "recommendation": "Use React.memo, useMemo, and useCallback for performance optimization",
+        },
+        "error_boundaries": {
+            "pattern": r"ErrorBoundary|componentDidCatch",
+            "description": "Error boundaries",
+            "recommendation": "Implement error boundaries to catch and handle component errors",
+        },
+    },
+    "testing": {
+        "test_coverage": {
+            "pattern": r"@pytest\.mark|describe\(|it\(|test\(",
+            "description": "Test definitions",
+            "recommendation": "Ensure adequate test coverage for critical paths",
+        },
+    },
+}
+
+
+class ProfileRecommendation(BaseModel):
+    """A profile recommendation with rationale."""
+    profile: str
+    reason: str
+    priority: Literal["high", "medium", "low"]
+    detected_by: str = Field(description="What triggered this recommendation")
+
+
+class PatternGap(BaseModel):
+    """A gap between current code and best practices."""
+    category: str
+    pattern_name: str
+    description: str
+    recommendation: str
+    current_usage: int = Field(ge=0, description="How many times pattern is found")
+    severity: Literal["info", "warning", "suggestion"]
+
+
+def recommend_profiles(
+    tech_stack: dict[str, Any],
+    project_root: Path | None = None,
+) -> list[ProfileRecommendation]:
+    """
+    Recommend relevant profiles based on detected tech stack.
+
+    Args:
+        tech_stack: Output from detect_tech_stack()
+        project_root: Project root for checking existing profiles
+
+    Returns:
+        List of profile recommendations with rationale
+    """
+    recommendations: list[ProfileRecommendation] = []
+    seen_profiles: set[str] = set()
+
+    # Universal profiles - essential for ALL projects (cross-cutting concerns)
+    universal_profiles = [
+        ("core.md", "Essential patterns for all projects"),
+        ("coding.md", "Code quality standards"),
+        ("git.md", "Version control best practices"),
+        ("architecture.md", "Architectural patterns"),
+        ("security.md", "Security is always relevant"),
+        ("testing.md", "Testing is always relevant"),
+        ("performance.md", "Performance considerations"),
+        ("deployment.md", "Deployment patterns"),
+    ]
+    for profile, reason in universal_profiles:
+        if profile not in seen_profiles:
+            recommendations.append(ProfileRecommendation(
+                profile=profile,
+                reason=reason,
+                priority="high",
+                detected_by="universal",
+            ))
+            seen_profiles.add(profile)
+
+    # Recommend based on primary language
+    primary_lang = tech_stack.get("primary_language")
+    if primary_lang and primary_lang in PROFILE_MAPPINGS:
+        for profile in PROFILE_MAPPINGS[primary_lang]:
+            if profile not in seen_profiles:
+                recommendations.append(ProfileRecommendation(
+                    profile=profile,
+                    reason=f"Primary language is {primary_lang}",
+                    priority="high",
+                    detected_by=f"language:{primary_lang}",
+                ))
+                seen_profiles.add(profile)
+
+    # Recommend based on detected frameworks
+    frameworks = tech_stack.get("frameworks", [])
+    for framework in frameworks:
+        if framework in PROFILE_MAPPINGS:
+            for profile in PROFILE_MAPPINGS[framework]:
+                if profile not in seen_profiles:
+                    recommendations.append(ProfileRecommendation(
+                        profile=profile,
+                        reason=f"Project uses {framework}",
+                        priority="medium",
+                        detected_by=f"framework:{framework}",
+                    ))
+                    seen_profiles.add(profile)
+
+    # Add API profile for backend frameworks
+    api_frameworks = {"FastAPI", "Django", "Flask", "Express", "NestJS"}
+    if any(f in frameworks for f in api_frameworks) and "api.md" not in seen_profiles:
+        recommendations.append(ProfileRecommendation(
+            profile="api.md",
+            reason="API framework detected",
+            priority="medium",
+            detected_by="api_framework",
+        ))
+        seen_profiles.add("api.md")
+
+    log.info("profiles_recommended", count=len(recommendations), tech_stack=tech_stack)
+    return recommendations
+
+
+def analyze_pattern_gaps(
+    project_root: Path,
+    tech_stack: dict[str, Any],
+) -> list[PatternGap]:
+    """
+    Analyze project code for best practice pattern gaps.
+
+    Scans the codebase for presence of recommended patterns
+    and identifies areas for improvement.
+
+    Args:
+        project_root: Root directory of the project
+        tech_stack: Detected tech stack
+
+    Returns:
+        List of pattern gaps with recommendations
+    """
+    import re
+    from .orchestration.constants import CODE_EXTENSIONS, IGNORE_DIRS
+
+    gaps: list[PatternGap] = []
+    primary_lang = tech_stack.get("primary_language", "").lower()
+
+    # Determine which pattern categories to check
+    categories_to_check = ["testing"]  # Always check testing
+    if primary_lang == "python":
+        categories_to_check.append("python")
+    elif primary_lang == "typescript":
+        categories_to_check.extend(["typescript", "react"])
+
+    # Collect all code content for scanning
+    code_content = ""
+    code_files = 0
+    for file_path in project_root.rglob("*"):
+        if any(part in IGNORE_DIRS for part in file_path.parts):
+            continue
+        if file_path.suffix in CODE_EXTENSIONS and file_path.is_file():
+            try:
+                code_content += file_path.read_text(errors="ignore") + "\n"
+                code_files += 1
+            except Exception:
+                continue
+
+    if not code_content:
+        return gaps
+
+    # Check each pattern category
+    for category in categories_to_check:
+        if category not in BEST_PRACTICE_PATTERNS:
+            continue
+
+        for pattern_name, pattern_info in BEST_PRACTICE_PATTERNS[category].items():
+            try:
+                matches = len(re.findall(pattern_info["pattern"], code_content))
+            except re.error:
+                continue
+
+            # Determine if this is a gap
+            # Low usage relative to code size might indicate a gap
+            expected_min = code_files // 5  # Expect at least 1 per 5 files
+
+            if matches < expected_min:
+                severity = "suggestion" if matches > 0 else "warning"
+                gaps.append(PatternGap(
+                    category=category,
+                    pattern_name=pattern_name,
+                    description=pattern_info["description"],
+                    recommendation=pattern_info["recommendation"],
+                    current_usage=matches,
+                    severity=severity,
+                ))
+
+    log.info("pattern_gaps_analyzed", gaps=len(gaps), files_scanned=code_files)
+    return gaps
+
+
+def format_recommendations(
+    recommendations: list[ProfileRecommendation],
+    gaps: list[PatternGap] | None = None,
+) -> dict[str, Any]:
+    """
+    Format recommendations and gaps for display.
+
+    Returns:
+        Dict with recommendations grouped by priority and gaps
+    """
+    result: dict[str, Any] = {
+        "high_priority": [],
+        "medium_priority": [],
+        "low_priority": [],
+        "gaps": [],
+    }
+
+    for rec in recommendations:
+        entry = {
+            "profile": rec.profile,
+            "reason": rec.reason,
+            "detected_by": rec.detected_by,
+        }
+        if rec.priority == "high":
+            result["high_priority"].append(entry)
+        elif rec.priority == "medium":
+            result["medium_priority"].append(entry)
+        else:
+            result["low_priority"].append(entry)
+
+    if gaps:
+        for gap in gaps:
+            result["gaps"].append({
+                "category": gap.category,
+                "pattern": gap.pattern_name,
+                "description": gap.description,
+                "recommendation": gap.recommendation,
+                "current_usage": gap.current_usage,
+                "severity": gap.severity,
+            })
+
+    result["summary"] = {
+        "total_recommendations": len(recommendations),
+        "high_priority_count": len(result["high_priority"]),
+        "gaps_found": len(result["gaps"]) if gaps else 0,
+    }
+
+    return result
+
+
+# =============================================================================
+# AUTOMATIC RE-EVALUATION SYSTEM
+# =============================================================================
+
+class EvaluationState(BaseModel):
+    """Tracks the state of pattern/profile evaluations."""
+    last_evaluation: str = Field(description="ISO timestamp")
+    lines_at_evaluation: int = Field(ge=0, description="Total lines of code at last evaluation")
+    commit_hash: str | None = Field(default=None, description="Git commit hash at evaluation")
+    recommendations_count: int = Field(default=0, ge=0)
+    gaps_count: int = Field(default=0, ge=0)
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "EvaluationState":
+        return cls.model_validate(data)
+
+
+# Thresholds for triggering re-evaluation
+REEVALUATION_THRESHOLDS = {
+    "lines_changed": 3000,  # Re-evaluate after 3k lines changed
+    "days_inactive": 30,  # Re-evaluate if not checked in 30 days
+    "commits_since": 50,  # Re-evaluate after 50 commits
+}
+
+
+def get_evaluation_state_path(project_root: Path) -> Path:
+    """Get path to evaluation state file."""
+    return project_root / ".delia" / "evaluation_state.json"
+
+
+def load_evaluation_state(project_root: Path) -> EvaluationState | None:
+    """Load the last evaluation state from disk."""
+    state_path = get_evaluation_state_path(project_root)
+    if not state_path.exists():
+        return None
+    try:
+        with open(state_path) as f:
+            data = json.load(f)
+        return EvaluationState.from_dict(data)
+    except Exception as e:
+        log.warning("evaluation_state_load_failed", error=str(e))
+        return None
+
+
+def save_evaluation_state(project_root: Path, state: EvaluationState) -> None:
+    """Save evaluation state to disk."""
+    state_path = get_evaluation_state_path(project_root)
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(state_path, "w") as f:
+            json.dump(state.to_dict(), f, indent=2)
+        log.debug("evaluation_state_saved", path=str(state_path))
+    except Exception as e:
+        log.warning("evaluation_state_save_failed", error=str(e))
+
+
+def count_code_lines(project_root: Path) -> int:
+    """Count total lines of code in the project."""
+    from .orchestration.constants import CODE_EXTENSIONS, IGNORE_DIRS
+
+    total_lines = 0
+    for file_path in project_root.rglob("*"):
+        if any(part in IGNORE_DIRS for part in file_path.parts):
+            continue
+        if file_path.suffix in CODE_EXTENSIONS and file_path.is_file():
+            try:
+                total_lines += len(file_path.read_text(errors="ignore").splitlines())
+            except Exception:
+                continue
+    return total_lines
+
+
+def get_current_commit(project_root: Path) -> str | None:
+    """Get current git commit hash if in a git repo."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def count_commits_since(project_root: Path, since_commit: str) -> int:
+    """Count commits since a given commit hash."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "rev-list", "--count", f"{since_commit}..HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.strip())
+    except Exception:
+        pass
+    return 0
+
+
+def check_reevaluation_needed(project_root: Path) -> dict[str, Any]:
+    """
+    Check if pattern/profile re-evaluation is needed.
+
+    Triggers re-evaluation based on:
+    - Lines of code changed (threshold: 15,000)
+    - Days since last evaluation (threshold: 30 days)
+    - Commits since last evaluation (threshold: 50)
+
+    Returns:
+        Dict with needs_reevaluation bool and reasons
+    """
+    state = load_evaluation_state(project_root)
+
+    result = {
+        "needs_reevaluation": False,
+        "reasons": [],
+        "state": None,
+        "current": {},
+    }
+
+    # If no previous evaluation, definitely need one
+    if state is None:
+        result["needs_reevaluation"] = True
+        result["reasons"].append("No previous evaluation found")
+        return result
+
+    result["state"] = state.to_dict()
+
+    # Check lines changed
+    current_lines = count_code_lines(project_root)
+    result["current"]["lines"] = current_lines
+    lines_changed = abs(current_lines - state.lines_at_evaluation)
+
+    if lines_changed >= REEVALUATION_THRESHOLDS["lines_changed"]:
+        result["needs_reevaluation"] = True
+        result["reasons"].append(
+            f"Code changed by {lines_changed:,} lines (threshold: {REEVALUATION_THRESHOLDS['lines_changed']:,})"
+        )
+
+    # Check days since last evaluation
+    try:
+        last_eval = datetime.fromisoformat(state.last_evaluation)
+        days_since = (datetime.now() - last_eval).days
+        result["current"]["days_since_evaluation"] = days_since
+
+        if days_since >= REEVALUATION_THRESHOLDS["days_inactive"]:
+            result["needs_reevaluation"] = True
+            result["reasons"].append(
+                f"Last evaluation was {days_since} days ago (threshold: {REEVALUATION_THRESHOLDS['days_inactive']})"
+            )
+    except Exception:
+        pass
+
+    # Check commits since last evaluation
+    if state.commit_hash:
+        commits_since = count_commits_since(project_root, state.commit_hash)
+        result["current"]["commits_since"] = commits_since
+
+        if commits_since >= REEVALUATION_THRESHOLDS["commits_since"]:
+            result["needs_reevaluation"] = True
+            result["reasons"].append(
+                f"{commits_since} commits since last evaluation (threshold: {REEVALUATION_THRESHOLDS['commits_since']})"
+            )
+
+    log.info(
+        "reevaluation_check",
+        needs_reevaluation=result["needs_reevaluation"],
+        reasons=result["reasons"],
+    )
+    return result
+
+
+def run_reevaluation(
+    project_root: Path,
+    tech_stack: dict[str, Any] | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """
+    Run pattern/profile re-evaluation if needed.
+
+    Args:
+        project_root: Project root path
+        tech_stack: Pre-detected tech stack (optional)
+        force: Force re-evaluation even if not needed
+
+    Returns:
+        Dict with evaluation results
+    """
+    result: dict[str, Any] = {
+        "evaluated": False,
+        "reason": None,
+        "recommendations": [],
+        "gaps": [],
+    }
+
+    # Check if re-evaluation is needed
+    check = check_reevaluation_needed(project_root)
+    if not force and not check["needs_reevaluation"]:
+        result["reason"] = "Re-evaluation not needed"
+        result["next_check"] = check
+        return result
+
+    result["evaluated"] = True
+    result["trigger_reasons"] = check.get("reasons", ["forced"])
+
+    # Detect tech stack if not provided
+    if tech_stack is None:
+        from .orchestration.constants import CODE_EXTENSIONS, IGNORE_DIRS
+
+        # Collect file paths and dependencies
+        code_files = []
+        for file_path in project_root.rglob("*"):
+            if any(part in IGNORE_DIRS for part in file_path.parts):
+                continue
+            if file_path.suffix in CODE_EXTENSIONS and file_path.is_file():
+                code_files.append(str(file_path.relative_to(project_root)))
+
+        # Extract dependencies
+        dependencies: list[str] = []
+        pyproject = project_root / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                import tomllib
+                with open(pyproject, "rb") as f:
+                    data = tomllib.load(f)
+                deps = data.get("project", {}).get("dependencies", [])
+                dependencies.extend(deps)
+            except Exception:
+                pass
+
+        package_json = project_root / "package.json"
+        if package_json.exists():
+            try:
+                pkg = json.loads(package_json.read_text())
+                dependencies.extend(pkg.get("dependencies", {}).keys())
+            except Exception:
+                pass
+
+        tech_stack = detect_tech_stack(code_files, dependencies)
+
+    # Run recommendations
+    recommendations = recommend_profiles(tech_stack, project_root)
+    result["recommendations"] = format_recommendations(recommendations)["high_priority"]
+
+    # Run gap analysis
+    gaps = analyze_pattern_gaps(project_root, tech_stack)
+    result["gaps"] = [
+        {
+            "pattern": g.pattern_name,
+            "category": g.category,
+            "recommendation": g.recommendation,
+            "severity": g.severity,
+        }
+        for g in gaps
+    ]
+
+    # Clean up unnecessary profiles (report only, don't auto-remove)
+    cleanup_result = cleanup_unnecessary_profiles(
+        project_root, 
+        tech_stack=tech_stack,
+        auto_remove=False,  # Prompt user, don't auto-delete
+    )
+    if cleanup_result.obsolete:
+        result["obsolete_profiles"] = cleanup_result.obsolete
+        result["obsolete_reasons"] = cleanup_result.reason
+        result["cleanup_action"] = (
+            "The following profiles are no longer relevant to your tech stack. "
+            "Consider removing them from .delia/profiles/ or run cleanup with auto_remove=True."
+        )
+    result["current_profiles"] = cleanup_result.kept
+
+    # Save new evaluation state
+    new_state = EvaluationState(
+        last_evaluation=datetime.now().isoformat(),
+        lines_at_evaluation=count_code_lines(project_root),
+        commit_hash=get_current_commit(project_root),
+        recommendations_count=len(recommendations),
+        gaps_count=len(gaps),
+    )
+    save_evaluation_state(project_root, new_state)
+    result["state_saved"] = True
+
+    log.info(
+        "reevaluation_complete",
+        recommendations=len(recommendations),
+        gaps=len(gaps),
+        triggers=check.get("reasons", []),
+    )
+
+    return result
+
+
+def prune_stale_bullets(
+    project_root: Path,
+    max_age_days: int = 90,
+    min_utility: float = 0.3,
+) -> dict[str, Any]:
+    """
+    Prune stale or low-utility bullets from playbooks.
+
+    Removes bullets that:
+    - Haven't been used in max_age_days
+    - Have utility score below min_utility with sufficient usage
+
+    Args:
+        project_root: Project root path
+        max_age_days: Maximum days without use before pruning
+        min_utility: Minimum utility score to keep
+
+    Returns:
+        Dict with pruning statistics
+    """
+    manager = get_playbook_manager()
+    manager.set_project(project_root)
+
+    result = {
+        "pruned": [],
+        "kept": [],
+        "by_task_type": {},
+    }
+
+    task_types = ["coding", "testing", "architecture", "debugging", "project",
+                  "git", "security", "deployment", "api", "performance"]
+
+    cutoff_date = datetime.now().isoformat()[:10]  # YYYY-MM-DD
+
+    for task_type in task_types:
+        bullets = manager.load_playbook(task_type)
+        kept = []
+        pruned = []
+
+        for bullet in bullets:
+            # Check age
+            last_used = bullet.last_used or bullet.created_at
+            try:
+                last_used_date = datetime.fromisoformat(last_used[:10])
+                age_days = (datetime.now() - last_used_date).days
+            except Exception:
+                age_days = 0
+
+            # Check utility
+            total_feedback = bullet.helpful_count + bullet.harmful_count
+            utility = bullet.utility_score
+
+            # Prune if: too old with no recent use, OR low utility with enough data
+            should_prune = False
+            prune_reason = None
+
+            if age_days > max_age_days and bullet.helpful_count == 0:
+                should_prune = True
+                prune_reason = f"Unused for {age_days} days"
+            elif total_feedback >= 5 and utility < min_utility:
+                should_prune = True
+                prune_reason = f"Low utility ({utility:.2f}) after {total_feedback} feedbacks"
+
+            if should_prune:
+                pruned.append({
+                    "id": bullet.id,
+                    "content": bullet.content[:50] + "..." if len(bullet.content) > 50 else bullet.content,
+                    "reason": prune_reason,
+                })
+            else:
+                kept.append(bullet)
+
+        # Save pruned playbook
+        if len(pruned) > 0:
+            manager.save_playbook(task_type, kept)
+            result["by_task_type"][task_type] = {
+                "pruned": len(pruned),
+                "kept": len(kept),
+            }
+            result["pruned"].extend(pruned)
+
+    result["total_pruned"] = len(result["pruned"])
+    log.info("bullets_pruned", total=len(result["pruned"]))
+
+    return result
+
+
+class ProfileCleanupResult(BaseModel):
+    """Result of profile cleanup operation."""
+    removed: list[str] = Field(default_factory=list, description="Profiles that were removed")
+    kept: list[str] = Field(default_factory=list, description="Profiles that were kept")
+    obsolete: list[str] = Field(default_factory=list, description="Profiles marked as obsolete (not auto-removed)")
+    reason: dict[str, str] = Field(default_factory=dict, description="Reason for each removal/obsolete marking")
+
+
+def cleanup_unnecessary_profiles(
+    project_root: Path,
+    tech_stack: dict[str, Any] | None = None,
+    auto_remove: bool = False,
+) -> ProfileCleanupResult:
+    """
+    Identify and optionally remove profiles that are no longer relevant.
+    
+    Compares existing profiles in .delia/profiles/ with currently recommended
+    profiles based on tech stack. Marks obsolete ones for removal.
+    
+    Args:
+        project_root: Project root path
+        tech_stack: Pre-detected tech stack (optional, will detect if None)
+        auto_remove: If True, automatically delete obsolete profiles.
+                    If False (default), just report them for user decision.
+    
+    Returns:
+        ProfileCleanupResult with removed/kept/obsolete profiles
+    """
+    result = ProfileCleanupResult()
+    
+    profiles_dir = project_root / ".delia" / "profiles"
+    if not profiles_dir.exists():
+        return result
+    
+    # Detect tech stack if not provided
+    if tech_stack is None:
+        from .orchestration.constants import CODE_EXTENSIONS, IGNORE_DIRS
+        
+        code_files = []
+        for file_path in project_root.rglob("*"):
+            if any(part in IGNORE_DIRS for part in file_path.parts):
+                continue
+            if file_path.suffix in CODE_EXTENSIONS and file_path.is_file():
+                code_files.append(str(file_path.relative_to(project_root)))
+        
+        # Extract dependencies
+        dependencies: list[str] = []
+        pyproject = project_root / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                import tomllib
+                with open(pyproject, "rb") as f:
+                    data = tomllib.load(f)
+                deps = data.get("project", {}).get("dependencies", [])
+                dependencies.extend(deps)
+            except Exception:
+                pass
+        
+        package_json = project_root / "package.json"
+        if package_json.exists():
+            try:
+                pkg = json.loads(package_json.read_text())
+                dependencies.extend(pkg.get("dependencies", {}).keys())
+            except Exception:
+                pass
+        
+        tech_stack = detect_tech_stack(code_files, dependencies)
+    
+    # Get current recommendations
+    recommendations = recommend_profiles(tech_stack, project_root)
+    recommended_files = {r.profile for r in recommendations}
+    
+    # Check each existing profile
+    for profile_file in profiles_dir.glob("*.md"):
+        profile_name = profile_file.name
+        
+        if profile_name in recommended_files:
+            result.kept.append(profile_name)
+        else:
+            # Profile is no longer recommended
+            reason = _get_obsolete_reason(profile_name, tech_stack)
+            result.reason[profile_name] = reason
+            
+            if auto_remove:
+                try:
+                    profile_file.unlink()
+                    result.removed.append(profile_name)
+                    log.info("profile_removed", profile=profile_name, reason=reason)
+                except Exception as e:
+                    log.warning("profile_remove_failed", profile=profile_name, error=str(e))
+                    result.obsolete.append(profile_name)
+            else:
+                result.obsolete.append(profile_name)
+    
+    if result.removed or result.obsolete:
+        log.info(
+            "profile_cleanup_complete",
+            removed=len(result.removed),
+            obsolete=len(result.obsolete),
+            kept=len(result.kept),
+        )
+    
+    return result
+
+
+def _get_obsolete_reason(profile_name: str, tech_stack: dict[str, Any]) -> str:
+    """Get human-readable reason why a profile is obsolete."""
+    # Map profile names to their tech stack requirements
+    profile_requirements = {
+        "react.md": "React",
+        "vue.md": "Vue",
+        "angular.md": "Angular",
+        "nextjs.md": "Next.js",
+        "nestjs.md": "NestJS",
+        "fastapi.md": "FastAPI",
+        "django.md": "Django",
+        "flask.md": "Flask",
+        "python.md": "Python",
+        "typescript.md": "TypeScript",
+        "rust.md": "Rust",
+        "go.md": "Go",
+        "java.md": "Java",
+        "mcp.md": "MCP",
+        "ai-ml.md": "AI/ML",
+        "data-engineering.md": "Data Engineering",
+    }
+    
+    if profile_name in profile_requirements:
+        required = profile_requirements[profile_name]
+        detected_langs = tech_stack.get("languages", [])
+        detected_frameworks = tech_stack.get("frameworks", [])
+        all_detected = detected_langs + detected_frameworks
+        
+        if required not in all_detected:
+            return f"{required} not detected in project (found: {', '.join(all_detected[:3]) or 'none'})"
+    
+    return "No longer matches project tech stack"

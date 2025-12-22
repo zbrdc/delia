@@ -16,6 +16,9 @@ from typing import Any
 
 import structlog
 
+import re
+from pydantic import BaseModel, Field
+
 from ..file_helpers import read_files, read_memory
 from ..language import detect_language
 from ..project_memory import get_project_context
@@ -23,6 +26,129 @@ from .summarizer import get_summarizer
 from .graph import get_symbol_graph
 
 log = structlog.get_logger()
+
+
+# =============================================================================
+# SMART SYMBOL INJECTION HELPERS
+# =============================================================================
+
+class SymbolOutline(BaseModel):
+    """Lightweight symbol representation for context injection."""
+    name: str
+    kind: str
+    line: int
+    children: list["SymbolOutline"] = Field(default_factory=list)
+    
+    def format(self, indent: int = 0) -> str:
+        """Format symbol as indented outline."""
+        prefix = "  " * indent
+        result = f"{prefix}- {self.kind} {self.name} (line {self.line})"
+        for child in self.children:
+            result += "\n" + child.format(indent + 1)
+        return result
+
+
+# File path patterns to detect in prompts
+_FILE_PATTERNS = [
+    r'`([a-zA-Z0-9_/\-\.]+\.[a-zA-Z]{1,5})`',  # `path/to/file.py`
+    r'"([a-zA-Z0-9_/\-\.]+\.[a-zA-Z]{1,5})"',  # "path/to/file.py"
+    r"'([a-zA-Z0-9_/\-\.]+\.[a-zA-Z]{1,5})'",  # 'path/to/file.py'
+    r'\b(src/[a-zA-Z0-9_/\-\.]+\.[a-zA-Z]{1,5})\b',  # src/path/file.py
+    r'\b([a-zA-Z0-9_]+\.(?:py|ts|js|tsx|jsx|rs|go|java))\b',  # file.py (common extensions)
+]
+
+# Symbol/class/function patterns
+_SYMBOL_PATTERNS = [
+    r'\b(?:class|function|def|method|func)\s+([A-Za-z_][A-Za-z0-9_]*)',  # class Foo, def bar
+    r'\b([A-Z][a-zA-Z0-9_]*(?:Service|Manager|Handler|Controller|Client|Provider))\b',  # FooService
+    r'`([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`',  # `ClassName` or `module.func`
+]
+
+
+def extract_file_mentions(content: str) -> list[str]:
+    """Extract file paths mentioned in the content.
+    
+    Returns unique file paths that appear to be referenced in the prompt.
+    """
+    mentions = set()
+    for pattern in _FILE_PATTERNS:
+        for match in re.finditer(pattern, content, re.IGNORECASE):
+            path = match.group(1)
+            # Filter out common false positives
+            if not path.startswith('.') and '/' in path or '.' in path:
+                mentions.add(path)
+    return list(mentions)
+
+
+def extract_symbol_mentions(content: str) -> list[str]:
+    """Extract symbol names (classes, functions) mentioned in the content."""
+    mentions = set()
+    for pattern in _SYMBOL_PATTERNS:
+        for match in re.finditer(pattern, content):
+            symbol = match.group(1)
+            if len(symbol) > 2:  # Filter out very short matches
+                mentions.add(symbol)
+    return list(mentions)
+
+
+def format_symbol_outline(symbols: list[dict], max_depth: int = 2) -> str:
+    """Format LSP symbols as a readable outline.
+    
+    Args:
+        symbols: List of symbol dicts from LSP client
+        max_depth: Maximum nesting depth to show
+    
+    Returns:
+        Formatted string showing symbol structure
+    """
+    if not symbols:
+        return "(no symbols found)"
+    
+    lines = []
+    for sym in symbols:
+        depth = sym.get("depth", 0)
+        if depth > max_depth:
+            continue
+        
+        indent = "  " * depth
+        kind = sym.get("kind", "symbol")
+        name = sym.get("name", "?")
+        line = sym.get("range", {}).get("start_line", sym.get("location", {}).get("line", "?"))
+        
+        lines.append(f"{indent}- {kind} `{name}` (line {line})")
+    
+    return "\n".join(lines) if lines else "(no symbols found)"
+
+
+async def get_symbols_for_files(
+    file_paths: list[str],
+    project_root: Path | None = None,
+) -> dict[str, list[dict]]:
+    """Get LSP symbols for multiple files.
+    
+    Returns dict mapping file path to list of symbols.
+    """
+    from ..lsp_client import get_lsp_client
+    
+    root = project_root or Path.cwd()
+    results = {}
+    
+    try:
+        client = get_lsp_client(root)
+        
+        for file_path in file_paths[:5]:  # Limit to 5 files to avoid overload
+            # Resolve relative paths
+            full_path = root / file_path if not Path(file_path).is_absolute() else Path(file_path)
+            if full_path.exists():
+                rel_path = str(full_path.relative_to(root))
+                symbols = await client.document_symbols(rel_path)
+                if symbols:
+                    results[rel_path] = symbols
+                    log.debug("symbols_loaded_for_file", file=rel_path, count=len(symbols))
+    except Exception as e:
+        log.debug("symbol_loading_failed", error=str(e))
+    
+    return results
 
 class ContextEngine:
     """
@@ -47,6 +173,8 @@ class ContextEngine:
         session_context: str | None = None,
         include_project_overview: bool = False,
         include_project_instructions: bool = True,
+        include_playbook_bullets: bool = True,
+        include_smart_symbols: bool = True,
     ) -> str:
         """
         Assembles all contextual parts into a single prompt string.
@@ -60,6 +188,8 @@ class ContextEngine:
             session_context: Previous conversation history
             include_project_overview: Include hierarchical code summary
             include_project_instructions: Auto-load DELIA.md project instructions
+            include_playbook_bullets: Auto-inject ACE playbook bullets (ENFORCED by default)
+            include_smart_symbols: Auto-inject symbol outlines for mentioned files (default True)
         """
         parts = []
 
@@ -69,6 +199,19 @@ class ContextEngine:
             if project_context:
                 parts.append(project_context)
                 log.debug("project_instructions_injected")
+
+        # 0.1 ACE PLAYBOOK BULLETS (Strategic Guidance - ENFORCED)
+        # This ensures playbook guidance is ALWAYS injected, not relying on agents to remember
+        if include_playbook_bullets:
+            try:
+                from ..playbook import get_playbook_manager
+                pm = get_playbook_manager()
+                playbook_content = pm.get_auto_injection_bullets(content)
+                if playbook_content:
+                    parts.append(playbook_content)
+                    log.info("ace_playbook_bullets_injected", task_type=pm.detect_task_type(content))
+            except Exception as e:
+                log.debug("playbook_injection_failed", error=str(e))
 
         # 0.5. Project Overview (Gemini-class Hierarchical Context)
         if include_project_overview:
@@ -123,6 +266,27 @@ class ContextEngine:
                         log.info("dynamic_window_neighbors_injected", count=len(neighbor_lines))
             except Exception as e:
                 log.debug("graph_context_failed", error=str(e))
+
+        # 2.7 SMART SYMBOL INJECTION (LSP-powered code awareness)
+        # Detect file mentions in the prompt and inject their symbol outlines
+        # This gives agents immediate structural awareness without loading full files
+        if include_smart_symbols:
+            mentioned_files = extract_file_mentions(content)
+            if mentioned_files:
+                try:
+                    file_symbols = await get_symbols_for_files(mentioned_files)
+                    if file_symbols:
+                        symbol_parts = ["### Symbol Outline (auto-detected from prompt)"]
+                        for file_path, syms in file_symbols.items():
+                            if file_path not in explicit_files:  # Don't duplicate
+                                outline = format_symbol_outline(syms)
+                                symbol_parts.append(f"\n#### `{file_path}`\n{outline}")
+                        
+                        if len(symbol_parts) > 1:  # More than just the header
+                            parts.append("\n".join(symbol_parts))
+                            log.info("smart_symbols_injected", files=list(file_symbols.keys()))
+                except Exception as e:
+                    log.debug("smart_symbol_injection_failed", error=str(e))
 
         # 3. Delia's Memories (Project Knowledge)
         manual_memories = set()

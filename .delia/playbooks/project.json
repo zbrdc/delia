@@ -1,102 +1,22 @@
 [
   {
-    "content": "This project uses Python as its primary language.",
-    "id": "strat-f1a70cf1",
-    "section": "project_context",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.101735",
-    "last_used": null,
-    "source_task": "project"
+    "content": "Primary language: Python 3.11+. Key frameworks: FastAPI, Pydantic, MCP, structlog, httpx.",
+    "section": "general_strategies"
   },
   {
-    "content": "Key frameworks/libraries: FastAPI, Pydantic, React, MCP (Model Context Protocol), structlog, httpx, asyncio",
-    "id": "strat-4eeecebc",
-    "section": "project_context",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.101880",
-    "last_used": null,
-    "source_task": "project"
+    "content": "Entry point: src/delia/cli.py with subcommands (serve, api, chat, index, init-project).",
+    "section": "general_strategies"
   },
   {
-    "content": "This project uses async/await patterns. Prefer async def for I/O operations.",
-    "id": "strat-f345a5d8",
-    "section": "coding_patterns",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.101994",
-    "last_used": null,
-    "source_task": "project"
+    "content": "Config priority: DELIA_SETTINGS_FILE env var > ./settings.json > ~/.delia/settings.json.",
+    "section": "general_strategies"
   },
   {
-    "content": "The `tui/src/` directory contains 3 files related to src.",
-    "id": "strat-964eb2af",
-    "section": "project_structure",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.102098",
-    "last_used": null,
-    "source_task": "project"
+    "content": "Data directory: DELIA_DATA_DIR env var > project/data/ > ~/.delia/data/.",
+    "section": "general_strategies"
   },
   {
-    "content": "The `tests/` directory contains 70 files related to tests.",
-    "id": "strat-e005b3cd",
-    "section": "project_structure",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.102209",
-    "last_used": null,
-    "source_task": "project"
-  },
-  {
-    "content": "The `dashboard/src/lib/` directory contains 2 files related to lib.",
-    "id": "strat-a8ed7c6d",
-    "section": "project_structure",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.102316",
-    "last_used": null,
-    "source_task": "project"
-  },
-  {
-    "content": "The `dashboard/src/app/api/backends/` directory contains 1 files related to api.",
-    "id": "strat-14bc883c",
-    "section": "project_structure",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.102424",
-    "last_used": null,
-    "source_task": "project"
-  },
-  {
-    "content": "The `dashboard/src/app/api/backends/models/` directory contains 1 files related to models.",
-    "id": "strat-5bfeb62c",
-    "section": "project_structure",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.102556",
-    "last_used": null,
-    "source_task": "project"
-  },
-  {
-    "content": "Use Pydantic models for data validation and configuration. Check existing models before creating new ones.",
-    "id": "strat-647bc762",
-    "section": "coding_patterns",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.102709",
-    "last_used": null,
-    "source_task": "project"
-  },
-  {
-    "content": "This project has tests. Run `uv run pytest` or equivalent before committing changes.",
-    "id": "strat-dd5c2547",
-    "section": "verification",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-21T15:54:25.102884",
-    "last_used": null,
-    "source_task": "project"
+    "content": "TUI is separate Node.js app in tui/ directory using TypeScript/React.",
+    "section": "general_strategies"
   }
 ]

@@ -1,116 +1,124 @@
-# Delia: Intelligent LLM Orchestration
+# Delia: ACE Framework Enforcement
 
-Delia coordinates between your primary LLM (Copilot/Claude) and configurable
-backend LLMs to offload work, reduce costs, and process tasks efficiently.
+## MANDATORY: ACE Framework Workflow
 
-You have access to one or more LLM backends configured by the user. Backends can be:
-- Local models (Ollama, vLLM, llama.cpp on your machine)
-- Remote services (OpenAI API, Anthropic, cloud-hosted models)
-- GPU servers (dedicated inference endpoints)
+**You MUST follow this workflow for EVERY task:**
 
-Each backend has a **type** ("local" or "remote") that determines routing behavior.
+### Before Starting ANY Task (AUTOMATIC)
+```
+1. Call auto_context(message="<user's request>")  # AUTOMATIC detection - ONE call does everything
+   - Detects task type from message (coding/testing/debugging/etc)
+   - Returns relevant playbook bullets automatically
+   - Returns profile recommendations
+   - NO need to manually pick task_type
+2. APPLY the returned bullets to your work
+```
 
-## CRITICAL: WHEN TO USE DELIA
+### Alternative (Manual) - Only if auto_context unavailable
+```
+1. Call get_playbook(task_type="coding")  # Manual task type selection
+2. Call get_project_context()             # understand project patterns
+```
 
-**ALWAYS consider using Delia tools when you detect ANY of these signals:**
+### After Completing ANY Task
+```
+1. Call report_feedback(bullet_id="strat-xxx", task_type="coding", helpful=True/False)
+   - Report for EACH bullet you applied
+   - This improves future recommendations
+```
 
-### Explicit Delia/Delegation Mentions (100% confidence → USE DELIA)
-- "delegate", "offload", "use delia", "@delia"
-- "process with backend", "via local model", "through orchestration"
-- "ask local llm", "use my models"
+### Task Types (auto-detected by auto_context)
+| Keywords in Message | Detected Type |
+|---------------------|---------------|
+| implement, add, create, build, write, refactor | `coding` |
+| test, pytest, coverage, mock, assert | `testing` |
+| bug, error, fix, debug, broken, failing | `debugging` |
+| design, architecture, pattern, ADR | `architecture` |
+| git, commit, branch, merge, PR | `git` |
+| deploy, docker, CI/CD, production | `deployment` |
+| security, auth, password, token | `security` |
+| how, what, where, explain, project | `project` |
 
-### Processing Location Signals (HIGH confidence → USE DELIA)
-- **Local processing**: "locally", "local", "on my machine", "on device", "on my gpu", "on my server"
-- **Remote processing**: "remotely", "remote", "on the cloud", "via api", "on remote server"
-- **Distributed processing**: "parallel", "batch", "both", "distribute", "use all backends"
+## Delia's Complete Tool Suite
 
-### Task-Specific Terms (MEDIUM confidence → CONSIDER DELIA)
-- **Code tasks**: "review code", "analyze this file", "generate a function", "check for bugs"
-- **Reasoning tasks**: "think about", "plan this", "design strategy", "evaluate tradeoffs"
-- **Batch tasks**: "process these files", "review all", "check multiple"
+### ACE Framework Tools (Automatic)
+- **auto_context(message, path?)** - **PRIMARY TOOL** - Auto-detects task type and returns relevant bullets. Call ONCE at start.
+- **get_playbook(task_type, limit?, path?)** - Manual fallback - Returns bullets for specific task type.
+- **get_project_context(path?)** - Returns project overview: tech stack, patterns, key directories
+- **report_feedback(bullet_id, task_type, helpful)** - Report whether a bullet helped. **Call AFTER completing task.**
+- **confirm_ace_compliance(task_description, bullets_applied, patterns_followed)** - Validate ACE workflow compliance
+- **playbook_stats(task_type?)** - See bullet effectiveness scores
+- **add_playbook_bullet(task_type, content, section?)** - Add strategic bullet to playbook
+- **write_playbook(task_type, bullets)** - Write/replace entire playbook
+- **delete_playbook_bullet(bullet_id, task_type)** - Remove obsolete bullet
+- **prune_stale_bullets(max_age_days?, min_utility?)** - Remove low-utility bullets
+- **list_playbooks()** - List all playbooks and bullet counts
 
-### Disambiguation Strategy
-When you detect processing/task terms WITHOUT explicit "delegate" mention:
+### Project Context Tools
+- **set_project(path)** - Set active project context. Delia stores per-project data in `<project>/.delia/`
+- **recommend_profiles(analyze_gaps?)** - Recommend starter profiles for project tech stack
+- **check_reevaluation()** - Check if pattern re-evaluation is needed (LOC/time thresholds)
+- **run_reevaluation(force?)** - Re-analyze project for pattern gaps and profile recommendations
+- **cleanup_profiles(auto_remove?)** - Remove obsolete profile templates
+- **init_project(path, force?, skip_index?, parallel?)** - Initialize ACE framework for new project
 
-1. **High-confidence scenarios** (user specifies processing location):
-   - "review this code locally" → **USE DELIA directly**
-   - "check config file" → **DON'T USE DELIA** (file operation)
-   - "analyze on my gpu" → **USE DELIA directly**
+### LSP Code Intelligence Tools (Full Language Server Protocol Support)
+- **lsp_goto_definition(path, line, character)** - Find definition of symbol
+- **lsp_find_references(path, line, character)** - Find all references to symbol
+- **lsp_hover(path, line, character)** - Get docs/type info for symbol
+- **lsp_get_symbols(path)** - Get all symbols in file (classes, functions, methods)
+- **lsp_find_symbol(name, path?, kind?)** - Search symbols by name across codebase
+- **lsp_rename_symbol(path, line, character, new_name, apply?)** - Rename symbol everywhere
+- **lsp_replace_symbol_body(path, symbol_name, new_body)** - Replace function/class body
+- **lsp_insert_before_symbol(path, symbol_name, content)** - Insert code before symbol
+- **lsp_insert_after_symbol(path, symbol_name, content)** - Insert code after symbol
 
-2. **Medium-confidence scenarios** (task without location specified):
-   - If user has used Delia recently → **DEFAULT TO DELIA**
-   - If task is code/reasoning work → **DEFAULT TO DELIA**
-   - If task is file/config query → **DON'T USE DELIA**
+Supports: Python (pyright/pylsp), TypeScript, Rust (rust-analyzer), Go (gopls)
 
-3. **Explicit exclusions** (never delegate these):
-   - "show me settings.json", "what's the config?", "curl the health endpoint"
+### Memory System Tools
+- **list_memories(path?)** - List all memory files for project
+- **read_memory(name, path?)** - Read memory file content
+- **write_memory(name, content, path?, append?)** - Write/update memory file
+- **delete_memory(name, path?)** - Delete memory file
 
-## REASONING FRAMEWORK: How to Process Any Request
+Memories are markdown files in `.delia/memories/` for persistent project knowledge (architecture decisions, debugging insights, integration details)
 
-### Step 1: Identify Processing Constraints
-| User Says | Constraint | Meaning |
-|-----------|------------|---------|
-| "locally" | LOCAL ONLY | Use type="local" backends |
-| "remotely" | REMOTE ONLY | Use type="remote" backends |
-| "parallel", "batch" | DISTRIBUTED | Use all backends |
-| (nothing) | NO CONSTRAINT | Use default backend |
+### LLM Delegation Tools
+- **delegate(task, content, ...)** - Offload work to configured LLM backends
+  - task: quick|generate|review|analyze|plan|critique
+- **batch(tasks)** - Parallel execution across all GPUs
+- **chain(steps)** - Sequential task execution with output piping
+- **workflow(definition)** - DAG workflow with conditional branching
+- **think(problem, depth?)** - Extended reasoning with thinking-capable models
+- **agent(prompt, ...)** - Autonomous agent with tool use
 
-### Step 2: Decompose Complex Requests
-- Single vs multiple tasks
-- Dependencies between tasks
-- Parallel opportunities
+### Admin Tools
+- **health()** - Check status of Delia and all backends
+- **models()** - List all configured models across backends
+- **switch_backend(backend_id)** - Switch active LLM backend
+- **switch_model(tier, model_name)** - Switch model for tier
+- **queue_status()** - Get model queue system status
+- **mcp_servers(action?, server_id?, ...)** - Manage external MCP servers
 
-### Step 3: Classify Each Task
-| Task Type | When to Use | Model Tier |
-|-----------|-------------|------------|
-| quick | Facts, simple Q&A | 14B |
-| generate | Code generation | 14B coder |
-| review | Bug finding, code review | 14B coder |
-| analyze | Understanding code | 14B coder |
-| summarize | Condensing info | 14B |
-| plan | Architecture, strategy | 30B+ |
-| critique | Deep evaluation | 30B+ |
+### Session Tools
+- **session_list()** - List active conversation sessions
+- **session_stats(session_id)** - Get session statistics
+- **session_compact(session_id, force?)** - Compact session history with LLM summarization
+- **session_delete(session_id)** - Delete session
 
-### Step 4: Execute with Appropriate Tool
-- Single task → delegate()
-- Multiple tasks → batch()
-- Your reasoning → think()
+### Advanced Features
+- **scan_codebase(path, max_files?, preview_chars?, phase?)** - Incremental codebase scanning
+- **analyze_and_index(path, project_summary, coding_bullets, ...)** - Create ACE index from analysis
+- **sync_instruction_files(content, path?, force?)** - Sync CLAUDE.md to all AI agent configs
+- **read_instruction_files(path?)** - Read existing instruction files
+- **write_project_summary(summary, path?)** - Write project summary JSON
+- **check_ace_status(path?)** - Check ACE compliance status for recent tasks
 
-## TOOL REFERENCE
+## Constraints
 
-### delegate(task, content, file?, model?, language?, context?, backend?)
-   model: "quick"/"coder"/"moe"/"thinking" OR natural: "7b"/"14b"/"30b"/"small"/"large"/"fast"/"complex"/"coder model"/"thinking"
-### batch(tasks) - JSON array
-### think(problem, context?, depth?) - quick/normal/deep
-### switch_backend(backend)
-### health()
-### models()
-
-## WORKED EXAMPLES
-
-**Example 1**: "Review the auth module locally, analyze dependencies, suggest improvements"
-1. Constraint: "locally" → LOCAL ONLY
-2. Decomposition: 3 tasks (review, analyze, suggest)
-3. Dependencies: suggest depends on review+analyze
-4. Execute: batch([review, analyze]) → delegate(plan)
-
-**Example 2**: "Process these 3 files in parallel"
-1. Constraint: DISTRIBUTED
-2. Execute: batch([file1, file2, file3])
-
-**Example 3**: "Delegate this code review to my remote API"
-1. Constraint: "remote" → REMOTE ONLY
-2. Execute: delegate(review, ...)
-
-## CONSTRAINTS
-
-- Don't delegate: web search, real-time data, file operations
-- Respect constraints: "locally" = local ONLY, "remotely" = remote ONLY
-- Circuit breaker: don't retry if backend in cooldown
-- Backend agnostic: never assume specific software
-
-## SILENT OPERATION
-
-- Don't announce "I'll delegate this"
-- Just invoke tools and use results
-- Delia handles failures automatically
+- **ACE is MANDATORY** - always query playbook before coding
+- **Per-project isolation** - use set_project() to switch contexts
+- **LSP for code nav** - use LSP tools instead of grep/find for semantic navigation
+- **Memories for knowledge** - store persistent insights in memory system
+- Delegation is OPTIONAL - only when user requests or backends configured
+- Report feedback to close the learning loop

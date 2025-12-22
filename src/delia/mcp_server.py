@@ -618,27 +618,65 @@ init_llm_module(
 _MCP_INSTRUCTIONS_FILE = Path(__file__).parent / "mcp_instructions.md"
 _MCP_INSTRUCTIONS_BASE = _MCP_INSTRUCTIONS_FILE.read_text() if _MCP_INSTRUCTIONS_FILE.exists() else ""
 
+# Context variable for current project path (for dynamic instructions)
+from contextvars import ContextVar
+current_project_path: ContextVar[str | None] = ContextVar("current_project_path", default=None)
 
-def _build_dynamic_instructions() -> str:
-    """Build MCP instructions with dynamic playbook content."""
-    from .playbook import playbook_manager
+
+def set_project_context(project_path: str | None) -> None:
+    """Set the current project path for dynamic instruction generation."""
+    current_project_path.set(project_path)
+    log.debug("project_context_set", path=project_path)
+
+
+def _build_dynamic_instructions(project_path: str | None = None) -> str:
+    """Build MCP instructions with dynamic playbook content.
     
-    parts = [_MCP_INSTRUCTIONS_BASE]
+    IMPORTANT: Playbook is placed FIRST to ensure agents see it before anything else.
     
-    # Load playbook bullets for common task types
-    task_types = ["coding", "testing", "debugging", "architecture", "project"]
+    Args:
+        project_path: Optional project path. If None, uses current_project_path context.
+    """
+    from .playbook import get_playbook_manager
+    
+    path = project_path or current_project_path.get() or str(Path.cwd())
+    
+    # Set project for playbook manager
+    pm = get_playbook_manager()
+    pm.set_project(Path(path))
+    
+    # Load playbook bullets for high-priority task types
+    # NOTE: Only include the most commonly needed ones to avoid overwhelming
+    priority_task_types = ["coding", "testing", "architecture", "project"]
     playbook_sections = []
     
-    for task_type in task_types:
-        bullets = playbook_manager.get_top_bullets(task_type, limit=5)
+    for task_type in priority_task_types:
+        bullets = pm.get_top_bullets(task_type, limit=5)
         if bullets:
             bullet_lines = [f"- {b.content}" for b in bullets]
             playbook_sections.append(f"### {task_type.title()}\n" + "\n".join(bullet_lines))
     
+    parts = []
+    
+    # PLAYBOOK GOES FIRST - before base instructions
     if playbook_sections:
-        parts.append("\n\n## PROJECT PLAYBOOK (Auto-loaded)\n\n")
+        parts.append("# Delia: ACE Framework Enforcement\n")
+        parts.append("""
+**MANDATORY**: Before ANY coding task, you MUST:
+1. Call `get_playbook(task_type="coding")` to get strategic guidance
+2. Call `get_project_context()` to understand project patterns
+3. APPLY the returned bullets to your work
+4. After completing: Call `report_feedback(bullet_id, helpful=True/False)` for each bullet
+
+This is NOT optional. The ACE Framework ensures consistency and learns from every task.
+""")
+        parts.append("\n## PROJECT PLAYBOOK (Auto-loaded)\n\n")
         parts.append("These are learned strategies from this project. Apply them to relevant tasks:\n\n")
         parts.append("\n\n".join(playbook_sections))
+        parts.append("\n\n")
+    
+    # Base instructions come AFTER playbook
+    parts.append(_MCP_INSTRUCTIONS_BASE)
     
     return "".join(parts)
 
@@ -676,10 +714,12 @@ def get_model_info(model_name: str) -> dict[str, Any]:
 from .tools.handlers import register_tool_handlers
 from .tools.admin import register_admin_tools
 from .tools.resources import register_resource_tools
+from .tools.consolidated import register_consolidated_tools
 
 register_tool_handlers(mcp)
 register_admin_tools(mcp)
 register_resource_tools(mcp)
+register_consolidated_tools(mcp)
 
 # Legacy exports for backwards compatibility (functional only)
 from .delegation import delegate_impl as _delegate_impl
@@ -800,6 +840,181 @@ async def lsp_hover(
     """
     from .tools.lsp import lsp_hover as _lsp_hover
     return await _lsp_hover(path, line, character)
+
+
+@mcp.tool()
+async def lsp_get_symbols(path: str) -> str:
+    """
+    Get all symbols in a file (classes, functions, methods, variables).
+
+    Returns a hierarchical view of the file's structure, similar to an
+    IDE's outline view. Use this to understand a file's organization
+    before making edits.
+
+    Args:
+        path: Path to the file to analyze
+
+    Returns:
+        Hierarchical list of symbols with their types and line ranges
+
+    Example:
+        lsp_get_symbols(path="src/main.py")
+    """
+    from .tools.lsp import lsp_get_symbols as _lsp_get_symbols
+    return await _lsp_get_symbols(path)
+
+
+@mcp.tool()
+async def lsp_find_symbol(
+    name: str,
+    path: str | None = None,
+    kind: str | None = None,
+) -> str:
+    """
+    Find symbols by name across the codebase.
+
+    Searches for classes, functions, methods, etc. by name. Supports
+    partial matching and filtering by symbol kind.
+
+    Args:
+        name: Symbol name to search for (partial match supported)
+        path: Optional file to search in (if None, searches src/)
+        kind: Optional filter: class, function, method, variable, etc.
+
+    Returns:
+        List of matching symbols with file paths and line numbers
+
+    Example:
+        lsp_find_symbol(name="User", kind="class")
+        lsp_find_symbol(name="handle", path="src/api.py")
+    """
+    from .tools.lsp import lsp_find_symbol as _lsp_find_symbol
+    return await _lsp_find_symbol(name, path, kind)
+
+
+@mcp.tool()
+async def lsp_rename_symbol(
+    path: str,
+    line: int,
+    character: int,
+    new_name: str,
+    apply: bool = False,
+) -> str:
+    """
+    Rename a symbol across the entire codebase.
+
+    Uses LSP to find all references and rename them consistently.
+    By default shows a preview; set apply=True to execute the rename.
+
+    Args:
+        path: Path to file containing the symbol
+        line: Line number (1-indexed)
+        character: Character position (0-indexed)
+        new_name: The new name for the symbol
+        apply: If True, apply changes. If False, preview only.
+
+    Returns:
+        Preview of changes, or confirmation if apply=True
+
+    Example:
+        lsp_rename_symbol(path="src/user.py", line=10, character=6,
+                         new_name="UserAccount", apply=True)
+    """
+    from .tools.lsp import lsp_rename_symbol as _lsp_rename_symbol
+    return await _lsp_rename_symbol(path, line, character, new_name, apply)
+
+
+@mcp.tool()
+async def lsp_replace_symbol_body(
+    path: str,
+    symbol_name: str,
+    new_body: str,
+) -> str:
+    """
+    Replace the entire body of a symbol (function, class, method).
+
+    Finds the symbol by name and replaces its complete definition
+    with the provided new code.
+
+    Args:
+        path: Path to the file containing the symbol
+        symbol_name: Name of the symbol (e.g., "MyClass", "my_function")
+        new_body: The complete new code for the symbol
+
+    Returns:
+        Confirmation of replacement or error message
+
+    Example:
+        lsp_replace_symbol_body(
+            path="src/utils.py",
+            symbol_name="calculate_total",
+            new_body="def calculate_total(items):\\n    return sum(i.price for i in items)"
+        )
+    """
+    from .tools.lsp import lsp_replace_symbol_body as _lsp_replace_symbol_body
+    return await _lsp_replace_symbol_body(path, symbol_name, new_body)
+
+
+@mcp.tool()
+async def lsp_insert_before_symbol(
+    path: str,
+    symbol_name: str,
+    content: str,
+) -> str:
+    """
+    Insert code before a symbol.
+
+    Useful for adding imports, decorators, or new functions/classes
+    before an existing symbol.
+
+    Args:
+        path: Path to the file
+        symbol_name: Name of the symbol to insert before
+        content: The code to insert
+
+    Returns:
+        Confirmation or error message
+
+    Example:
+        lsp_insert_before_symbol(
+            path="src/api.py",
+            symbol_name="UserHandler",
+            content="@require_auth\\n"
+        )
+    """
+    from .tools.lsp import lsp_insert_before_symbol as _lsp_insert_before_symbol
+    return await _lsp_insert_before_symbol(path, symbol_name, content)
+
+
+@mcp.tool()
+async def lsp_insert_after_symbol(
+    path: str,
+    symbol_name: str,
+    content: str,
+) -> str:
+    """
+    Insert code after a symbol.
+
+    Useful for adding new functions, classes, or code blocks
+    after an existing symbol.
+
+    Args:
+        path: Path to the file
+        symbol_name: Name of the symbol to insert after
+        content: The code to insert
+
+    Returns:
+        Confirmation or error message
+
+    Example:
+        lsp_insert_after_symbol(
+            path="src/models.py",
+            symbol_name="User",
+            content="class UserProfile:\\n    pass"
+        )
+    """
+    from .tools.lsp import lsp_insert_after_symbol as _lsp_insert_after_symbol
+    return await _lsp_insert_after_symbol(path, symbol_name, content)
 
 
 # ============================================================

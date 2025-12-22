@@ -1,0 +1,22 @@
+[
+  {
+    "content": "All async tests must use @pytest.mark.asyncio decorator.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Use httpx MockTransport for testing HTTP calls, not live backends.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Test data directory isolation: DELIA_DATA_DIR=/tmp/delia-test-data uv run pytest.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Run uv run pytest before every commit. No exceptions.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "When refactoring, update tests to match new API instead of reverting code to pass stale tests.",
+    "section": "general_strategies"
+  }
+]

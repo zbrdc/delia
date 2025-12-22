@@ -201,7 +201,9 @@ class CodeSummarizer:
         """Scan project AND memories and update symbols/embeddings for all files."""
         async with self._lock:
             from .constants import CODE_EXTENSIONS, IGNORE_DIRS
-            from ..paths import MEMORIES_DIR
+
+            # PER-PROJECT ISOLATION: Use project-specific memories directory
+            memories_dir = Path.cwd() / ".delia" / "memories"
 
             # Use olmo-3:7b-instruct for code summarization
             # Reliably outputs JSON (with markdown fences which we handle)
@@ -223,10 +225,10 @@ class CodeSummarizer:
 
                 if force or rel_path not in self.summaries or self.summaries[rel_path].mtime < mtime:
                     files_to_process.append((rel_path, path, mtime))
-                    
+
             # 2. Memory Files (New for P3.1)
-            if MEMORIES_DIR.exists():
-                for path in MEMORIES_DIR.glob("*.md"):
+            if memories_dir.exists():
+                for path in memories_dir.glob("*.md"):
                     rel_path = f"memory://{path.stem}"
                     mtime = path.stat().st_mtime
                     if force or rel_path not in self.summaries or self.summaries[rel_path].mtime < mtime:

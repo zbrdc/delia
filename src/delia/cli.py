@@ -1129,54 +1129,42 @@ def init_project(
         print_info("Detecting tech stack and patterns...")
         tech_stack = _detect_project_tech_stack(project_root)
 
-        # Step 3: Generate CLAUDE.md
-        print_info("Generating CLAUDE.md framework file...")
+        # Step 3: Generate framework files and sync to all detected agents
+        print_info("Generating framework files...")
         claude_md_content = _generate_claude_md(project_name, tech_stack, project_root)
 
+        # Check if CLAUDE.md exists and prompt for confirmation if not forcing
         claude_md_path = project_root / "CLAUDE.md"
         if claude_md_path.exists() and not force:
             if not prompt_confirm(f"CLAUDE.md already exists. Overwrite?", default=False):
-                print_warning("Skipping CLAUDE.md generation.")
-            else:
-                claude_md_path.write_text(claude_md_content)
-                print_success(f"Generated {claude_md_path}")
-        else:
-            claude_md_path.write_text(claude_md_content)
-            print_success(f"Generated {claude_md_path}")
+                print_warning("Skipping framework file generation.")
+                return
 
-        # Step 4: Sync to AI assistant config directories
-        print_info("Syncing framework to AI assistant configs...")
+        # Sync to all detected AI agent instruction files
+        print_info("Detecting and syncing AI assistant configs...")
+        from .agent_sync import sync_agent_instruction_files, get_agent_summary
+        files_written, detected_agents = sync_agent_instruction_files(
+            project_root, claude_md_content, force=force
+        )
 
-        ai_configs = [
-            (project_root / ".claude", "INSTRUCTIONS.md"),
-            (project_root / ".gemini", "instructions.md"),
-            (project_root / ".github", "copilot-instructions.md"),
-        ]
-
-        for config_dir, filename in ai_configs:
-            config_dir.mkdir(parents=True, exist_ok=True)
-            config_path = config_dir / filename
-            config_path.write_text(claude_md_content)
-            print_success(f"  Created {config_path.relative_to(project_root)}")
+        for file_path in files_written:
+            print_success(f"  Synced {file_path}")
 
         # Final summary
         print()
+        agent_summary = get_agent_summary(detected_agents)
         if RICH_AVAILABLE and console:
             from rich.panel import Panel
             console.print(Panel.fit(
                 f"[bold green]Project initialized![/bold green]\n\n"
-                f"Framework files created:\n"
-                f"  • CLAUDE.md\n"
-                f"  • .claude/INSTRUCTIONS.md\n"
-                f"  • .gemini/instructions.md\n"
-                f"  • .github/copilot-instructions.md\n\n"
+                f"Framework files synced:\n{agent_summary}\n\n"
                 f"[dim]Delia will now provide dynamic playbook guidance for this project.[/dim]",
                 border_style="green",
                 title="Delia ACE Framework"
             ))
         else:
             print("\nProject initialized successfully!")
-            print("Framework files: CLAUDE.md, .claude/, .gemini/, .github/")
+            print(f"Framework files synced:\n{agent_summary}")
 
     try:
         asyncio.run(run_init_project())

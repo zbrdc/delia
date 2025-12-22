@@ -1,0 +1,14 @@
+[
+  {
+    "content": "Commit messages: conventional commits format (feat/fix/refactor/docs).",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Run tests before committing: uv run pytest.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Keep commits atomic - one logical change per commit.",
+    "section": "general_strategies"
+  }
+]

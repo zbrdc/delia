@@ -1,0 +1,18 @@
+[
+  {
+    "content": "Queue system loads models on-demand with GPU memory tracking to prevent OOM.",
+    "section": "resource_management"
+  },
+  {
+    "content": "Health check caching (60s TTL) reduces overhead. Don't ping backends on every call.",
+    "section": "caching"
+  },
+  {
+    "content": "Batch execution uses round-robin across all backends for parallel distribution.",
+    "section": "parallelism"
+  },
+  {
+    "content": "EMA-based prewarming (\u03b1=0.15) loads frequently-used models proactively.",
+    "section": "optimization"
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "content": "ADR-009: Consolidate tools using action-based parameters (playbook, memory, session, profiles, project, admin).",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Use set_project(path) to switch Delia's active project context. Per-project data lives in <project>/.delia/.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "PathsConfig.get_project_root() walks up from cwd looking for .git, pyproject.toml, package.json markers.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Tool registration happens in mcp_server.py via register_*_tools() functions from tools/*.py modules.",
+    "section": "general_strategies"
+  }
+]

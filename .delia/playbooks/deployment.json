@@ -1,0 +1,14 @@
+[
+  {
+    "content": "Install: uv sync && uv pip install -e .",
+    "section": "setup"
+  },
+  {
+    "content": "Run MCP server: delia serve (STDIO) or delia serve --transport sse --port 8200 (HTTP/SSE).",
+    "section": "running"
+  },
+  {
+    "content": "Health check endpoint: GET /health returns backend status and model availability.",
+    "section": "monitoring"
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "content": "Never log API keys or tokens - use structlog filtering.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Validate all file paths to prevent directory traversal.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Sanitize user input before passing to shell commands.",
+    "section": "general_strategies"
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "content": "Check backend health with health() tool before debugging LLM issues.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "Use structlog context to trace request flow through async handlers.",
+    "section": "general_strategies"
+  },
+  {
+    "content": "LSP tools require language server running - check lsp_client.py initialization.",
+    "section": "general_strategies"
+  }
+]

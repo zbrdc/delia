@@ -120,10 +120,7 @@ def __getattr__(name: str) -> Path:
         return get_data_dir() / "cache"
     elif name == "USER_DATA_DIR":
         return get_data_dir() / "users"
-    elif name == "MEMORIES_DIR":
-        return get_data_dir() / "memories"
-    elif name == "SESSIONS_DIR":
-        return get_data_dir() / "sessions"
+    # REMOVED: MEMORIES_DIR, SESSIONS_DIR - Now per-project in .delia/
     elif name == "STATS_FILE":
         return get_data_dir() / "cache" / "usage_stats.json"
     elif name == "ENHANCED_STATS_FILE":
@@ -140,21 +137,17 @@ def __getattr__(name: str) -> Path:
         return get_data_dir() / "cache" / "prewarm.json"
     elif name == "USER_DB_FILE":
         return get_data_dir() / "users" / "users.db"
-    elif name == "PLAYBOOKS_DIR":
-        return get_data_dir() / "playbooks"
+    # REMOVED: PLAYBOOKS_DIR - Now per-project in .delia/playbooks/
     elif name == "ORCHESTRATION_DIR":
         return get_data_dir() / "orchestration"
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def ensure_directories() -> None:
-    """Create all required directories."""
+    """Create all required GLOBAL directories. Per-project dirs created on demand."""
     data_dir = get_data_dir()
     cache_dir = data_dir / "cache"
     user_data_dir = data_dir / "users"
-    memories_dir = data_dir / "memories"
-    sessions_dir = data_dir / "sessions"
-    playbooks_dir = data_dir / "playbooks"
     orchestration_dir = data_dir / "orchestration"
 
     # Ensure base global dir exists if we are using it
@@ -163,7 +156,7 @@ def ensure_directories() -> None:
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     user_data_dir.mkdir(parents=True, exist_ok=True)
-    memories_dir.mkdir(parents=True, exist_ok=True)
-    sessions_dir.mkdir(parents=True, exist_ok=True)
-    playbooks_dir.mkdir(parents=True, exist_ok=True)
     orchestration_dir.mkdir(parents=True, exist_ok=True)
+
+    # NOTE: memories/, sessions/, playbooks/ are now PER-PROJECT in <project>/.delia/
+    # They are created on-demand by their respective managers
