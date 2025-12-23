@@ -77,20 +77,6 @@
         "SSH_KEY_FILE": "~/.ssh/id_rsa",
         "SSH_KEY_PUBLIC_FILE": "~/.ssh/id_rsa.pub"
       }
-    },
-    "coderag": {
-      "type": "stdio",
-      "command": "/home/dan/git/CodeRAG/venv/bin/python",
-      "args": [
-        "-m",
-        "coderag.mcp_server"
-      ],
-      "env": {
-        "EMBEDDING_PROVIDER": "voyage",
-        "VOYAGE_API_KEY": "pa-lQN8exPt7AkZRm0D2RGUqIjX4ZfqLyzRCG_2oe6Cjv5",
-        "LLM_PROVIDER": "gemini",
-        "GEMINI_API_KEY": "AIzaSyCSukGo6wulFKfCG8ygp6a0BWNGA6ty1Bo"
-      }
     }
   }
 }

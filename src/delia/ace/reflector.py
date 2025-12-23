@@ -63,7 +63,7 @@ REFLECTOR_PROMPT = """You are an expert diagnostician analyzing a completed AI t
 ## Task Context
 - **Task Type**: {task_type}
 - **Task Description**: {task_description}
-- **Outcome**: {"SUCCESS" if task_succeeded else "FAILURE"}
+- **Outcome**: {outcome}
 
 ## Execution Details
 {execution_details}
@@ -164,18 +164,26 @@ class Reflector:
         )
 
         # Format applied bullets
+        # Handle both string IDs and dicts with {id, content}
         bullets_text = "None applied"
         if applied_bullets:
-            bullets_text = "\n".join(
-                f"- [{b.get('id', 'unknown')}] {b.get('content', '')}"
-                for b in applied_bullets
-            )
+            formatted = []
+            for b in applied_bullets:
+                if isinstance(b, str):
+                    # Just a bullet ID string
+                    formatted.append(f"- [{b}]")
+                elif isinstance(b, dict):
+                    # Dict with id and content
+                    formatted.append(f"- [{b.get('id', 'unknown')}] {b.get('content', '')}")
+                else:
+                    formatted.append(f"- [{b}]")
+            bullets_text = "\n".join(formatted)
 
         # Build prompt
         prompt = REFLECTOR_PROMPT.format(
             task_type=task_type,
             task_description=task_description[:500],  # Truncate if too long
-            task_succeeded=task_succeeded,
+            outcome="SUCCESS" if task_succeeded else "FAILURE",
             execution_details=execution_details,
             applied_bullets=bullets_text,
         )

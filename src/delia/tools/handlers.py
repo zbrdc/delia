@@ -1196,7 +1196,6 @@ def register_tool_handlers(mcp: FastMCP):
             "debugging": [
                 {"tool": "lsp_find_references", "use": "Trace where problematic code is called"},
                 {"tool": "lsp_goto_definition", "use": "Jump to source of errors"},
-                {"tool": "coderag_search", "use": "Find semantically related code"},
             ],
             "testing": [
                 {"tool": "lsp_get_symbols", "use": "See what functions need test coverage"},
@@ -1204,16 +1203,13 @@ def register_tool_handlers(mcp: FastMCP):
             ],
             "architecture": [
                 {"tool": "lsp_get_symbols", "use": "Survey module structure"},
-                {"tool": "coderag_search", "use": "Find related patterns across codebase"},
             ],
             "git": [],
             "project": [
-                {"tool": "coderag_search", "use": "Semantic search for concepts"},
                 {"tool": "lsp_find_symbol", "use": "Find classes/functions by name"},
             ],
             "security": [
                 {"tool": "lsp_find_references", "use": "Trace sensitive data flow"},
-                {"tool": "coderag_search", "use": "Find auth/validation patterns"},
             ],
             "api": [
                 {"tool": "lsp_get_symbols", "use": "See endpoint structure"},
@@ -1222,7 +1218,6 @@ def register_tool_handlers(mcp: FastMCP):
             "deployment": [],
             "performance": [
                 {"tool": "lsp_find_references", "use": "Find hot path callers"},
-                {"tool": "coderag_search", "use": "Find similar optimization patterns"},
             ],
         }
 
@@ -1298,8 +1293,15 @@ def register_tool_handlers(mcp: FastMCP):
             get_profile(name="api.md", path="/path/to/project")
         """
         from pathlib import Path as PyPath
+        from ..playbook import get_playbook_manager
 
-        project_path = PyPath(path).resolve() if path else PyPath.cwd()
+        # Use current project context if no path provided
+        if path:
+            project_path = PyPath(path).resolve()
+        else:
+            pm = get_playbook_manager()
+            project_path = pm.playbook_dir.parent.parent
+
         profiles_dir = project_path / ".delia" / "profiles"
         templates_dir = PyPath(__file__).parent.parent / "templates" / "profiles"
 
@@ -1392,9 +1394,14 @@ def register_tool_handlers(mcp: FastMCP):
         from pathlib import Path as PyPath
         from ..playbook import get_playbook_manager
 
-        project_path = PyPath(path).resolve() if path else PyPath.cwd()
         pm = get_playbook_manager()
-        pm.set_project(project_path)
+        # Only set project if path explicitly provided - otherwise use current context
+        if path:
+            project_path = PyPath(path).resolve()
+            pm.set_project(project_path)
+        else:
+            # Use the project already set by auto_context/set_project
+            project_path = pm.playbook_dir.parent.parent  # .delia/playbooks -> .delia -> project
 
         # Parse bullets_applied
         try:
@@ -1571,8 +1578,15 @@ def register_tool_handlers(mcp: FastMCP):
             )
         """
         from pathlib import Path as PyPath
+        from ..playbook import get_playbook_manager
 
-        project_path = PyPath(path).resolve() if path else PyPath.cwd()
+        pm = get_playbook_manager()
+        # Only set project if path explicitly provided
+        if path:
+            project_path = PyPath(path).resolve()
+            pm.set_project(project_path)
+        else:
+            project_path = pm.playbook_dir.parent.parent
 
         # Parse applied_bullets
         bullet_ids = []
@@ -1671,9 +1685,13 @@ def register_tool_handlers(mcp: FastMCP):
         from ..playbook import get_playbook_manager
         from ..context_detector import get_context_manager
 
-        project_path = PyPath(path).resolve() if path else PyPath.cwd()
         pm = get_playbook_manager()
-        pm.set_project(project_path)
+        # Only set project if path explicitly provided - otherwise use current context
+        if path:
+            project_path = PyPath(path).resolve()
+            pm.set_project(project_path)
+        else:
+            project_path = pm.playbook_dir.parent.parent
 
         stats = pm.get_stats()
         tracker = get_ace_tracker()
@@ -1833,9 +1851,13 @@ def register_tool_handlers(mcp: FastMCP):
         from ..playbook import get_playbook_manager
         from ..mcp_server import _build_dynamic_instructions
 
-        project_path = PyPath.cwd()
         pm = get_playbook_manager()
-        pm.set_project(project_path)
+        # Use current project context if set, otherwise default to CWD
+        if pm.playbook_dir.exists():
+            project_path = pm.playbook_dir.parent.parent
+        else:
+            project_path = PyPath.cwd()
+            pm.set_project(project_path)
 
         # Get full dynamic instructions
         instructions = _build_dynamic_instructions()

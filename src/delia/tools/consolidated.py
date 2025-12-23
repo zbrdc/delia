@@ -682,7 +682,6 @@ async def admin_tool(
 
     elif action == "cleanup_legacy":
         # Clean up legacy global data directories
-        import json
         from ..cleanup import cleanup_legacy_global_data
         dry_run = kwargs.get("dry_run", True)
         results = cleanup_legacy_global_data(dry_run=dry_run)
@@ -690,7 +689,6 @@ async def admin_tool(
 
     elif action == "cleanup_project":
         # Clean up a project's .delia/ directory
-        import json
         from pathlib import Path
         from ..cleanup import cleanup_project_delia_dir
 
@@ -701,7 +699,6 @@ async def admin_tool(
 
     elif action == "cleanup_all":
         # Full cleanup of all legacy data
-        import json
         from ..cleanup import cleanup_all
         dry_run = kwargs.get("dry_run", True)
         results = cleanup_all(dry_run=dry_run)
