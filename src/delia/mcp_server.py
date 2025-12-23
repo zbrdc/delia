@@ -925,6 +925,13 @@ async def lsp_rename_symbol(
                          new_name="UserAccount", apply=True)
     """
     from .tools.lsp import lsp_rename_symbol as _lsp_rename_symbol
+    from .tools.handlers import check_checkpoint_gate
+
+    # Checkpoint Gating: Require think_about_task_adherence before symbol rename
+    checkpoint_error = check_checkpoint_gate("lsp_rename_symbol", path)
+    if checkpoint_error:
+        return checkpoint_error
+
     return await _lsp_rename_symbol(path, line, character, new_name, apply)
 
 
@@ -956,6 +963,13 @@ async def lsp_replace_symbol_body(
         )
     """
     from .tools.lsp import lsp_replace_symbol_body as _lsp_replace_symbol_body
+    from .tools.handlers import check_checkpoint_gate
+
+    # Checkpoint Gating: Require think_about_task_adherence before symbol replacement
+    checkpoint_error = check_checkpoint_gate("lsp_replace_symbol_body", path)
+    if checkpoint_error:
+        return checkpoint_error
+
     return await _lsp_replace_symbol_body(path, symbol_name, new_body)
 
 
@@ -987,6 +1001,13 @@ async def lsp_insert_before_symbol(
         )
     """
     from .tools.lsp import lsp_insert_before_symbol as _lsp_insert_before_symbol
+    from .tools.handlers import check_checkpoint_gate
+
+    # Checkpoint Gating: Require think_about_task_adherence before symbol insertion
+    checkpoint_error = check_checkpoint_gate("lsp_insert_before_symbol", path)
+    if checkpoint_error:
+        return checkpoint_error
+
     return await _lsp_insert_before_symbol(path, symbol_name, content)
 
 
@@ -1018,6 +1039,13 @@ async def lsp_insert_after_symbol(
         )
     """
     from .tools.lsp import lsp_insert_after_symbol as _lsp_insert_after_symbol
+    from .tools.handlers import check_checkpoint_gate
+
+    # Checkpoint Gating: Require think_about_task_adherence before symbol insertion
+    checkpoint_error = check_checkpoint_gate("lsp_insert_after_symbol", path)
+    if checkpoint_error:
+        return checkpoint_error
+
     return await _lsp_insert_after_symbol(path, symbol_name, content)
 
 
@@ -1250,12 +1278,17 @@ async def write_file(
         write_file(path="src/new_file.py", content="# New file\\nprint('hello')")
     """
     from .tools.files import write_file as _write_file
-    from .tools.handlers import check_ace_gate
+    from .tools.handlers import check_ace_gate, check_checkpoint_gate
 
     # ACE Gating: Require auto_context before file writes
     gate_error = check_ace_gate("write_file", path)
     if gate_error:
         return gate_error
+
+    # Checkpoint Gating: Require think_about_task_adherence before file writes
+    checkpoint_error = check_checkpoint_gate("write_file", path)
+    if checkpoint_error:
+        return checkpoint_error
 
     return await _write_file(path, content, create_dirs)
 
@@ -1281,12 +1314,17 @@ async def edit_file(
         edit_file(path="src/main.py", old_text="old_function", new_text="new_function")
     """
     from .tools.files import edit_file as _edit_file
-    from .tools.handlers import check_ace_gate
+    from .tools.handlers import check_ace_gate, check_checkpoint_gate
 
     # ACE Gating: Require auto_context before file edits
     gate_error = check_ace_gate("edit_file", path)
     if gate_error:
         return gate_error
+
+    # Checkpoint Gating: Require think_about_task_adherence before file edits
+    checkpoint_error = check_checkpoint_gate("edit_file", path)
+    if checkpoint_error:
+        return checkpoint_error
 
     return await _edit_file(path, old_text, new_text)
 
@@ -1381,6 +1419,13 @@ async def delete_file(path: str) -> str:
         delete_file(path="temp/old_file.txt")
     """
     from .tools.files import delete_file as _delete_file
+    from .tools.handlers import check_checkpoint_gate
+
+    # Checkpoint Gating: Require think_about_task_adherence before file deletion
+    checkpoint_error = check_checkpoint_gate("delete_file", path)
+    if checkpoint_error:
+        return checkpoint_error
+
     return await _delete_file(path)
 
 

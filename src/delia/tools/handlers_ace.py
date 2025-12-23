@@ -47,6 +47,20 @@ ACE_EXEMPT_TOOLS = {
     "scan_codebase",
 }
 
+# Tools that REQUIRE think_about_task_adherence() before use
+# These modify files and need the checkpoint to prevent drift
+CHECKPOINT_REQUIRED_TOOLS = {
+    # File modification tools
+    "write_file",
+    "edit_file",
+    "delete_file",
+    # LSP modification tools
+    "lsp_replace_symbol_body",
+    "lsp_insert_before_symbol",
+    "lsp_insert_after_symbol",
+    "lsp_rename_symbol",
+}
+
 
 class ACEEnforcementTracker:
     """Track ACE compliance dynamically across tool calls.
@@ -62,6 +76,11 @@ class ACEEnforcementTracker:
         self._pending_tasks: dict[str, dict] = {}  # path -> {task, start_time}
         self._compliance_warnings: int = 0
         self._gating_enabled: bool = True  # Can be disabled for testing
+        # Checkpoint tracking for hard gating
+        self._checkpoint_called: dict[str, float] = {}  # path -> timestamp when think_about_task_adherence called
+        # Phase tracking: search → checkpoint → modify
+        self._current_phase: dict[str, str] = {}  # path -> current phase (search/checkpoint/modify)
+        self._search_count: dict[str, int] = {}  # path -> number of search/read operations
 
     def record_ace_started(self, path: str) -> None:
         """Record that auto_context was called for a project."""
@@ -154,6 +173,81 @@ class ACEEnforcementTracker:
     def clear_task(self, path: str) -> None:
         """Clear pending task after confirmation."""
         self._pending_tasks.pop(path, None)
+        # Also clear checkpoint when task completes
+        self._checkpoint_called.pop(path, None)
+        self._current_phase.pop(path, None)
+        self._search_count.pop(path, None)
+
+    # =========================================================================
+    # Checkpoint Tracking (Hard Gating)
+    # =========================================================================
+
+    def record_checkpoint_called(self, path: str) -> None:
+        """Record that think_about_task_adherence() was called."""
+        self._checkpoint_called[path] = time.time()
+        self._current_phase[path] = "checkpoint"
+        log.info("ace_checkpoint_called", path=path)
+
+    def is_checkpoint_valid(self, path: str) -> bool:
+        """Check if checkpoint was called recently (within 10 minutes)."""
+        if path not in self._checkpoint_called:
+            return False
+        # 10 minute window - must re-checkpoint for long tasks
+        return (time.time() - self._checkpoint_called[path]) < 600
+
+    def require_checkpoint(self, path: str, tool_name: str) -> dict | None:
+        """Check if checkpoint was called. Returns blocking error if not.
+
+        This is HARD GATING - the tool will NOT execute without the checkpoint.
+        """
+        if not self._gating_enabled:
+            return None
+
+        if tool_name not in CHECKPOINT_REQUIRED_TOOLS:
+            return None
+
+        if self.is_checkpoint_valid(path):
+            self._current_phase[path] = "modify"
+            return None
+
+        # Checkpoint not called - BLOCK the tool
+        return {
+            "error": "CHECKPOINT_REQUIRED",
+            "message": (
+                f"⛔ BLOCKED: You must call think_about_task_adherence() before using {tool_name}. "
+                "This checkpoint ensures you're aligned with project patterns and user intent."
+            ),
+            "action": "think_about_task_adherence()",
+            "tool_blocked": tool_name,
+            "reason": "Hard gating prevents file modifications without explicit checkpoint.",
+        }
+
+    # =========================================================================
+    # Phase Tracking (search → checkpoint → modify)
+    # =========================================================================
+
+    def record_search_operation(self, path: str) -> None:
+        """Record a search/read operation."""
+        self._current_phase[path] = "search"
+        self._search_count[path] = self._search_count.get(path, 0) + 1
+
+    def get_phase_warning(self, path: str, tool_name: str) -> str | None:
+        """Get warning if phase transition is suspicious.
+
+        Returns injection text to prepend to tool response.
+        """
+        phase = self._current_phase.get(path, "unknown")
+        search_count = self._search_count.get(path, 0)
+
+        # Warn if trying to modify after many searches without checkpoint
+        if tool_name in CHECKPOINT_REQUIRED_TOOLS:
+            if phase == "search" and search_count >= 3:
+                return (
+                    "⚠️ **Phase Warning**: You've done multiple search/read operations "
+                    "but haven't called think_about_collected_info() or think_about_task_adherence(). "
+                    "Consider pausing to verify you have enough information.\n\n"
+                )
+        return None
 
     def was_playbook_queried(self, path: str) -> bool:
         """Check if playbook was queried recently for this project."""
@@ -278,6 +372,55 @@ def check_ace_gate(tool_name: str, path: str | None = None) -> str | None:
     if error:
         return json.dumps({"result": error}, indent=2)
     return None
+
+
+def check_checkpoint_gate(tool_name: str, path: str | None = None) -> str | None:
+    """Check if checkpoint was called before file modification. HARD GATE.
+
+    Call this at the start of file modification tools.
+    Returns None if OK to proceed, or a JSON error string that BLOCKS the tool.
+
+    Args:
+        tool_name: Name of the tool being called
+        path: Project path (uses cwd if not provided)
+    """
+    project_path = str(Path(path).resolve()) if path else str(Path.cwd())
+    tracker = get_ace_tracker(project_path)
+    error = tracker.require_checkpoint(project_path, tool_name)
+
+    if error:
+        return json.dumps({"result": error}, indent=2)
+    return None
+
+
+def record_checkpoint(path: str | None = None) -> None:
+    """Record that think_about_task_adherence was called.
+
+    Call this from the think_about_task_adherence tool handler.
+    """
+    project_path = str(Path(path).resolve()) if path else str(Path.cwd())
+    tracker = get_ace_tracker(project_path)
+    tracker.record_checkpoint_called(project_path)
+
+
+def record_search(path: str | None = None) -> None:
+    """Record a search/read operation for phase tracking.
+
+    Call this from search tools (grep, glob, read_file, etc.)
+    """
+    project_path = str(Path(path).resolve()) if path else str(Path.cwd())
+    tracker = get_ace_tracker(project_path)
+    tracker.record_search_operation(project_path)
+
+
+def get_phase_injection(tool_name: str, path: str | None = None) -> str | None:
+    """Get phase warning to inject into response if applicable.
+
+    Returns warning text or None.
+    """
+    project_path = str(Path(path).resolve()) if path else str(Path.cwd())
+    tracker = get_ace_tracker(project_path)
+    return tracker.get_phase_warning(project_path, tool_name)
 
 
 def inject_ace_reminder(response: str, project_path: str) -> str:

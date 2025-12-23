@@ -26,11 +26,16 @@ from ..language import detect_language
 # Import from refactored modules
 from .handlers_ace import (
     ACE_EXEMPT_TOOLS,
+    CHECKPOINT_REQUIRED_TOOLS,
     ACEEnforcementTracker,
     ACEEnforcementManager,
     get_ace_tracker,
     get_ace_manager,
     check_ace_gate,
+    check_checkpoint_gate,
+    record_checkpoint,
+    record_search,
+    get_phase_injection,
     inject_ace_reminder,
     auto_trigger_reflection,
 )
@@ -1038,6 +1043,9 @@ def register_tool_handlers(mcp: FastMCP):
         Returns:
             Reflection prompts to ensure task adherence
         """
+        # Record checkpoint - unlocks file modification tools
+        record_checkpoint()
+
         return json.dumps({
             "reflection_prompts": [
                 "Are you deviating from the task at hand?",
