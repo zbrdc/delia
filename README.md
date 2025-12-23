@@ -114,6 +114,21 @@ your-project/
 └── CLAUDE.md           # Auto-generated instructions for AI assistants
 ```
 
+## Architecture
+
+Delia implements a 6-layer ACE (Autonomous Cognitive Entity) framework:
+
+| Layer | Component | Purpose |
+|-------|-----------|---------|
+| 1. Aspirational | `data/constitution.md` | Mission & values |
+| 2. Global Strategy | `.delia/playbooks/` | Learned patterns from past tasks |
+| 3. Agent Model | Backend detection | Available models & capabilities |
+| 4. Executive | `OrchestrationExecutor` | Task routing & resource allocation |
+| 5. Cognitive Control | `ContextDetector` | Intent detection & filtering |
+| 6. Task Prosecution | MCP Tools | File I/O, LSP, shell execution |
+
+The **Reflector → Curator** pipeline continuously improves playbooks by extracting insights from completed tasks.
+
 ## Troubleshooting
 
 **MCP server not connecting:**
