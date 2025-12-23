@@ -116,18 +116,17 @@ your-project/
 
 ## Architecture
 
-Delia implements a 6-layer ACE (Autonomous Cognitive Entity) framework:
+Delia implements an ACE (Autonomous Cognitive Entity) framework:
 
-| Layer | Component | Purpose |
-|-------|-----------|---------|
-| 1. Aspirational | `data/constitution.md` | Mission & values |
-| 2. Global Strategy | `.delia/playbooks/` | Learned patterns from past tasks |
-| 3. Agent Model | Backend detection | Available models & capabilities |
-| 4. Executive | `OrchestrationExecutor` | Task routing & resource allocation |
-| 5. Cognitive Control | `ContextDetector` | Intent detection & filtering |
-| 6. Task Prosecution | MCP Tools | File I/O, LSP, shell execution |
+| Component | Purpose |
+|-----------|---------|
+| **Playbooks** | Per-project learned patterns (`.delia/playbooks/`) |
+| **OrchestrationExecutor** | Task routing, voting, model selection |
+| **ContextDetector** | Intent detection from messages |
+| **Reflector → Curator** | Extracts insights from completed tasks |
+| **ToolRegistry** | File I/O, LSP, shell execution |
 
-The **Reflector → Curator** pipeline continuously improves playbooks by extracting insights from completed tasks.
+The learning loop: `auto_context()` → apply patterns → `complete_task()` → Reflector extracts insights → Curator updates playbooks.
 
 ## Troubleshooting
 
