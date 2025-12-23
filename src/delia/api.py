@@ -2135,6 +2135,88 @@ async def agent_confirm_handler(request: Request) -> JSONResponse:
     })
 
 
+async def ace_metrics_handler(request: Request) -> JSONResponse:
+    """Handle GET /api/ace/metrics - Get ACE Framework metrics.
+
+    Returns:
+        - playbook_stats: Bullet counts, utility scores, top bullets
+        - recent_reflections: Latest reflection insights (if available)
+        - curator_patterns: Deduplication and curation stats
+        - bullet_effectiveness: Overall effectiveness metrics
+    """
+    try:
+        from delia.playbook import get_playbook_manager
+        from pathlib import Path
+        import os
+
+        # Determine project path (use current working directory or home)
+        project_path = os.getcwd()
+
+        # Get playbook stats
+        pm = get_playbook_manager()
+        pm.set_project(project_path)
+        playbook_stats = pm.get_stats()
+
+        # Get all bullets for detailed analysis
+        all_bullets = pm.get_all_bullets()
+        task_type_counts = {task_type: len(bullets) for task_type, bullets in all_bullets.items()}
+
+        # Calculate overall effectiveness metrics
+        total_helpful = sum(b.helpful_count for bullets in all_bullets.values() for b in bullets)
+        total_harmful = sum(b.harmful_count for bullets in all_bullets.values() for b in bullets)
+        total_feedback = total_helpful + total_harmful
+        overall_effectiveness = total_helpful / total_feedback if total_feedback > 0 else 0.0
+
+        # Get recent reflections (if reflection history exists)
+        recent_reflections = []
+        delia_dir = Path(project_path) / ".delia"
+        reflections_file = delia_dir / "data" / "reflections.json"
+        if reflections_file.exists():
+            try:
+                import json
+                with open(reflections_file) as f:
+                    all_reflections = json.load(f)
+                    # Get last 10 reflections
+                    recent_reflections = all_reflections[-10:] if isinstance(all_reflections, list) else []
+            except Exception as e:
+                log.warning("failed_to_load_reflections", error=str(e))
+
+        # Curator stats (semantic deduplication metrics if available)
+        curator_stats = {
+            "deduplication_enabled": True,  # Based on curator.py existing
+            "similarity_threshold": 0.85,    # Default from curator
+        }
+
+        # Build comprehensive response
+        return JSONResponse({
+            "playbook": {
+                "total_bullets": playbook_stats["total_bullets"],
+                "task_types": playbook_stats["task_types"],
+                "task_type_counts": task_type_counts,
+                "top_bullets": playbook_stats["top_bullets"],
+                "low_utility_count": len(playbook_stats["low_utility"]),
+            },
+            "effectiveness": {
+                "total_helpful": total_helpful,
+                "total_harmful": total_harmful,
+                "total_feedback": total_feedback,
+                "overall_score": round(overall_effectiveness, 3),
+            },
+            "reflections": {
+                "recent": recent_reflections,
+                "count": len(recent_reflections),
+            },
+            "curator": curator_stats,
+            "project_path": str(project_path),
+        })
+    except Exception as e:
+        log.error("ace_metrics_error", error=str(e))
+        return JSONResponse(
+            {"error": f"Failed to retrieve ACE metrics: {str(e)}"},
+            status_code=500
+        )
+
+
 # Create Starlette app with lifespan for proper shutdown
 routes = [
     Route("/api/agent/run", agent_run_handler, methods=["POST"]),
@@ -2142,6 +2224,7 @@ routes = [
     Route("/api/chat", chat_handler, methods=["POST"]),
     Route("/api/health", health_handler, methods=["GET"]),
     Route("/api/status", status_handler, methods=["GET"]),
+    Route("/api/ace/metrics", ace_metrics_handler, methods=["GET"]),
     Route("/api/models", models_handler, methods=["GET"]),
     Route("/api/backends", backends_handler, methods=["GET"]),
     Route("/api/sessions", sessions_list_handler, methods=["GET"]),

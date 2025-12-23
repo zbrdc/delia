@@ -1250,6 +1250,13 @@ async def write_file(
         write_file(path="src/new_file.py", content="# New file\\nprint('hello')")
     """
     from .tools.files import write_file as _write_file
+    from .tools.handlers import check_ace_gate
+
+    # ACE Gating: Require auto_context before file writes
+    gate_error = check_ace_gate("write_file", path)
+    if gate_error:
+        return gate_error
+
     return await _write_file(path, content, create_dirs)
 
 
@@ -1274,6 +1281,13 @@ async def edit_file(
         edit_file(path="src/main.py", old_text="old_function", new_text="new_function")
     """
     from .tools.files import edit_file as _edit_file
+    from .tools.handlers import check_ace_gate
+
+    # ACE Gating: Require auto_context before file edits
+    gate_error = check_ace_gate("edit_file", path)
+    if gate_error:
+        return gate_error
+
     return await _edit_file(path, old_text, new_text)
 
 

@@ -91,27 +91,12 @@ async def playbook_tool(
                     "message": f"Similar bullet already exists: {existing_id}"
                 })
         except Exception as e:
-            # Fallback to direct add if curator fails
-            log.warning("curator_add_fallback", error=str(e))
-            bullet = playbook_manager.add_bullet(task_type, content, section)
-
-            # Try to generate embedding even in fallback
-            try:
-                from delia.ace.retrieval import get_retriever
-                project_path_resolved = Path(path) if path else Path.cwd()
-                retriever = get_retriever()
-                await retriever.add_bullet_embedding(bullet.id, content, project_path_resolved)
-            except Exception:
-                pass  # Embedding generation is best-effort
-
+            # P4: Always use curator - no fallback to direct add
+            # This ensures semantic deduplication is always enforced
+            log.error("curator_add_failed", error=str(e))
             return json.dumps({
-                "status": "added",
-                "bullet": {
-                    "id": bullet.id,
-                    "content": bullet.content,
-                    "section": bullet.section,
-                    "task_type": task_type
-                }
+                "status": "error",
+                "error": f"Failed to add bullet via curator: {str(e)}"
             })
 
     elif action == "write":

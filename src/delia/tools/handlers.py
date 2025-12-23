@@ -50,15 +50,78 @@ log = structlog.get_logger()
 # ACE Framework Dynamic Enforcement
 # =============================================================================
 
+# Tools that can be used without calling auto_context first
+ACE_EXEMPT_TOOLS = {
+    "auto_context",
+    "check_ace_status",
+    "read_initial_instructions",
+    "health",
+    "models",
+    "set_project",
+    "get_project_context",
+    "get_playbook",
+    "dashboard_url",
+    "queue_status",
+    "mcp_servers",
+    "init_project",
+    "scan_codebase",
+}
+
+
 class ACEEnforcementTracker:
-    """Track ACE compliance dynamically across tool calls."""
-    
-    def __init__(self):
+    """Track ACE compliance dynamically across tool calls.
+
+    Provides two enforcement mechanisms:
+    1. Soft enforcement: record_playbook_query() and check_compliance()
+    2. Hard enforcement: record_ace_started() and require_ace_started()
+    """
+
+    def __init__(self) -> None:
         self._playbook_queries: dict[str, float] = {}  # path -> last query timestamp
+        self._ace_started: dict[str, float] = {}  # path -> timestamp when auto_context called
         self._pending_tasks: dict[str, dict] = {}  # path -> {task, start_time}
         self._compliance_warnings: int = 0
-    
-    def record_playbook_query(self, path: str):
+        self._gating_enabled: bool = True  # Can be disabled for testing
+
+    def record_ace_started(self, path: str) -> None:
+        """Record that auto_context was called for a project."""
+        self._ace_started[path] = time.time()
+        self._playbook_queries[path] = time.time()  # Also counts as playbook query
+        log.info("ace_workflow_started", path=path)
+
+    def is_ace_started(self, path: str) -> bool:
+        """Check if auto_context was called recently (within 30 minutes)."""
+        if path not in self._ace_started:
+            return False
+        # 30 minute window for a single task session
+        return (time.time() - self._ace_started[path]) < 1800
+
+    def require_ace_started(self, path: str, tool_name: str) -> dict | None:
+        """Check if ACE was started. Returns error dict if not, None if OK.
+
+        Use this for tool gating - returns an error response if ACE wasn't started.
+        """
+        if not self._gating_enabled:
+            return None
+
+        if tool_name in ACE_EXEMPT_TOOLS:
+            return None
+
+        if self.is_ace_started(path):
+            return None
+
+        # ACE not started - return error for tool gating
+        return {
+            "error": "ACE_WORKFLOW_REQUIRED",
+            "message": (
+                "You must call auto_context() before using this tool. "
+                "ACE Framework ensures you get project-specific guidance before making changes."
+            ),
+            "action": f'auto_context(message="your task description", path="{path}")',
+            "tool_blocked": tool_name,
+        }
+
+    def record_playbook_query(self, path: str) -> None:
         """Record that playbooks were queried for a project."""
         self._playbook_queries[path] = time.time()
         log.debug("ace_playbook_queried", path=path)
@@ -123,13 +186,36 @@ class ACEEnforcementTracker:
 # Global tracker instance
 _ace_tracker = ACEEnforcementTracker()
 
+
 def get_ace_tracker() -> ACEEnforcementTracker:
+    """Get the global ACE enforcement tracker."""
     return _ace_tracker
+
+
+def check_ace_gate(tool_name: str, path: str | None = None) -> str | None:
+    """Check if ACE workflow was followed. Returns error JSON if not, None if OK.
+
+    Call this at the start of tools that modify code or delegate work.
+    Returns None if OK to proceed, or a JSON error string to return immediately.
+
+    Args:
+        tool_name: Name of the tool being called
+        path: Project path (uses cwd if not provided)
+    """
+    from pathlib import Path as PyPath
+
+    project_path = str(PyPath(path).resolve()) if path else str(PyPath.cwd())
+    tracker = get_ace_tracker()
+    error = tracker.require_ace_started(project_path, tool_name)
+
+    if error:
+        return json.dumps({"result": error}, indent=2)
+    return None
 
 
 def inject_ace_reminder(response: str, project_path: str) -> str:
     """Inject ACE Framework reminder into tool response if needed.
-    
+
     This ensures agents are consistently reminded to follow the ACE workflow.
     """
     tracker = get_ace_tracker()
@@ -137,6 +223,73 @@ def inject_ace_reminder(response: str, project_path: str) -> str:
     if reminder:
         return response + reminder
     return response
+
+
+async def auto_trigger_reflection(
+    task_type: str,
+    task_description: str,
+    outcome: str,
+    success: bool = True,
+    project_path: str | None = None,
+    applied_bullets: list[str] | None = None,
+) -> dict | None:
+    """
+    Auto-trigger reflection for tool completions.
+
+    This enables automatic learning from delegate/think/batch executions
+    without requiring manual complete_task() calls.
+
+    Args:
+        task_type: Type of task (quick, analyze, etc.)
+        task_description: What was requested
+        outcome: Result summary
+        success: Whether task succeeded
+        project_path: Project directory
+        applied_bullets: Bullet IDs used (if any)
+
+    Returns:
+        Reflection result dict or None if failed
+    """
+    try:
+        from ..ace.reflector import get_reflector
+        from ..ace.curator import get_curator
+        from pathlib import Path as PyPath
+
+        proj_path = PyPath(project_path) if project_path else PyPath.cwd()
+        reflector = get_reflector()
+        curator = get_curator(str(proj_path))
+
+        # Run reflection
+        reflection = await reflector.reflect(
+            task_description=task_description,
+            task_type=task_type,
+            task_succeeded=success,
+            outcome=outcome,
+            tool_calls=None,
+            applied_bullets=applied_bullets or [],
+            error_trace=None if success else outcome,
+            user_feedback=None,
+        )
+
+        # Curate playbook with insights
+        curation = await curator.curate(reflection, auto_prune=False)
+
+        log.info(
+            "auto_reflection_complete",
+            task_type=task_type,
+            success=success,
+            insights=len(reflection.insights),
+            bullets_added=curation.bullets_added,
+        )
+
+        return {
+            "insights_extracted": len(reflection.insights),
+            "bullets_added": curation.bullets_added,
+            "dedup_prevented": curation.dedup_prevented,
+        }
+    except Exception as e:
+        log.warning("auto_reflection_failed", task_type=task_type, error=str(e))
+        return None
 
 
 async def think_impl(
@@ -170,7 +323,19 @@ async def think_impl(
     from ..mcp_server import save_all_stats_async
     await save_all_stats_async()
 
-    return inject_ace_reminder(result.result.response, project_path)
+    # Auto-trigger reflection for learning
+    response_text = result.result.response
+    success = not response_text.startswith("Error:")
+    outcome = response_text[:200] if len(response_text) > 200 else response_text
+    await auto_trigger_reflection(
+        task_type="think",
+        task_description=problem[:100],
+        outcome=outcome,
+        success=success,
+        project_path=project_path,
+    )
+
+    return inject_ace_reminder(response_text, project_path)
 
 
 async def batch_impl(
@@ -219,6 +384,16 @@ async def batch_impl(
     results = await asyncio.gather(*[run_task(i, t, backend_assignments[i], captured_client_id, captured_username) for i, t in enumerate(task_list)])
     elapsed_ms = int((time.time() - start_time) * 1000)
     result = f"# Batch Results\n\n{chr(10).join(results)}\n\n---\n_Total tasks: {len(task_list)} | Total time: {elapsed_ms}ms_"
+
+    # Auto-trigger reflection for batch learning
+    await auto_trigger_reflection(
+        task_type="batch",
+        task_description=f"Batch of {len(task_list)} tasks",
+        outcome=f"Completed {len(task_list)} tasks in {elapsed_ms}ms",
+        success=True,
+        project_path=project_path,
+    )
+
     return inject_ace_reminder(result, project_path)
 
 
@@ -244,10 +419,15 @@ async def delegate_tool_impl(
     auto_context: bool = False,
 ) -> str:
     """Implementation of the delegate tool."""
-    start_prewarm_task()
-    
-    # ACE Framework Enforcement: Record task start
+    # ACE Gating: Require auto_context before delegation
     project_path = str(Path(file).parent) if file else str(Path.cwd())
+    gate_error = check_ace_gate("delegate", project_path)
+    if gate_error:
+        return gate_error
+
+    start_prewarm_task()
+
+    # ACE Framework Enforcement: Record task start
     ace_tracker = get_ace_tracker()
     ace_tracker.record_task_start(project_path, task)
 
@@ -328,6 +508,20 @@ async def delegate_tool_impl(
         backend=backend_type, backend_obj=backend_obj, files=files,
         include_metadata=include_metadata, max_tokens=max_tokens, session_id=session_id, auto_context=auto_context,
     )
+
+    # Auto-trigger reflection for learning
+    # Success is determined by lack of "Error:" in result
+    success = not result.startswith("Error:")
+    task_desc = f"{task}: {content[:100]}..." if len(content) > 100 else f"{task}: {content}"
+    outcome = result[:200] if len(result) > 200 else result
+    await auto_trigger_reflection(
+        task_type=task,
+        task_description=task_desc,
+        outcome=outcome,
+        success=success,
+        project_path=project_path,
+    )
+
     return inject_ace_reminder(result, project_path)
 
 
@@ -1043,6 +1237,10 @@ def register_tool_handlers(mcp: FastMCP):
         # Always include memory tools - they're useful for ALL tasks
         recommended_tools.extend(MEMORY_TOOLS)
 
+        # Register with ACE enforcement tracker
+        tracker = get_ace_tracker()
+        tracker.record_ace_started(str(project_path))
+
         # Build response
         result = {
             "detected_context": {
@@ -1239,10 +1437,11 @@ def register_tool_handlers(mcp: FastMCP):
         # =====================================================================
         # ACE LEARNING LOOP: Reflector → Curator pipeline
         # =====================================================================
-        # On failure: Run Reflector to analyze what went wrong, then Curator
-        # to apply delta updates. This is the core ACE learning mechanism.
+        # Learn from BOTH success AND failure to maximize ACE improvements.
+        # Success: Learn what worked well (patterns to reinforce)
+        # Failure: Learn what went wrong (anti-patterns to avoid)
         # =====================================================================
-        if not success and failure_reason:
+        if success or (not success and failure_reason):
             try:
                 from ..ace.reflector import get_reflector
                 from ..ace.curator import get_curator
@@ -1250,15 +1449,21 @@ def register_tool_handlers(mcp: FastMCP):
                 reflector = get_reflector()
                 curator = get_curator(str(project_path))
 
-                # Reflect on the failure to extract insights
+                # Determine outcome message
+                if success:
+                    outcome_msg = task_summary or "Task completed successfully"
+                else:
+                    outcome_msg = failure_reason
+
+                # Reflect on the task execution to extract insights
                 reflection = await reflector.reflect(
                     task_description=task_summary or "Task execution",
                     task_type=task_type,
-                    task_succeeded=False,
-                    outcome=failure_reason,
+                    task_succeeded=success,
+                    outcome=outcome_msg,
                     tool_calls=None,  # Could be passed in future
                     applied_bullets=bullet_ids,
-                    error_trace=failure_reason,
+                    error_trace=failure_reason if not success else None,
                     user_feedback=new_insight,
                 )
 
@@ -1280,6 +1485,7 @@ def register_tool_handlers(mcp: FastMCP):
 
                 log.info(
                     "ace_reflection_complete",
+                    task_succeeded=success,
                     insights=len(reflection.insights),
                     curation_added=curation.bullets_added,
                 )
@@ -1583,22 +1789,30 @@ def register_tool_handlers(mcp: FastMCP):
                 "Should linting/formatting be run? If so, have you done that?",
                 "Are there non-code files (docs, config) that should be updated?",
                 "Should new tests be written to cover the changes?",
+                "METHODOLOGY CAPTURE: What did you do differently that worked? Document HOW, not just WHAT.",
             ],
             "checklist": {
                 "code_changes": "All required code changes complete?",
                 "tests": "Tests passing? New tests needed?",
                 "linting": "Code formatted and linted?",
                 "documentation": "Docs updated if needed?",
+                "methodology": "Captured reusable methodology as playbook bullets?",
                 "ace_complete": "Called complete_task(success, bullets_applied)?",
             },
             "ace_workflow": {
                 "final_step": "complete_task(success=True/False, bullets_applied='[\"strat-xxx\", ...]')",
                 "purpose": "Records feedback for all bullets in one call, closing the ACE learning loop",
             },
+            "methodology_capture": {
+                "question": "What did I do differently that found issues others might miss?",
+                "action": "Add methodology as playbook bullet: playbook(action='add', task_type='debugging', content='...')",
+                "example": "If you used 'grep -c' to verify counts, add that technique as a bullet",
+            },
             "guidance": (
                 "Read relevant memory files to see what should be done when a task completes. "
                 "For exploration-only tasks, tests and linting may not be needed. "
                 "For code changes, verify the full validation workflow. "
+                "IMPORTANT: Capture reusable methodology as playbook bullets so other models can learn. "
                 "ALWAYS call complete_task() to close the ACE learning loop."
             ),
         }, indent=2)

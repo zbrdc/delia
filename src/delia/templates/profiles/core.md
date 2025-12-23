@@ -43,3 +43,16 @@ Before a single line of code is finalized, verify against the codebase:
 
 - **Public API:** Every public class/function requires a docstring defining Parameters, Return Type, and Exceptions raised.
 - **"The Why":** Comments should explain *why* a specific architectural choice or edge case handling exists, not *what* the code is doing (the code should be self-documenting).
+
+## 6. ACE Methodology Capture
+
+When completing any task, ask: **"What did I do differently that worked?"**
+
+- **Verification techniques** that revealed hidden issues → add to debugging playbook
+- **Search patterns** that found architectural problems → document for future sessions
+- **Code review depth** that caught what others missed → share the methodology
+
+Add reusable techniques as playbook bullets:
+```
+playbook(action="add", task_type="debugging", content="YOUR TECHNIQUE HERE")
+```

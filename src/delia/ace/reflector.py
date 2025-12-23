@@ -118,12 +118,13 @@ class Reflector:
     Uses existing LLM infrastructure - no new backends needed.
     """
 
-    def __init__(self, model_tier: str = "quick"):
+    def __init__(self, model_tier: str = "coder"):
         """
         Initialize Reflector.
 
         Args:
-            model_tier: LLM tier for reflection calls (default: "quick" for speed)
+            model_tier: LLM tier for reflection calls (default: "coder" for quality insights)
+                       P5: Upgraded from "quick" to "coder" for better reflection quality
         """
         self.model_tier = model_tier
 

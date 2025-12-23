@@ -550,11 +550,35 @@ async def generate_project_playbook(summarizer: Any = None) -> int:
     )
 
     # Store in playbook manager under "project" task type
-    for bullet in bullets:
-        playbook_manager.add_bullet("project", bullet.content, bullet.section)
+    # P4: Use curator to ensure semantic deduplication
+    from .ace.curator import Curator
+    curator = Curator(playbook_manager=playbook_manager)
 
-    log.info("project_playbook_generated", count=len(bullets), tech_stack=tech_stack)
-    return len(bullets)
+    added_count = 0
+    dedup_count = 0
+
+    for bullet in bullets:
+        try:
+            result = await curator.add_bullet(
+                task_type="project",
+                content=bullet.content,
+                section=bullet.section,
+            )
+            if result.get("added"):
+                added_count += 1
+            elif result.get("deduplicated"):
+                dedup_count += 1
+        except Exception as e:
+            log.warning("curator_add_failed_project_bullet", error=str(e), content=bullet.content[:50])
+
+    log.info(
+        "project_playbook_generated",
+        total=len(bullets),
+        added=added_count,
+        deduplicated=dedup_count,
+        tech_stack=tech_stack
+    )
+    return added_count
 
 
 # =============================================================================

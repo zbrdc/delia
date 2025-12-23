@@ -1,16 +1,5 @@
 {
   "mcpServers": {
-    "serena": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/oraios/serena",
-        "serena",
-        "start-mcp-server",
-        "--project",
-        "."
-      ]
-    },
     "shadcn": {
       "command": "npx",
       "args": [

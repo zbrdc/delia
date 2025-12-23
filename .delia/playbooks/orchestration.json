@@ -1,0 +1,14 @@
+[
+  {
+    "content": "For review tasks: prefer deep_thinking - Consensus helpful",
+    "id": "strat-7b045547",
+    "section": "mode_selection",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T23:29:37.711168",
+    "last_used": null,
+    "source_task": "orchestration",
+    "source": "reflector",
+    "utility_score": 0.5
+  }
+]

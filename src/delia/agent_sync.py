@@ -52,11 +52,79 @@ AGENT_INFO = {
 }
 
 
+def load_embedded_playbook_bullets(project_root: Path) -> str:
+    """
+    Load and format playbook bullets for embedding into instruction files.
+
+    This enables subagents (which don't have MCP access) to still benefit
+    from ACE Framework guidance by having the bullets embedded directly.
+
+    Returns:
+        Formatted markdown string with embedded bullets
+    """
+    delia_dir = project_root / ".delia"
+    if not delia_dir.exists():
+        return ""
+
+    playbooks_dir = delia_dir / "playbooks"
+    if not playbooks_dir.exists():
+        return ""
+
+    lines = [
+        "## PROJECT PLAYBOOK (Auto-loaded)",
+        "",
+        "These are learned strategies from this project. Apply them to relevant tasks:",
+        "",
+    ]
+
+    # Priority order for task types
+    task_types = ["coding", "testing", "architecture", "debugging", "project", "git", "security", "deployment", "api", "performance"]
+
+    import json
+
+    for task_type in task_types:
+        playbook_path = playbooks_dir / f"{task_type}.json"
+        if not playbook_path.exists():
+            continue
+
+        try:
+            with open(playbook_path) as f:
+                data = json.load(f)
+                bullets = data.get("bullets", [])
+
+            if not bullets:
+                continue
+
+            # Sort by utility score, take top 5
+            sorted_bullets = sorted(
+                bullets,
+                key=lambda b: b.get("utility_score", 0.5),
+                reverse=True
+            )[:5]
+
+            if sorted_bullets:
+                lines.append(f"### {task_type.title()}")
+                for bullet in sorted_bullets:
+                    content = bullet.get("content", "")
+                    if content:
+                        lines.append(f"- {content}")
+                lines.append("")
+
+        except (json.JSONDecodeError, IOError):
+            continue
+
+    if len(lines) <= 3:  # Only header lines, no bullets
+        return ""
+
+    return "\n".join(lines)
+
+
 def generate_agent_instructions(
     agent_id: str,
     project_name: str,
     project_rules: str,
     project_overview: str = "",
+    embedded_bullets: str = "",
 ) -> str:
     """
     Generate agent-specific instruction content.
@@ -69,6 +137,7 @@ def generate_agent_instructions(
         project_name: Name of the project
         project_rules: Project-specific rules to include
         project_overview: Optional project overview section
+        embedded_bullets: Pre-loaded playbook bullets for subagent access
 
     Returns:
         Agent-specific instruction content
@@ -109,8 +178,27 @@ mcp__delia__report_feedback(bullet_id="strat-xxx", task_type="coding", helpful=T
 
 ---
 
-{project_rules}
 """
+
+    # Embed playbook bullets for subagent access
+    if embedded_bullets:
+        content += embedded_bullets + "\n---\n\n"
+
+    # Add subagent fallback instructions
+    content += """## Subagent Fallback (No MCP Access)
+
+If running as a subagent without MCP tool access, read `.delia/` files directly:
+- `.delia/playbooks/*.json` - Task-specific bullets (coding, testing, etc.)
+- `.delia/memories/*.md` - Persistent project knowledge
+- `.delia/project_summary.json` - Project overview
+
+The playbook bullets above are auto-embedded, but for the latest, read the files.
+
+---
+
+"""
+
+    content += project_rules
 
     if project_overview:
         content += f"\n---\n\n## Project Overview\n\n{project_overview}\n"
@@ -265,8 +353,8 @@ def sync_agent_instruction_files(
 
     Strategy:
     - CLAUDE.md at root gets the full content (primary source of truth)
-    - Other agents get AGENT-SPECIFIC instructions generated from CLAUDE.md
-    - Each agent's file references Delia MCP with agent-specific config
+    - Other agents get agent-specific instructions with embedded playbook bullets
+    - Embedded bullets enable subagents (which lack MCP access) to benefit from ACE
     - Returns list of files written and detection info
 
     Args:
@@ -284,6 +372,10 @@ def sync_agent_instruction_files(
 
     # Extract project info from CLAUDE.md content for generating agent-specific files
     project_name, project_rules, project_overview = extract_project_rules(content)
+
+    # Load embedded playbook bullets for subagent access
+    # This enables agents/subagents without MCP to still benefit from ACE guidance
+    embedded_bullets = load_embedded_playbook_bullets(project_root)
 
     # Agents to sync
     primary_agents = ["claude_root", "claude_dir", "gemini", "copilot", "cursor", "windsurf"]
@@ -324,10 +416,25 @@ def sync_agent_instruction_files(
             if not agent["dir"].exists():
                 agent["dir"].mkdir(parents=True, exist_ok=True)
 
-            # All agents get the same comprehensive content
-            # Since all major agents now support MCP, they should have identical instructions
-            # This ensures consistent behavior across Claude, Gemini, Copilot, Cursor, etc.
-            agent_content = content
+            # Per-agent content generation:
+            # - Claude agents: Full content + embedded bullets for file-reading fallback
+            #   (Claude Code also has ace-task-hook.py for dynamic Task injection)
+            # - Other agents: Agent-specific instructions with embedded bullets
+            #   (No hook mechanism, so embedding is their ONLY way to get ACE context)
+            if agent_id in ("claude_root", "claude_dir"):
+                # Claude: Keep full content, append embedded bullets section
+                agent_content = content
+                if embedded_bullets:
+                    agent_content += f"\n\n---\n\n{embedded_bullets}"
+            else:
+                # Other agents: Generate agent-specific instructions with embedded bullets
+                agent_content = generate_agent_instructions(
+                    agent_id=agent_id,
+                    project_name=project_name,
+                    project_rules=project_rules,
+                    project_overview=project_overview,
+                    embedded_bullets=embedded_bullets,
+                )
 
             file_path.write_text(agent_content)
             files_written.append(str(file_path.relative_to(project_root)))

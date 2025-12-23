@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "delia": {
-      "command": "uv",
-      "args": ["run", "python", "mcp_server.py"],
-      "cwd": "/path/to/delia"
-    }
-  }
-}

@@ -67,10 +67,12 @@ class OrchestrationExecutor:
         from .critic import ResponseCritic
         from .dispatcher import ModelDispatcher
         from .planner import StrategicPlanner
+        from .learning_coordinator import get_learning_coordinator
         self.dispatcher = ModelDispatcher(call_llm)
         self.planner = StrategicPlanner(call_llm)
         self.critic = ResponseCritic(call_llm)
         self.tuning_advisor = get_tuning_advisor()
+        self.learning_coordinator = get_learning_coordinator()
 
     async def execute(
         self,
@@ -868,13 +870,18 @@ class OrchestrationExecutor:
 
             # Also generate a playbook-style lesson if we have insights
             if evaluation.insights:
-                # Add to orchestration-specific playbook
+                # P4: Use curator to ensure semantic deduplication
                 lesson = f"For {intent.task_type} tasks: prefer {winner_mode.value} - {evaluation.insights}"
-                playbook_manager.add_bullet(
-                    task_type="orchestration",
-                    content=lesson,
-                    section="mode_selection",
-                )
+                try:
+                    from ..ace.curator import Curator
+                    curator = Curator(playbook_manager=playbook_manager)
+                    await curator.add_bullet(
+                        task_type="orchestration",
+                        content=lesson,
+                        section="mode_selection",
+                    )
+                except Exception as e:
+                    log.warning("curator_add_failed_meta_learning", error=str(e))
 
                 log.info(
                     "ace_meta_learning_complete",
@@ -907,41 +914,27 @@ class OrchestrationExecutor:
     async def _record_playbook_feedback(self, task_type: str, quality_score: float | None) -> None:
         """
         Record feedback for playbook bullets used in this task.
-        
+
         Called after task completion to close the ACE learning loop.
         Bullets with quality >= 0.7 are marked helpful, < 0.4 harmful.
-        
+
         This enables the playbook to learn which strategies actually work.
+
+        NOTE: Delegates to LearningCoordinator (P3 refactoring).
         """
         if quality_score is None:
             return
-            
-        # Get bullets that were used for this task type
-        bullets = playbook_manager.load_playbook(task_type)
-        if not bullets:
-            return
-            
-        # Determine if the task was helpful based on quality threshold
-        helpful = quality_score >= 0.7
-        
+
         # Only record feedback for high or low quality (skip neutral 0.4-0.7)
         if 0.4 <= quality_score < 0.7:
             return
-            
-        # Record feedback for bullets that were loaded (assumed used)
-        # We record for the top bullets that would have been injected
-        top_bullets = playbook_manager.get_top_bullets(task_type, limit=5)
-        for bullet in top_bullets:
-            playbook_manager.record_feedback(bullet.id, task_type, helpful)
-            
-        if top_bullets:
-            log.debug(
-                "playbook_feedback_recorded",
-                task_type=task_type,
-                quality_score=round(quality_score, 3),
-                helpful=helpful,
-                bullets_updated=len(top_bullets),
-            )
+
+        # Delegate to LearningCoordinator
+        await self.learning_coordinator.record_bullet_feedback(
+            task_type=task_type,
+            bullet_ids=[],  # LearningCoordinator retrieves top bullets internally
+            quality_score=quality_score,
+        )
 
     def _extract_confidence(self, response: str) -> float:
         """
@@ -1018,48 +1011,21 @@ class OrchestrationExecutor:
         """
         Use the ACE Reflector → Curator pipeline to learn from failures.
 
-        This replaces the legacy approach of raw LLM calls with the proper
-        ACE modules that include:
-        - Structured reflection prompts
-        - Semantic deduplication before adding bullets
-        - Utility/recency scoring for retrieval
+        NOTE: Delegates to LearningCoordinator (P3 refactoring).
         """
-        try:
-            from ..ace.reflector import get_reflector
-            from ..ace.curator import get_curator
-            from pathlib import Path
+        # Get top bullets for context
+        top_bullets = playbook_manager.get_top_bullets(task_type, limit=5)
+        applied_bullet_ids = [b.id for b in top_bullets]
 
-            reflector = get_reflector()
-            curator = get_curator(str(Path.cwd()))
-
-            # Get bullet IDs that were used (approximation: top bullets for this task type)
-            top_bullets = playbook_manager.get_top_bullets(task_type, limit=5)
-            applied_bullet_ids = [b.id for b in top_bullets]
-
-            # Run structured reflection
-            reflection = await reflector.reflect(
-                task_description=message,
-                task_type=task_type,
-                task_succeeded=False,
-                outcome=response,
-                tool_calls=None,
-                applied_bullets=applied_bullet_ids,
-                error_trace=error,
-                user_feedback=None,
-            )
-
-            # Curate the playbook with delta updates
-            curation = await curator.curate(reflection, auto_prune=False)
-
-            log.info(
-                "ace_reflection_complete",
-                task_type=task_type,
-                insights=len(reflection.insights),
-                bullets_added=curation.bullets_added,
-                dedup_prevented=curation.dedup_prevented,
-            )
-        except Exception as e:
-            log.warning("ace_reflection_failed", task_type=task_type, error=str(e))
+        # Delegate to LearningCoordinator
+        await self.learning_coordinator.reflect_on_outcome(
+            task_type=task_type,
+            task_description=message,
+            outcome=response,
+            success=False,
+            error=error,
+            applied_bullets=applied_bullet_ids,
+        )
 
 _executor: OrchestrationExecutor | None = None
 
