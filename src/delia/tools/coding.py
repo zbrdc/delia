@@ -664,6 +664,203 @@ async def git_diff(
         return f"Error getting git diff: {e}"
 
 
+async def git_log(
+    path: str = ".",
+    file: str | None = None,
+    n: int = 10,
+    since: str | None = None,
+    author: str | None = None,
+    oneline: bool = False,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """
+    Show git commit history.
+
+    Args:
+        path: Repository path
+        file: Filter to specific file
+        n: Number of commits to show (default 10)
+        since: Date filter (e.g., "2024-01-01", "1 week ago")
+        author: Author filter (partial match)
+        oneline: Compact one-line format
+        workspace: Optional workspace confinement
+
+    Returns:
+        Formatted commit history
+    """
+    if workspace and not Path(path).is_absolute():
+        repo_path = workspace.root if path == "." else workspace.root / path
+    else:
+        repo_path = Path(path).expanduser().resolve()
+
+    if oneline:
+        fmt = "--oneline"
+    else:
+        fmt = "--format=%H%n%an <%ae>%n%ai%n%s%n%b%n---"
+
+    cmd = ["git", "log", fmt, f"-n{n}"]
+
+    if since:
+        cmd.append(f"--since={since}")
+    if author:
+        cmd.append(f"--author={author}")
+    if file:
+        cmd.append("--")
+        cmd.append(file)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(repo_path),
+        )
+
+        if result.returncode != 0:
+            return f"Error: {result.stderr.strip()}"
+
+        output = result.stdout.strip()
+        if not output:
+            return "No commits found matching criteria"
+
+        if len(output) > 15000:
+            output = output[:15000] + "\n\n... [Log truncated]"
+
+        header = f"# Git Log ({n} commits)"
+        if file:
+            header += f" - {file}"
+
+        return f"{header}\n\n{output}"
+
+    except Exception as e:
+        return f"Error getting git log: {e}"
+
+
+async def git_blame(
+    file: str,
+    path: str = ".",
+    start_line: int | None = None,
+    end_line: int | None = None,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """
+    Show line-by-line authorship for a file.
+
+    Args:
+        file: File to blame
+        path: Repository path
+        start_line: Start line (1-indexed)
+        end_line: End line (1-indexed)
+        workspace: Optional workspace confinement
+
+    Returns:
+        Blame output with commit, author, date, and line content
+    """
+    if workspace and not Path(path).is_absolute():
+        repo_path = workspace.root if path == "." else workspace.root / path
+    else:
+        repo_path = Path(path).expanduser().resolve()
+
+    cmd = ["git", "blame", "--date=short"]
+
+    if start_line and end_line:
+        cmd.extend(["-L", f"{start_line},{end_line}"])
+    elif start_line:
+        cmd.extend(["-L", f"{start_line},"])
+
+    cmd.append(file)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(repo_path),
+        )
+
+        if result.returncode != 0:
+            return f"Error: {result.stderr.strip()}"
+
+        output = result.stdout.strip()
+        if not output:
+            return f"No blame data for {file}"
+
+        if len(output) > 20000:
+            output = output[:20000] + "\n\n... [Blame truncated]"
+
+        header = f"# Git Blame - {file}"
+        if start_line:
+            header += f" (lines {start_line}-{end_line or 'end'})"
+
+        return f"{header}\n\n```\n{output}\n```"
+
+    except Exception as e:
+        return f"Error getting git blame: {e}"
+
+
+async def git_show(
+    commit: str,
+    file: str | None = None,
+    path: str = ".",
+    stat: bool = False,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """
+    Show commit details and diff.
+
+    Args:
+        commit: Commit hash or reference (e.g., "HEAD", "abc123", "HEAD~3")
+        file: Specific file to show changes for
+        path: Repository path
+        stat: Show diffstat instead of full diff
+        workspace: Optional workspace confinement
+
+    Returns:
+        Commit details with diff
+    """
+    if workspace and not Path(path).is_absolute():
+        repo_path = workspace.root if path == "." else workspace.root / path
+    else:
+        repo_path = Path(path).expanduser().resolve()
+
+    cmd = ["git", "show", "--color=never", commit]
+
+    if stat:
+        cmd.append("--stat")
+    if file:
+        cmd.append("--")
+        cmd.append(file)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(repo_path),
+        )
+
+        if result.returncode != 0:
+            return f"Error: {result.stderr.strip()}"
+
+        output = result.stdout.strip()
+        if not output:
+            return f"Commit not found: {commit}"
+
+        if len(output) > 20000:
+            output = output[:20000] + "\n\n... [Output truncated]"
+
+        return f"# Git Show - {commit}\n\n```\n{output}\n```"
+
+    except Exception as e:
+        return f"Error getting git show: {e}"
+
+
 # =============================================================================
 # Registry Builder
 # =============================================================================

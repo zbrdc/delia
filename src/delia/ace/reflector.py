@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Sequence
 
 import structlog
 
@@ -135,7 +135,7 @@ class Reflector:
         task_succeeded: bool,
         outcome: str | None = None,
         tool_calls: list[dict] | None = None,
-        applied_bullets: list[dict] | None = None,
+        applied_bullets: Sequence[str | dict] | None = None,
         error_trace: str | None = None,
         user_feedback: str | None = None,
     ) -> ReflectionResult:
@@ -148,7 +148,7 @@ class Reflector:
             task_succeeded: Whether task completed successfully
             outcome: The final response given (optional, can be long)
             tool_calls: List of tools called during execution
-            applied_bullets: Playbook bullets that were applied [{id, content}, ...]
+            applied_bullets: Playbook bullets applied - can be bullet IDs (str) or dicts with {id, content}
             error_trace: Any errors encountered
             user_feedback: Explicit user feedback if available
 

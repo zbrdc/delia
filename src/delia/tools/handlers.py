@@ -3,763 +3,65 @@
 
 """
 High-level MCP tool handlers for Delia.
+
+This module registers all MCP tools with FastMCP. Implementation functions
+are in separate modules:
+- handlers_ace.py: ACE enforcement classes and helpers
+- handlers_orchestration.py: delegate, think, batch, chain, workflow, agent
+- handlers_playbook.py: playbook management tools
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
-import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 from fastmcp import FastMCP
 
 from ..container import get_container
-from ..orchestration.result import OrchestrationMode, ModelRole, DetectedIntent
-from ..orchestration.executor import get_orchestration_executor
-from ..orchestration.service import get_orchestration_service
-from ..text_utils import strip_thinking_tags
-from .. import llm
-from ..routing import get_router, select_model
 from ..language import detect_language
-from ..validation import validate_content, validate_file_path, validate_task
-from ..config import get_affinity_tracker, get_backend_health, get_prewarm_tracker
-from ..messages import StatusEvent, get_display_event, get_status_message
-from ..voting import VotingConsensus
-from ..voting_stats import get_voting_stats_tracker
-from ..quality import ResponseQualityValidator
-from ..types import Workspace
-from ..delegation import (
-    start_prewarm_task,
-    _delegate_with_voting,
-    _delegate_with_tot,
-    _get_delegate_context,
-    get_delegate_signals,
-    prepare_delegate_content,
-    determine_task_type,
-    _select_delegate_model_impl,
-    _delegate_impl
+
+# Import from refactored modules
+from .handlers_ace import (
+    ACE_EXEMPT_TOOLS,
+    ACEEnforcementTracker,
+    ACEEnforcementManager,
+    get_ace_tracker,
+    get_ace_manager,
+    check_ace_gate,
+    inject_ace_reminder,
+    auto_trigger_reflection,
+)
+from .handlers_orchestration import (
+    think_impl,
+    batch_impl,
+    delegate_tool_impl,
+    session_compact_impl,
+    session_stats_impl,
+    session_list_impl,
+    session_delete_impl,
+    chain_impl,
+    workflow_impl,
+    agent_impl,
+)
+from .handlers_playbook import (
+    get_playbook_impl,
+    report_feedback_impl,
+    get_project_context_impl,
+    playbook_stats_impl,
 )
 
 log = structlog.get_logger()
 
-
-# =============================================================================
-# ACE Framework Dynamic Enforcement
-# =============================================================================
-
-# Tools that can be used without calling auto_context first
-ACE_EXEMPT_TOOLS = {
-    "auto_context",
-    "check_ace_status",
-    "read_initial_instructions",
-    "health",
-    "models",
-    "set_project",
-    "get_project_context",
-    "get_playbook",
-    "dashboard_url",
-    "queue_status",
-    "mcp_servers",
-    "init_project",
-    "scan_codebase",
-}
-
-
-class ACEEnforcementTracker:
-    """Track ACE compliance dynamically across tool calls.
-
-    Provides two enforcement mechanisms:
-    1. Soft enforcement: record_playbook_query() and check_compliance()
-    2. Hard enforcement: record_ace_started() and require_ace_started()
-    """
-
-    def __init__(self) -> None:
-        self._playbook_queries: dict[str, float] = {}  # path -> last query timestamp
-        self._ace_started: dict[str, float] = {}  # path -> timestamp when auto_context called
-        self._pending_tasks: dict[str, dict] = {}  # path -> {task, start_time}
-        self._compliance_warnings: int = 0
-        self._gating_enabled: bool = True  # Can be disabled for testing
-
-    def record_ace_started(self, path: str) -> None:
-        """Record that auto_context was called for a project."""
-        self._ace_started[path] = time.time()
-        self._playbook_queries[path] = time.time()  # Also counts as playbook query
-        log.info("ace_workflow_started", path=path)
-
-    def is_ace_started(self, path: str) -> bool:
-        """Check if auto_context was called recently (within 30 minutes)."""
-        if path not in self._ace_started:
-            return False
-        # 30 minute window for a single task session
-        return (time.time() - self._ace_started[path]) < 1800
-
-    def require_ace_started(self, path: str, tool_name: str) -> dict | None:
-        """Check if ACE was started. Returns error dict if not, None if OK.
-
-        Use this for tool gating - returns an error response if ACE wasn't started.
-        """
-        if not self._gating_enabled:
-            return None
-
-        if tool_name in ACE_EXEMPT_TOOLS:
-            return None
-
-        if self.is_ace_started(path):
-            return None
-
-        # ACE not started - return error for tool gating
-        return {
-            "error": "ACE_WORKFLOW_REQUIRED",
-            "message": (
-                "You must call auto_context() before using this tool. "
-                "ACE Framework ensures you get project-specific guidance before making changes."
-            ),
-            "action": f'auto_context(message="your task description", path="{path}")',
-            "tool_blocked": tool_name,
-        }
-
-    def record_playbook_query(self, path: str) -> None:
-        """Record that playbooks were queried for a project."""
-        self._playbook_queries[path] = time.time()
-        log.debug("ace_playbook_queried", path=path)
-    
-    def record_task_start(self, path: str, task_type: str):
-        """Record that a coding task started."""
-        self._pending_tasks[path] = {
-            "task_type": task_type,
-            "start_time": time.time(),
-            "playbook_queried": path in self._playbook_queries and 
-                               (time.time() - self._playbook_queries.get(path, 0)) < 300  # 5 min window
-        }
-    
-    def check_compliance(self, path: str) -> dict | None:
-        """Check if ACE workflow was followed. Returns warning if not."""
-        pending = self._pending_tasks.get(path)
-        if not pending:
-            return None
-        
-        if not pending.get("playbook_queried"):
-            self._compliance_warnings += 1
-            return {
-                "warning": "ACE_PLAYBOOK_NOT_QUERIED",
-                "message": f"Started {pending['task_type']} task without querying playbooks first.",
-                "action_required": f"Call get_playbook(task_type='{pending['task_type']}', path='{path}') before coding.",
-                "total_warnings": self._compliance_warnings,
-            }
-        return None
-    
-    def get_dynamic_reminder(self, path: str, response: str) -> str | None:
-        """Generate dynamic reminder to inject into response."""
-        warning = self.check_compliance(path)
-        if warning:
-            return (
-                f"\n\n⚠️ **ACE Framework Reminder**: {warning['message']}\n"
-                f"Action: {warning['action_required']}\n"
-                f"Then call `confirm_ace_compliance()` after completing the task."
-            )
-        
-        # Check if task completed without confirmation
-        pending = self._pending_tasks.get(path)
-        if pending and (time.time() - pending.get("start_time", 0)) > 60:  # Task > 1 min
-            return (
-                "\n\n📋 **ACE Reminder**: Don't forget to close the learning loop!\n"
-                "Call `confirm_ace_compliance(task_description='...', bullets_applied='...', ...)` "
-                "then `report_feedback()` for helpful bullets."
-            )
-        return None
-    
-    def clear_task(self, path: str):
-        """Clear pending task after confirmation."""
-        self._pending_tasks.pop(path, None)
-    
-    def was_playbook_queried(self, path: str) -> bool:
-        """Check if playbook was queried recently for this project."""
-        if path not in self._playbook_queries:
-            return False
-        # 5 minute window
-        return (time.time() - self._playbook_queries[path]) < 300
-
-
-# Global tracker instance
-_ace_tracker = ACEEnforcementTracker()
-
-
-def get_ace_tracker() -> ACEEnforcementTracker:
-    """Get the global ACE enforcement tracker."""
-    return _ace_tracker
-
-
-def check_ace_gate(tool_name: str, path: str | None = None) -> str | None:
-    """Check if ACE workflow was followed. Returns error JSON if not, None if OK.
-
-    Call this at the start of tools that modify code or delegate work.
-    Returns None if OK to proceed, or a JSON error string to return immediately.
-
-    Args:
-        tool_name: Name of the tool being called
-        path: Project path (uses cwd if not provided)
-    """
-    from pathlib import Path as PyPath
-
-    project_path = str(PyPath(path).resolve()) if path else str(PyPath.cwd())
-    tracker = get_ace_tracker()
-    error = tracker.require_ace_started(project_path, tool_name)
-
-    if error:
-        return json.dumps({"result": error}, indent=2)
-    return None
-
-
-def inject_ace_reminder(response: str, project_path: str) -> str:
-    """Inject ACE Framework reminder into tool response if needed.
-
-    This ensures agents are consistently reminded to follow the ACE workflow.
-    """
-    tracker = get_ace_tracker()
-    reminder = tracker.get_dynamic_reminder(project_path, response)
-    if reminder:
-        return response + reminder
-    return response
-
-
-async def auto_trigger_reflection(
-    task_type: str,
-    task_description: str,
-    outcome: str,
-    success: bool = True,
-    project_path: str | None = None,
-    applied_bullets: list[str] | None = None,
-) -> dict | None:
-    """
-    Auto-trigger reflection for tool completions.
-
-    This enables automatic learning from delegate/think/batch executions
-    without requiring manual complete_task() calls.
-
-    Args:
-        task_type: Type of task (quick, analyze, etc.)
-        task_description: What was requested
-        outcome: Result summary
-        success: Whether task succeeded
-        project_path: Project directory
-        applied_bullets: Bullet IDs used (if any)
-
-    Returns:
-        Reflection result dict or None if failed
-    """
-    try:
-        from ..ace.reflector import get_reflector
-        from ..ace.curator import get_curator
-        from pathlib import Path as PyPath
-
-        proj_path = PyPath(project_path) if project_path else PyPath.cwd()
-        reflector = get_reflector()
-        curator = get_curator(str(proj_path))
-
-        # Run reflection
-        reflection = await reflector.reflect(
-            task_description=task_description,
-            task_type=task_type,
-            task_succeeded=success,
-            outcome=outcome,
-            tool_calls=None,
-            applied_bullets=applied_bullets or [],
-            error_trace=None if success else outcome,
-            user_feedback=None,
-        )
-
-        # Curate playbook with insights
-        curation = await curator.curate(reflection, auto_prune=False)
-
-        log.info(
-            "auto_reflection_complete",
-            task_type=task_type,
-            success=success,
-            insights=len(reflection.insights),
-            bullets_added=curation.bullets_added,
-        )
-
-        return {
-            "insights_extracted": len(reflection.insights),
-            "bullets_added": curation.bullets_added,
-            "dedup_prevented": curation.dedup_prevented,
-        }
-    except Exception as e:
-        log.warning("auto_reflection_failed", task_type=task_type, error=str(e))
-        return None
-
-
-async def think_impl(
-    problem: str,
-    context: str = "",
-    depth: str = "normal",
-    session_id: str | None = None,
-) -> str:
-    """Implementation of the think tool."""
-    # ACE Framework Enforcement
-    project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "think")
-
-    container = get_container()
-    if depth == "quick":
-        model_hint = "quick"
-    elif depth == "deep":
-        model_hint = "thinking"
-    else:
-        model_hint = "thinking"
-
-    thinking_prompt = f"Think through this problem step by step:\n\n## Problem\n{problem}\n"
-    if context: thinking_prompt += f"\n## Context\n{context}\n"
-    thinking_prompt += "\n## Instructions\n1. Break down the problem into components\n2. Consider different approaches\n3. Reason through each step\n4. Conclusion\n\nThink deeply before answering."
-
-    service = get_orchestration_service()
-    result = await service.process(message=thinking_prompt, session_id=session_id, model_override=model_hint)
-
-    container.stats_service.increment_task("think")
-    from ..mcp_server import save_all_stats_async
-    await save_all_stats_async()
-
-    # Auto-trigger reflection for learning
-    response_text = result.result.response
-    success = not response_text.startswith("Error:")
-    outcome = response_text[:200] if len(response_text) > 200 else response_text
-    await auto_trigger_reflection(
-        task_type="think",
-        task_description=problem[:100],
-        outcome=outcome,
-        success=success,
-        project_path=project_path,
-    )
-
-    return inject_ace_reminder(response_text, project_path)
-
-
-async def batch_impl(
-    tasks: str,
-    include_metadata: bool = True,
-    max_tokens: int | None = None,
-    session_id: str | None = None,
-) -> str:
-    """Implementation of the batch tool."""
-    # ACE Framework Enforcement
-    project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "batch")
-
-    container = get_container()
-    start_time = time.time()
-    try:
-        task_list = json.loads(tasks)
-    except json.JSONDecodeError as e: return f"Error: Invalid JSON - {e}"
-    if not isinstance(task_list, list): return "Error: tasks must be a JSON array"
-    if len(task_list) == 0: return "Error: tasks array is empty"
-
-    available = await container.backend_manager.check_all_health()
-    backend_assignments = container.model_router.assign_backends_to_tasks(task_list, available, container.backend_manager)
-
-    from ..mcp_server import current_client_id, current_username
-    from ..delegation import _delegate_impl
-
-    captured_client_id = current_client_id.get()
-    captured_username = current_username.get()
-
-    async def run_task(i: int, t: dict, backend_id: str, client_id: str | None, username: str | None) -> str:
-        current_client_id.set(client_id)
-        current_username.set(username)
-        task_type = t.get("task", "analyze")
-        result = await _delegate_impl(
-            task=task_type, content=t.get("content", ""), file=t.get("file"),
-            model=t.get("model"), language=t.get("language"), context=t.get("context"),
-            symbols=t.get("symbols"), include_references=t.get("include_references", False),
-            backend=backend_id, files=t.get("files"),
-            include_metadata=t.get("include_metadata", include_metadata),
-            max_tokens=t.get("max_tokens", max_tokens), session_id=session_id,
-        )
-        return f"### Task {i + 1}: {task_type}\n\n{result}"
-
-    results = await asyncio.gather(*[run_task(i, t, backend_assignments[i], captured_client_id, captured_username) for i, t in enumerate(task_list)])
-    elapsed_ms = int((time.time() - start_time) * 1000)
-    result = f"# Batch Results\n\n{chr(10).join(results)}\n\n---\n_Total tasks: {len(task_list)} | Total time: {elapsed_ms}ms_"
-
-    # Auto-trigger reflection for batch learning
-    await auto_trigger_reflection(
-        task_type="batch",
-        task_description=f"Batch of {len(task_list)} tasks",
-        outcome=f"Completed {len(task_list)} tasks in {elapsed_ms}ms",
-        success=True,
-        project_path=project_path,
-    )
-
-    return inject_ace_reminder(result, project_path)
-
-
-async def delegate_tool_impl(
-    task: str,
-    content: str,
-    file: str | None = None,
-    model: str | None = None,
-    language: str | None = None,
-    context: str | None = None,
-    symbols: str | None = None,
-    include_references: bool = False,
-    backend_type: str | None = None,
-    files: str | None = None,
-    include_metadata: bool = True,
-    max_tokens: int | None = None,
-    dry_run: bool = False,
-    session_id: str | None = None,
-    stream: bool = False,
-    reliable: bool = False,
-    voting_k: int = 3,
-    tot: bool = False,
-    auto_context: bool = False,
-) -> str:
-    """Implementation of the delegate tool."""
-    # ACE Gating: Require auto_context before delegation
-    project_path = str(Path(file).parent) if file else str(Path.cwd())
-    gate_error = check_ace_gate("delegate", project_path)
-    if gate_error:
-        return gate_error
-
-    start_prewarm_task()
-
-    # ACE Framework Enforcement: Record task start
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, task)
-
-    if reliable:
-        return await _delegate_with_voting(
-            task=task, content=content, file=file, model=model, language=language,
-            context=context, symbols=symbols, include_references=include_references,
-            backend_type=backend_type, files=files, include_metadata=include_metadata,
-            max_tokens=max_tokens, session_id=session_id, voting_k=voting_k,
-        )
-
-    if tot:
-        return await _delegate_with_tot(
-            task=task, content=content, file=file, model=model, language=language,
-            context=context, symbols=symbols, include_references=include_references,
-            backend_type=backend_type, files=files, include_metadata=include_metadata,
-            max_tokens=max_tokens, session_id=session_id,
-        )
-
-    if dry_run:
-        ctx = _get_delegate_context()
-        signals = await get_delegate_signals(
-            ctx, task, content, file, model, language, context, symbols, include_references, files,
-        )
-        return json.dumps(signals, indent=2)
-
-    _, backend_obj = await get_router().select_optimal_backend(content, file, task, backend_type)
-
-    if stream and backend_obj:
-        ctx = _get_delegate_context()
-        prepared_content = await prepare_delegate_content(
-            content, context, symbols, include_references, files, auto_context=auto_context,
-        )
-        task_type = determine_task_type(task)
-        context_header = f"Task: {task_type}\n"
-        if file: context_header += f"File: {file}\n"
-        if language: context_header += f"Language: {language}\n"
-        if symbols: context_header += f"Symbols: {symbols}\n"
-        if context: context_header += f"Context Files: {context}\n"
-        prepared_content = f"{context_header}\n{prepared_content}"
-
-        detected_language = language or detect_language(prepared_content, file or "")
-        from ..prompts import build_system_prompt
-        role_map = {"review": ModelRole.CODE_REVIEWER, "generate": ModelRole.CODE_GENERATOR, "analyze": ModelRole.ANALYST, "summarize": ModelRole.SUMMARIZER, "plan": ModelRole.ARCHITECT, "critique": ModelRole.ANALYST}
-        role = role_map.get(task_type, ModelRole.ASSISTANT)
-        system = build_system_prompt(role=role)
-        if detected_language: system += f"\n\nPrimary language: {detected_language}"
-
-        selected_model, tier, _source = await _select_delegate_model_impl(
-            ctx, task_type, prepared_content, model, None, backend_obj
-        )
-
-        full_response = ""
-        total_tokens = 0
-        elapsed_ms = 0
-        start_time = time.time()
-
-        async for chunk in llm.call_llm_stream(
-            model=selected_model, prompt=prepared_content, system=system, task_type=task_type,
-            original_task=task, language=detected_language, backend_obj=backend_obj, max_tokens=max_tokens,
-        ):
-            if chunk.text: full_response += chunk.text
-            if chunk.done:
-                total_tokens = chunk.tokens
-                if chunk.metadata: elapsed_ms = chunk.metadata.get("elapsed_ms", 0)
-                if chunk.error: return f"Error: {chunk.error}"
-
-        if elapsed_ms == 0: elapsed_ms = int((time.time() - start_time) * 1000)
-        full_response = strip_thinking_tags(full_response)
-
-        if include_metadata:
-            result = f"{full_response}\n\n---\n_[OK] {task} (streamed) | {tier} tier | {elapsed_ms}ms | {selected_model}_"
-            return inject_ace_reminder(result, project_path)
-        return inject_ace_reminder(full_response, project_path)
-
-    result = await _delegate_impl(
-        task, content, file, model, language, context, symbols, include_references,
-        backend=backend_type, backend_obj=backend_obj, files=files,
-        include_metadata=include_metadata, max_tokens=max_tokens, session_id=session_id, auto_context=auto_context,
-    )
-
-    # Auto-trigger reflection for learning
-    # Success is determined by lack of "Error:" in result
-    success = not result.startswith("Error:")
-    task_desc = f"{task}: {content[:100]}..." if len(content) > 100 else f"{task}: {content}"
-    outcome = result[:200] if len(result) > 200 else result
-    await auto_trigger_reflection(
-        task_type=task,
-        task_description=task_desc,
-        outcome=outcome,
-        success=success,
-        project_path=project_path,
-    )
-
-    return inject_ace_reminder(result, project_path)
-
-
-async def session_compact_impl(session_id: str, force: bool = False) -> str:
-    """Implementation of the session_compact tool."""
-    from ..session_manager import get_session_manager
-    sm = get_session_manager()
-    result = await sm.compact_session(session_id, force=force)
-    return json.dumps(result, indent=2)
-
-
-async def session_stats_impl(session_id: str) -> str:
-    """Implementation of the session_stats tool."""
-    from ..session_manager import get_session_manager
-    sm = get_session_manager()
-    stats = sm.get_compaction_stats(session_id)
-    if stats is None:
-        return f"Error: Session {session_id} not found."
-    return json.dumps(stats, indent=2)
-
-
-async def session_list_impl(client_id: str | None = None) -> str:
-    """Implementation of the session_list tool."""
-    from ..session_manager import get_session_manager
-    sm = get_session_manager()
-    sessions = sm.list_sessions(client_id=client_id)
-    return json.dumps(sessions, indent=2)
-
-
-async def session_delete_impl(session_id: str) -> str:
-    """Implementation of the session_delete tool."""
-    from ..session_manager import get_session_manager
-    sm = get_session_manager()
-    success = sm.delete_session(session_id)
-    return "Session deleted." if success else f"Error: Session {session_id} not found."
-
-
-async def chain_impl(steps: str, session_id: str | None = None, continue_on_error: bool = False) -> str:
-    """Implementation of the chain tool."""
-    # ACE Framework Enforcement
-    project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "chain")
-
-    from ..task_chain import parse_chain_steps, execute_chain
-    from ..delegation import get_delegate_context
-    steps_list = parse_chain_steps(steps)
-    ctx = get_delegate_context()
-    result = await execute_chain(steps_list, ctx, session_id, continue_on_error)
-    return inject_ace_reminder(json.dumps(result.to_dict(), indent=2), project_path)
-
-
-async def workflow_impl(definition: str, session_id: str | None = None, max_retries: int = 1) -> str:
-    """Implementation of the workflow tool."""
-    # ACE Framework Enforcement
-    project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "workflow")
-
-    from ..task_workflow import parse_workflow_definition, execute_workflow
-    from ..delegation import get_delegate_context
-    wf = parse_workflow_definition(definition)
-    ctx = get_delegate_context()
-    result = await execute_workflow(wf, ctx, session_id, max_retries)
-    return inject_ace_reminder(json.dumps(result.to_dict(), indent=2), project_path)
-
-
-async def agent_impl(
-    prompt: str,
-    system_prompt: str | None = None,
-    model: str | None = None,
-    max_iterations: int = 10,
-    tools: str | None = None,
-    backend_type: str | None = None,
-    workspace: str | None = None,
-) -> str:
-    """Implementation of the agent tool."""
-    # ACE Framework Enforcement
-    project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "agent")
-
-    from .agent import run_agent_loop, AgentConfig
-    from .registry import get_default_registry
-    from ..llm import call_llm
-
-    config = AgentConfig(max_iterations=max_iterations)
-    registry = get_default_registry()
-
-    # Custom model selection if not provided
-    if not model:
-        from ..routing import select_model
-        model = await select_model("agentic", len(prompt))
-
-    result = await run_agent_loop(
-        call_llm=call_llm,
-        prompt=prompt,
-        system_prompt=system_prompt,
-        registry=registry,
-        model=model,
-        config=config,
-    )
-
-    return inject_ace_reminder(result.response, project_path)
-
-
-
-# =============================================================================
-# Playbook Tools (ACE Framework)
-# =============================================================================
-
-async def get_playbook_impl(task_type: str = "general", limit: int = 15, path: str | None = None) -> str:
-    """Get strategic playbook bullets for a task type."""
-    from pathlib import Path
-    from ..playbook import playbook_manager
-    
-    # Set project path if provided (ensures project-specific playbooks)
-    project_path = path or str(Path.cwd())
-    if path:
-        playbook_manager.set_project(Path(path))
-    
-    # Record playbook query for ACE enforcement
-    get_ace_tracker().record_playbook_query(project_path)
-    
-    bullets = playbook_manager.get_top_bullets(task_type, limit)
-    if not bullets:
-        # Try project-level playbook if task-specific is empty
-        bullets = playbook_manager.get_top_bullets("project", limit)
-    
-    if not bullets:
-        return json.dumps({
-            "status": "empty",
-            "message": f"No playbook bullets found for '{task_type}'. Run 'delia index --summarize' to generate.",
-            "bullets": []
-        })
-    
-    result = {
-        "task_type": task_type,
-        "bullet_count": len(bullets),
-        "bullets": [
-            {
-                "id": b.id,
-                "content": b.content,
-                "section": b.section,
-                "utility_score": round(b.utility_score, 3),
-                "helpful_count": b.helpful_count,
-                "harmful_count": b.harmful_count,
-            }
-            for b in bullets
-        ]
-    }
-    return json.dumps(result, indent=2)
-
-
-async def report_feedback_impl(bullet_id: str, task_type: str, helpful: bool, path: str | None = None) -> str:
-    """Report whether a playbook bullet was helpful for a task."""
-    from pathlib import Path
-    from ..playbook import playbook_manager
-    
-    # Set project path if provided
-    if path:
-        playbook_manager.set_project(Path(path))
-    
-    success = playbook_manager.record_feedback(bullet_id, task_type, helpful)
-    
-    if success:
-        log.info("playbook_feedback_recorded", bullet_id=bullet_id, task_type=task_type, helpful=helpful)
-        return json.dumps({
-            "status": "recorded",
-            "bullet_id": bullet_id,
-            "helpful": helpful,
-            "message": f"Feedback recorded. Bullet {'helped' if helpful else 'did not help'} with task."
-        })
-    else:
-        return json.dumps({
-            "status": "not_found",
-            "bullet_id": bullet_id,
-            "message": f"Bullet '{bullet_id}' not found in playbook '{task_type}'."
-        })
-
-
-async def get_project_context_impl(path: str | None = None) -> str:
-    """Get high-level project understanding from playbook and summaries."""
-    from pathlib import Path
-    from ..playbook import playbook_manager
-    from ..orchestration.summarizer import get_summarizer
-    from ..mcp_server import set_project_context
-    
-    # Set project path for both playbooks and MCP context
-    if path:
-        playbook_manager.set_project(Path(path))
-        set_project_context(path)
-    
-    # Get project playbook bullets
-    bullets = playbook_manager.get_top_bullets("project", limit=10)
-    
-    # Get project overview from summarizer
-    summarizer = get_summarizer()
-    overview = summarizer.get_project_overview() if hasattr(summarizer, 'get_project_overview') else None
-    
-    result = {
-        "playbook_bullets": [
-            {"id": b.id, "content": b.content, "section": b.section}
-            for b in bullets
-        ],
-        "project_overview": overview,
-        "playbook_stats": playbook_manager.get_stats(),
-    }
-    return json.dumps(result, indent=2)
-
-
-async def playbook_stats_impl(task_type: str | None = None) -> str:
-    """Get playbook statistics and utility scores."""
-    from ..playbook import playbook_manager
-    
-    if task_type:
-        bullets = playbook_manager.load_playbook(task_type)
-        return json.dumps({
-            "task_type": task_type,
-            "bullet_count": len(bullets),
-            "bullets": [
-                {
-                    "id": b.id,
-                    "content": b.content[:100] + "..." if len(b.content) > 100 else b.content,
-                    "utility_score": round(b.utility_score, 3),
-                    "helpful": b.helpful_count,
-                    "harmful": b.harmful_count,
-                }
-                for b in bullets
-            ]
-        }, indent=2)
-    else:
-        return json.dumps(playbook_manager.get_stats(), indent=2)
+# Re-export for backwards compatibility
+_ace_manager = get_ace_manager()
 
 
 def register_tool_handlers(mcp: FastMCP):
     """Register all high-level tool handlers with FastMCP."""
-    
+
     container = get_container()
 
     @mcp.tool()
@@ -786,7 +88,7 @@ def register_tool_handlers(mcp: FastMCP):
     ) -> str:
         """
         Execute a task with intelligent 3-tier model selection.
-        
+
         Offloads work to configured LLM backends. Only use when user explicitly
         requests delegation ("delegate", "offload", "use local model").
         """
@@ -903,17 +205,17 @@ def register_tool_handlers(mcp: FastMCP):
     ) -> str:
         """
         Report whether a playbook bullet was helpful for a task.
-        
+
         This feedback updates the bullet's utility score, improving future
         recommendations. Call this after completing a task to close the
         learning loop.
-        
+
         Args:
             bullet_id: The bullet ID (e.g., "strat-a1b2c3d4")
             task_type: The playbook containing this bullet
             helpful: True if the bullet helped, False if it was harmful/irrelevant
             path: Project path for the playbook (defaults to current directory)
-        
+
         Returns:
             Confirmation of feedback recording
         """
@@ -923,14 +225,14 @@ def register_tool_handlers(mcp: FastMCP):
     async def get_project_context(path: str | None = None) -> str:
         """
         Get high-level project understanding from playbooks and summaries.
-        
+
         Returns project-specific bullets about tech stack, patterns,
         conventions, and key directories. Use this at the start of a
         session to understand the codebase you're working with.
-        
+
         Args:
             path: Project path to load context from (defaults to current directory)
-        
+
         Returns:
             JSON with project bullets, overview, and playbook statistics
         """
@@ -940,13 +242,13 @@ def register_tool_handlers(mcp: FastMCP):
     async def set_project(path: str) -> str:
         """
         Set the active project context for dynamic instruction generation.
-        
+
         Call this when switching between projects to ensure playbooks and
         ACE guidance are loaded from the correct project directory.
-        
+
         Args:
             path: Absolute or relative path to the project directory
-        
+
         Returns:
             Confirmation with detected AI agents and loaded playbooks
         """
@@ -954,21 +256,21 @@ def register_tool_handlers(mcp: FastMCP):
         from ..playbook import playbook_manager
         from ..mcp_server import set_project_context
         from ..agent_sync import detect_ai_agents
-        
+
         project_path = Path(path).resolve()
         if not project_path.exists():
             return json.dumps({"error": f"Project path does not exist: {path}"})
-        
+
         # Update both playbook manager and MCP context
         playbook_manager.set_project(project_path)
         set_project_context(str(project_path))
-        
+
         # Get project info
         agents = detect_ai_agents(project_path)
         detected = [info["description"] for aid, info in agents.items() if info.get("exists")]
-        
+
         stats = playbook_manager.get_stats()
-        
+
         return json.dumps({
             "status": "project_context_set",
             "path": str(project_path),
@@ -2000,4 +1302,316 @@ def register_tool_handlers(mcp: FastMCP):
             "message": f"Pruned {removed} ineffective patterns." if removed > 0 else "No patterns needed pruning.",
         }, indent=2)
 
+    # =========================================================================
+    # Git History Tools
+    # =========================================================================
 
+    @mcp.tool()
+    async def git_log(
+        path: str = ".",
+        file: str | None = None,
+        n: int = 10,
+        since: str | None = None,
+        author: str | None = None,
+        oneline: bool = False,
+    ) -> str:
+        """
+        Show git commit history.
+
+        Args:
+            path: Repository path (default current directory)
+            file: Filter to specific file
+            n: Number of commits to show (default 10)
+            since: Date filter (e.g., "2024-01-01", "1 week ago")
+            author: Author filter (partial match)
+            oneline: Compact one-line format
+
+        Returns:
+            Formatted commit history
+        """
+        from .coding import git_log as git_log_impl
+        result = await git_log_impl(path, file, n, since, author, oneline)
+        return json.dumps({"result": result})
+
+    @mcp.tool()
+    async def git_blame(
+        file: str,
+        path: str = ".",
+        start_line: int | None = None,
+        end_line: int | None = None,
+    ) -> str:
+        """
+        Show line-by-line authorship for a file.
+
+        Args:
+            file: File to blame
+            path: Repository path
+            start_line: Start line (1-indexed)
+            end_line: End line (1-indexed)
+
+        Returns:
+            Blame output with commit, author, date, and line content
+        """
+        from .coding import git_blame as git_blame_impl
+        result = await git_blame_impl(file, path, start_line, end_line)
+        return json.dumps({"result": result})
+
+    @mcp.tool()
+    async def git_show(
+        commit: str,
+        file: str | None = None,
+        path: str = ".",
+        stat: bool = False,
+    ) -> str:
+        """
+        Show commit details and diff.
+
+        Args:
+            commit: Commit hash or reference (e.g., "HEAD", "abc123", "HEAD~3")
+            file: Specific file to show changes for
+            path: Repository path
+            stat: Show diffstat instead of full diff
+
+        Returns:
+            Commit details with diff
+        """
+        from .coding import git_show as git_show_impl
+        result = await git_show_impl(commit, file, path, stat)
+        return json.dumps({"result": result})
+
+    # =========================================================================
+    # Bulk File Operations
+    # =========================================================================
+
+    @mcp.tool()
+    async def read_files(
+        paths: str,
+    ) -> str:
+        """
+        Read multiple files in one call.
+
+        More efficient than calling read_file N times.
+
+        Args:
+            paths: JSON array of file paths (e.g., '["src/main.py", "src/utils.py"]')
+
+        Returns:
+            Dict mapping path to content (or error message)
+        """
+        import json as json_mod
+        from .files import read_files as read_files_impl
+
+        try:
+            path_list = json_mod.loads(paths)
+            if not isinstance(path_list, list):
+                return json.dumps({"error": "paths must be a JSON array"})
+        except json_mod.JSONDecodeError as e:
+            return json.dumps({"error": f"Invalid JSON: {e}"})
+
+        result = await read_files_impl(path_list)
+        return json.dumps({"result": result})
+
+    @mcp.tool()
+    async def edit_files(
+        edits: str,
+    ) -> str:
+        """
+        Apply multiple edits across files atomically.
+
+        All edits are validated before any are applied.
+
+        Args:
+            edits: JSON array of edit objects, each with:
+                - path: File path
+                - old_text: Text to find
+                - new_text: Text to replace with
+                Example: '[{"path": "a.py", "old_text": "foo", "new_text": "bar"}]'
+
+        Returns:
+            Dict mapping path to result message
+        """
+        import json as json_mod
+        from .files import edit_files as edit_files_impl
+
+        try:
+            edit_list = json_mod.loads(edits)
+            if not isinstance(edit_list, list):
+                return json.dumps({"error": "edits must be a JSON array"})
+        except json_mod.JSONDecodeError as e:
+            return json.dumps({"error": f"Invalid JSON: {e}"})
+
+        result = await edit_files_impl(edit_list)
+        return json.dumps({"result": result})
+
+    # =========================================================================
+    # Tool Discovery
+    # =========================================================================
+
+    @mcp.tool()
+    async def list_tools(
+        category: str | None = None,
+    ) -> str:
+        """
+        List available tools, optionally filtered by category.
+
+        Use this to discover what tools are available and find the right
+        tool for a task.
+
+        Args:
+            category: Filter by category (file_ops, lsp, git, testing, ace,
+                     orchestration, admin, search, general). If None, lists all.
+
+        Returns:
+            Tools grouped by category with descriptions
+        """
+        from .registry import TOOL_CATEGORIES
+
+        # Get all MCP tools from the server
+        tools_info = mcp.list_tools()
+
+        # Group by category (for now, we'll categorize based on name patterns)
+        categorized: dict[str, list[dict]] = {cat: [] for cat in TOOL_CATEGORIES}
+
+        # Categorization rules based on tool name patterns
+        category_patterns = {
+            "file_ops": ["read_file", "write_file", "edit_file", "list_dir", "find_file",
+                        "search_for_pattern", "delete_file", "create_directory", "read_files", "edit_files"],
+            "lsp": ["lsp_"],
+            "git": ["git_"],
+            "testing": ["run_tests"],
+            "ace": ["auto_context", "complete_task", "get_playbook", "report_feedback",
+                   "get_project_context", "playbook", "check_ace_status", "think_about_", "reflect"],
+            "orchestration": ["delegate", "think", "batch", "chain", "workflow", "agent"],
+            "admin": ["health", "models", "switch_", "set_project", "init_project",
+                     "mcp_servers", "session", "admin"],
+            "search": ["semantic_search", "codebase_graph", "get_related_files", "explain_dependency"],
+        }
+
+        for tool in tools_info:
+            tool_name = tool.name if hasattr(tool, 'name') else str(tool)
+            tool_desc = tool.description if hasattr(tool, 'description') else ""
+
+            assigned = False
+            for cat, patterns in category_patterns.items():
+                for pattern in patterns:
+                    if tool_name.startswith(pattern) or tool_name == pattern:
+                        categorized[cat].append({"name": tool_name, "description": tool_desc[:100]})
+                        assigned = True
+                        break
+                if assigned:
+                    break
+
+            if not assigned:
+                categorized["general"].append({"name": tool_name, "description": tool_desc[:100]})
+
+        # Filter if category specified
+        if category:
+            if category not in TOOL_CATEGORIES:
+                return json.dumps({
+                    "error": f"Unknown category: {category}",
+                    "valid_categories": list(TOOL_CATEGORIES.keys()),
+                })
+            return json.dumps({
+                "category": category,
+                "description": TOOL_CATEGORIES[category],
+                "tools": categorized.get(category, []),
+                "tool_count": len(categorized.get(category, [])),
+            }, indent=2)
+
+        # Return all categories with counts
+        summary = {
+            "total_tools": sum(len(tools) for tools in categorized.values()),
+            "categories": {
+                cat: {
+                    "description": TOOL_CATEGORIES[cat],
+                    "count": len(tools),
+                    "tools": [t["name"] for t in tools],
+                }
+                for cat, tools in categorized.items()
+                if tools  # Only include non-empty categories
+            },
+        }
+        return json.dumps(summary, indent=2)
+
+    @mcp.tool()
+    async def describe_tool(
+        name: str,
+    ) -> str:
+        """
+        Get detailed information about a specific tool.
+
+        Args:
+            name: Name of the tool to describe
+
+        Returns:
+            Full tool description with parameters and examples
+        """
+        tools_info = mcp.list_tools()
+
+        for tool in tools_info:
+            tool_name = tool.name if hasattr(tool, 'name') else str(tool)
+            if tool_name == name:
+                return json.dumps({
+                    "name": tool_name,
+                    "description": tool.description if hasattr(tool, 'description') else "",
+                    "parameters": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+                }, indent=2)
+
+        return json.dumps({"error": f"Tool not found: {name}"})
+
+    # =========================================================================
+    # ACE Manager Admin
+    # =========================================================================
+
+    @mcp.tool()
+    async def ace_manager_stats() -> str:
+        """
+        Get statistics about per-project ACE enforcement.
+
+        Shows which projects have active ACE trackers and allows cleanup
+        of stale trackers.
+
+        Returns:
+            Active projects and their ACE state
+        """
+        stats = _ace_manager.get_stats()
+
+        # Add per-project details
+        project_details = {}
+        for project in stats["projects"]:
+            tracker = _ace_manager.get_tracker(project)
+            project_details[project] = {
+                "ace_started": tracker.is_ace_started(project),
+                "playbook_queried": tracker.was_playbook_queried(project),
+                "last_activity": tracker.get_last_activity(),
+            }
+
+        return json.dumps({
+            "result": {
+                "active_projects": stats["active_projects"],
+                "projects": project_details,
+            }
+        }, indent=2)
+
+    @mcp.tool()
+    async def ace_manager_cleanup(
+        max_age_hours: float = 1.0,
+    ) -> str:
+        """
+        Clean up stale ACE trackers for inactive projects.
+
+        Args:
+            max_age_hours: Remove trackers inactive for longer than this (default 1 hour)
+
+        Returns:
+            Number of trackers cleaned up
+        """
+        max_age_seconds = int(max_age_hours * 3600)
+        removed = _ace_manager.cleanup_stale(max_age_seconds)
+
+        return json.dumps({
+            "result": {
+                "trackers_removed": removed,
+                "remaining_projects": len(_ace_manager.list_projects()),
+            }
+        }, indent=2)

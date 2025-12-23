@@ -481,3 +481,125 @@ async def create_directory(
     except Exception as e:
         log.error("create_directory_failed", path=path, error=str(e))
         return f"Error creating directory: {e}"
+
+
+async def read_files(
+    paths: list[str],
+    *,
+    workspace: Workspace | None = None,
+) -> dict[str, str]:
+    """Read multiple files in one call.
+
+    More efficient than calling read_file N times.
+
+    Args:
+        paths: List of file paths to read
+        workspace: Workspace context
+
+    Returns:
+        Dict mapping path to content (or error message)
+    """
+    results = {}
+    for path in paths:
+        try:
+            resolved = _resolve_path(path, workspace)
+            safe, error = _is_safe_path(resolved, workspace)
+            if not safe:
+                results[path] = f"Error: {error}"
+                continue
+
+            if not resolved.exists():
+                results[path] = f"Error: File not found"
+                continue
+
+            if not resolved.is_file():
+                results[path] = f"Error: Not a file"
+                continue
+
+            content = resolved.read_text(encoding="utf-8", errors="replace")
+            # Truncate very large files
+            if len(content) > 100000:
+                content = content[:100000] + "\n\n... [Truncated at 100KB]"
+            results[path] = content
+
+        except Exception as e:
+            results[path] = f"Error: {e}"
+
+    log.info("read_files_completed", count=len(paths), success=sum(1 for v in results.values() if not v.startswith("Error")))
+    return results
+
+
+async def edit_files(
+    edits: list[dict],
+    *,
+    workspace: Workspace | None = None,
+) -> dict[str, str]:
+    """Apply multiple edits across files atomically.
+
+    Each edit is a dict with: path, old_text, new_text
+    All edits are validated before any are applied.
+
+    Args:
+        edits: List of edit dicts, each with:
+            - path: File path
+            - old_text: Text to find
+            - new_text: Text to replace with
+        workspace: Workspace context
+
+    Returns:
+        Dict mapping path to result message
+    """
+    # Phase 1: Validate all edits
+    validated = []
+    results = {}
+
+    for edit in edits:
+        path = edit.get("path", "")
+        old_text = edit.get("old_text", "")
+        new_text = edit.get("new_text", "")
+
+        if not path or not old_text:
+            results[path or "(missing path)"] = "Error: Missing path or old_text"
+            continue
+
+        try:
+            resolved = _resolve_path(path, workspace)
+            safe, error = _is_safe_path(resolved, workspace)
+            if not safe:
+                results[path] = f"Error: {error}"
+                continue
+
+            if not resolved.exists():
+                results[path] = "Error: File not found"
+                continue
+
+            content = resolved.read_text(encoding="utf-8")
+            count = content.count(old_text)
+
+            if count == 0:
+                results[path] = "Error: Text not found"
+                continue
+
+            validated.append({
+                "path": path,
+                "resolved": resolved,
+                "content": content,
+                "old_text": old_text,
+                "new_text": new_text,
+                "count": count,
+            })
+
+        except Exception as e:
+            results[path] = f"Error: {e}"
+
+    # Phase 2: Apply all validated edits
+    for edit in validated:
+        try:
+            new_content = edit["content"].replace(edit["old_text"], edit["new_text"])
+            edit["resolved"].write_text(new_content, encoding="utf-8")
+            results[edit["path"]] = f"✓ Replaced {edit['count']} occurrence(s)"
+            log.info("file_edited", path=edit["path"], replacements=edit["count"])
+        except Exception as e:
+            results[edit["path"]] = f"Error applying: {e}"
+
+    return results

@@ -38,6 +38,20 @@ class TrustLevel(IntEnum):
     EXECUTION = 2      # Arbitrary code execution (e.g., shell_exec)
     DANGEROUS = 3      # High-risk operations
 
+# Tool categories for discoverability
+TOOL_CATEGORIES = {
+    "file_ops": "File operations (read, write, edit, search)",
+    "lsp": "Language Server Protocol code intelligence",
+    "git": "Git version control operations",
+    "testing": "Test execution and analysis",
+    "ace": "ACE Framework (playbooks, context, feedback)",
+    "orchestration": "LLM delegation and workflows",
+    "admin": "System administration and configuration",
+    "search": "Code search and discovery",
+    "general": "General purpose tools",
+}
+
+
 @dataclass
 class ToolDefinition:
     """Definition of a tool available to Delia."""
@@ -46,9 +60,13 @@ class ToolDefinition:
     parameters: dict[str, Any]
     handler: Callable[..., Awaitable[Any]]
     dangerous: bool = False  # If True, requires explicit user confirmation
-    permission_level: str = "read" # 'read', 'write', or 'exec'
+    permission_level: str = "read"  # 'read', 'write', or 'exec'
     requires_session: bool = False
     requires_workspace: bool = False
+    # Discoverability fields
+    category: str = "general"  # Key from TOOL_CATEGORIES
+    return_type: str = "string"  # 'string', 'json', 'structured'
+    examples: list[dict[str, Any]] = field(default_factory=list)  # [{"input": {...}, "output": "..."}]
 
     def to_openai_schema(self) -> Dict[str, Any]:
         """Convert to OpenAI function calling format.
@@ -194,6 +212,53 @@ class ToolRegistry:
             List of tool names
         """
         return list(self._tools.keys())
+
+    def get_by_category(self, category: str) -> list[ToolDefinition]:
+        """Get all tools in a specific category.
+
+        Args:
+            category: Category key (e.g., 'file_ops', 'lsp', 'ace')
+
+        Returns:
+            List of tools in that category
+        """
+        return [t for t in self._tools.values() if t.category == category]
+
+    def get_categories(self) -> dict[str, list[str]]:
+        """Get all categories with their tool names.
+
+        Returns:
+            Dict mapping category -> list of tool names
+        """
+        categories: dict[str, list[str]] = {}
+        for tool in self._tools.values():
+            if tool.category not in categories:
+                categories[tool.category] = []
+            categories[tool.category].append(tool.name)
+        return categories
+
+    def describe_tool(self, name: str) -> dict[str, Any] | None:
+        """Get full description of a tool including examples.
+
+        Args:
+            name: Tool name
+
+        Returns:
+            Dict with name, description, parameters, category, return_type, examples
+        """
+        tool = self._tools.get(name)
+        if not tool:
+            return None
+        return {
+            "name": tool.name,
+            "description": tool.description,
+            "category": tool.category,
+            "return_type": tool.return_type,
+            "parameters": tool.parameters,
+            "examples": tool.examples,
+            "dangerous": tool.dangerous,
+            "permission_level": tool.permission_level,
+        }
 
     def filter(self, tool_names: list[str]) -> "ToolRegistry":
         """Create a new registry with only the specified tools.

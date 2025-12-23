@@ -96,10 +96,32 @@ auto_context(message="yes", prior_context="Would you like me to commit this fix 
 - **get_profile(name, path?)** - Load a specific profile by name when auto_context indicates more are available.
 - **report_feedback(bullet_id, task_type, helpful)** - Individual bullet feedback (prefer complete_task() instead).
 
-### ACE Workflow Checkpoint Tools (call these to stay on track!)
-- **think_about_task_adherence()** - **ALWAYS call BEFORE modifying code**. Prompts you to verify alignment with project patterns.
-- **think_about_collected_info()** - **ALWAYS call after searching/reading**. Ensures you have enough information before proceeding.
-- **think_about_completion()** - **Call when you think you're done**. Verification checklist before declaring completion.
+### ⚡ ACE Focus Checkpoint Tools (CRITICAL - use frequently!)
+
+These tools are **non-negotiable checkpoints** that keep you on track. Call them MORE often than you think necessary.
+
+| Checkpoint | When to Call | Why It Matters |
+|------------|--------------|----------------|
+| **think_about_task_adherence()** | **BEFORE every code modification** | Prevents drift from project patterns and user intent |
+| **think_about_collected_info()** | **AFTER searching/reading files** | Ensures you have complete information before acting |
+| **think_about_completion()** | **BEFORE declaring task done** | Catches missed steps, untested changes, incomplete work |
+
+**These tools are force multipliers** - they prompt self-reflection that catches errors before they happen:
+
+```
+# Pattern: Search → Checkpoint → Modify → Checkpoint → Done
+
+1. User asks for a change
+2. Search/read relevant files
+3. ⚡ think_about_collected_info()     # "Do I have enough info?"
+4. Plan the modification
+5. ⚡ think_about_task_adherence()     # "Am I aligned with project patterns?"
+6. Make the code change
+7. ⚡ think_about_completion()         # "Is this truly complete?"
+8. complete_task()
+```
+
+**The refocus effect**: When context grows large or tasks become complex, these tools re-center your attention on what actually matters. **Use them proactively, not just when uncertain.**
 
 ### Playbook Management Tools
 - **playbook_stats(task_type?)** - See bullet effectiveness scores
@@ -172,6 +194,10 @@ Memories are markdown files in `.delia/memories/` for persistent project knowled
 ## Constraints
 
 - **ACE is MANDATORY** - always call auto_context() before coding
+- **Focus checkpoints are MANDATORY** - call think_about_* tools at every phase transition
+  - `think_about_collected_info()` after searching/reading
+  - `think_about_task_adherence()` before modifying code
+  - `think_about_completion()` before declaring done
 - **Per-project isolation** - use set_project() to switch contexts
 - **LSP for code nav** - use LSP tools instead of grep/find for semantic navigation
 - **Memories for knowledge** - store persistent insights in memory system
