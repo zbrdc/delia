@@ -1,27 +1,170 @@
 [
   {
     "content": "Primary language: Python 3.11+",
+    "id": "strat-364a0fbd",
     "section": "general_strategies",
-    "source": "learned"
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.140856",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
   },
   {
     "content": "Package manager: uv with pyproject.toml",
+    "id": "strat-19e0cd9f",
     "section": "general_strategies",
-    "source": "learned"
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.140861",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
   },
   {
     "content": "MCP server for AI agent integration",
+    "id": "strat-77721f23",
     "section": "general_strategies",
-    "source": "learned"
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.140865",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
   },
   {
     "content": "Dashboard: Next.js app in dashboard/",
+    "id": "strat-fcf6fce7",
     "section": "general_strategies",
-    "source": "learned"
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.140868",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
   },
   {
     "content": "CLI entry point: delia command via cli.py",
+    "id": "strat-550cd4b1",
     "section": "general_strategies",
-    "source": "learned"
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.140872",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "This project uses Python as its primary language.",
+    "id": "strat-74d50335",
+    "section": "project_context",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.140881",
+    "last_used": null,
+    "source_task": "project",
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "Key frameworks/libraries: FastAPI, Pydantic, React, MCP (Model Context Protocol), structlog, httpx, asyncio",
+    "id": "strat-6b283828",
+    "section": "project_context",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.141128",
+    "last_used": null,
+    "source_task": "project",
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "This project uses async/await patterns. Prefer async def for I/O operations.",
+    "id": "strat-62737b3c",
+    "section": "coding_patterns",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.141308",
+    "last_used": null,
+    "source_task": "project",
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "The `tui/src/` directory contains 3 files related to src.",
+    "id": "strat-ce728e13",
+    "section": "project_structure",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.141467",
+    "last_used": null,
+    "source_task": "project",
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "The `dashboard/src/lib/` directory contains 2 files related to lib.",
+    "id": "strat-7968432c",
+    "section": "project_structure",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.141639",
+    "last_used": null,
+    "source_task": "project",
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "The `dashboard/src/app/api/backends/` directory contains 1 files related to api.",
+    "id": "strat-086a21db",
+    "section": "project_structure",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.141809",
+    "last_used": null,
+    "source_task": "project",
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "The `dashboard/src/app/api/backends/models/` directory contains 1 files related to models.",
+    "id": "strat-59a2cea4",
+    "section": "project_structure",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.142021",
+    "last_used": null,
+    "source_task": "project",
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "Use Pydantic models for data validation and configuration. Check existing models before creating new ones.",
+    "id": "strat-967274a2",
+    "section": "coding_patterns",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.142245",
+    "last_used": null,
+    "source_task": "project",
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "This project has tests. Run `uv run pytest` or equivalent before committing changes.",
+    "id": "strat-3e34e31a",
+    "section": "verification",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:50:11.142449",
+    "last_used": null,
+    "source_task": "project",
+    "source": "learned",
+    "utility_score": 0.5
   }
 ]
