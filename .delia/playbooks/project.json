@@ -1,22 +1,27 @@
 [
   {
-    "content": "Primary language: Python 3.11+. Key frameworks: FastAPI, Pydantic, MCP, structlog, httpx.",
-    "section": "general_strategies"
+    "content": "Primary language: Python 3.11+",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "Entry point: src/delia/cli.py with subcommands (serve, api, chat, index, init-project).",
-    "section": "general_strategies"
+    "content": "Package manager: uv with pyproject.toml",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "Config priority: DELIA_SETTINGS_FILE env var > ./settings.json > ~/.delia/settings.json.",
-    "section": "general_strategies"
+    "content": "MCP server for AI agent integration",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "Data directory: DELIA_DATA_DIR env var > project/data/ > ~/.delia/data/.",
-    "section": "general_strategies"
+    "content": "Dashboard: Next.js app in dashboard/",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "TUI is separate Node.js app in tui/ directory using TypeScript/React.",
-    "section": "general_strategies"
+    "content": "CLI entry point: delia command via cli.py",
+    "section": "general_strategies",
+    "source": "learned"
   }
 ]

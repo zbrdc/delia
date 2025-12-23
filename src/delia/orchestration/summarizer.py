@@ -200,7 +200,7 @@ class CodeSummarizer:
     async def sync_project(self, force: bool = False, summarize: bool = False, parallel: int = 4) -> int:
         """Scan project AND memories and update symbols/embeddings for all files."""
         async with self._lock:
-            from .constants import CODE_EXTENSIONS, IGNORE_DIRS
+            from .constants import CODE_EXTENSIONS, should_ignore_file
 
             # PER-PROJECT ISOLATION: Use project-specific memories directory
             memories_dir = Path.cwd() / ".delia" / "memories"
@@ -212,10 +212,10 @@ class CodeSummarizer:
 
             # Collect files to process
             files_to_process = []
-            
-            # 1. Code Files
+
+            # 1. Code Files (excluding tests)
             for path in self.root.rglob("*"):
-                if any(part in IGNORE_DIRS for part in path.parts):
+                if should_ignore_file(path):
                     continue
                 if path.suffix not in CODE_EXTENSIONS or not path.is_file():
                     continue

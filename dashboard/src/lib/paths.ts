@@ -14,6 +14,12 @@ import { fileURLToPath } from "url"
 // This file is at: dashboard/src/lib/paths.ts
 // Project root is: dashboard/../ = repo root
 function getProjectRoot(): string {
+  // MCP server passes project root via environment variable
+  const envRoot = process.env.DELIA_PROJECT_ROOT
+  if (envRoot && existsSync(envRoot)) {
+    return envRoot
+  }
+
   // In Next.js, __dirname may not work, but we can use import.meta or process.cwd
   // For reliability, check multiple locations
   const candidates = [
@@ -24,14 +30,14 @@ function getProjectRoot(): string {
     // Relative to this file (for ESM)
     join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."),
   ]
-  
+
   // Find the one that has a pyproject.toml (definitive marker of repo root)
   for (const candidate of candidates) {
     if (existsSync(join(candidate, "pyproject.toml"))) {
       return candidate
     }
   }
-  
+
   // Fallback to dashboard parent
   return join(process.cwd(), "..")
 }
@@ -130,8 +136,37 @@ export function getMelonsFile(): string {
   return join(getDataDir(), "melons.json")
 }
 
+// Project-specific paths (per-project .delia/ directory)
+export function getProjectDeliaDir(): string {
+  return join(PROJECT_ROOT, ".delia")
+}
+
+export function getSessionsDir(): string {
+  return join(getProjectDeliaDir(), "sessions")
+}
+
+export function getPlaybooksDir(): string {
+  return join(getProjectDeliaDir(), "playbooks")
+}
+
+export function getMemoriesDir(): string {
+  return join(getProjectDeliaDir(), "memories")
+}
+
+export function getProjectSummaryFile(): string {
+  return join(getProjectDeliaDir(), "project_summary.json")
+}
+
+export function getSymbolGraphFile(): string {
+  return join(getProjectDeliaDir(), "symbol_graph.json")
+}
+
 // Export constants for convenience
 export const SETTINGS_FILE = getSettingsFile()
 export const DATA_DIR = getDataDir()
 export const CACHE_DIR = getCacheDir()
 export const LIVE_LOGS_FILE = getLogsFile()
+export const PROJECT_DELIA_DIR = getProjectDeliaDir()
+export const SESSIONS_DIR = getSessionsDir()
+export const PLAYBOOKS_DIR = getPlaybooksDir()
+export const MEMORIES_DIR = getMemoriesDir()

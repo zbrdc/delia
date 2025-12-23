@@ -31,9 +31,13 @@ import json
 import logging
 import os
 import re
+import signal
+import socket
+import subprocess
 import threading
 import time
 import uuid
+import webbrowser
 from collections import deque
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -1537,6 +1541,100 @@ async def resource_memories() -> str:
 # MAIN
 # ============================================================
 
+# Dashboard subprocess handle (global for cleanup)
+_dashboard_process: subprocess.Popen | None = None
+_dashboard_port: int | None = None
+
+
+def _find_free_port(start: int = 3001, end: int = 3100) -> int:
+    """Find a free port for the dashboard."""
+    for port in range(start, end):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", port))
+                return port
+        except OSError:
+            continue
+    raise RuntimeError(f"No free port found in range {start}-{end}")
+
+
+def _launch_dashboard() -> tuple[subprocess.Popen, int] | None:
+    """
+    Launch the Next.js dashboard in production mode.
+
+    Returns (process, port) tuple or None if dashboard not available.
+    """
+    global _dashboard_process, _dashboard_port
+
+    # Find dashboard directory relative to project root
+    project_root = paths.PROJECT_ROOT
+    dashboard_dir = project_root / "dashboard"
+
+    if not dashboard_dir.exists():
+        log.debug("dashboard_not_found", path=str(dashboard_dir))
+        return None
+
+    # Check if we have a built dashboard
+    next_dir = dashboard_dir / ".next"
+    if not next_dir.exists():
+        log.warning("dashboard_not_built", hint="Run 'npm run build' in dashboard/")
+        return None
+
+    port = _find_free_port()
+
+    try:
+        # Launch Next.js in production mode
+        env = os.environ.copy()
+        env["PORT"] = str(port)
+        env["DELIA_PROJECT_ROOT"] = str(project_root)
+
+        proc = subprocess.Popen(
+            ["npm", "run", "start"],
+            cwd=str(dashboard_dir),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        _dashboard_process = proc
+        _dashboard_port = port
+        url = f"http://localhost:{port}"
+        log.info("dashboard_launched", port=port, url=url)
+
+        # Open browser after brief delay to let server start
+        def open_browser():
+            time.sleep(2)
+            webbrowser.open(url)
+
+        threading.Thread(target=open_browser, daemon=True).start()
+
+        return proc, port
+
+    except Exception as e:
+        log.warning("dashboard_launch_failed", error=str(e))
+        return None
+
+
+def _shutdown_dashboard() -> None:
+    """Terminate the dashboard subprocess."""
+    global _dashboard_process
+
+    if _dashboard_process is not None:
+        try:
+            # Send SIGTERM to process group
+            os.killpg(os.getpgid(_dashboard_process.pid), signal.SIGTERM)
+            _dashboard_process.wait(timeout=5)
+            log.info("dashboard_stopped")
+        except Exception as e:
+            log.debug("dashboard_stop_error", error=str(e))
+            try:
+                _dashboard_process.kill()
+            except Exception:
+                pass
+        finally:
+            _dashboard_process = None
+
 
 async def _init_database():
     """Initialize authentication database on startup."""
@@ -1579,6 +1677,9 @@ async def _startup_handler():
     cleared = sm.clear_expired_sessions()
     log.info("session_cleanup_startup", cleared=cleared)
 
+    # Launch dashboard (non-blocking)
+    _launch_dashboard()
+
 
 async def _shutdown_handler():
     """
@@ -1586,9 +1687,13 @@ async def _shutdown_handler():
 
     - Closes all backend HTTP clients to prevent connection leaks
     - Saves tracker state to disk
+    - Stops the dashboard subprocess
     This is called automatically on server shutdown.
     """
     from .backend_manager import shutdown_backends
+
+    # Stop dashboard first
+    _shutdown_dashboard()
 
     await shutdown_backends()
 

@@ -1,14 +1,22 @@
 [
   {
-    "content": "Install: uv sync && uv pip install -e .",
-    "section": "setup"
+    "content": "MCP server runs via stdio for AI agent integration",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "Run MCP server: delia serve (STDIO) or delia serve --transport sse --port 8200 (HTTP/SSE).",
-    "section": "running"
+    "content": "REST API available via delia api command",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "Health check endpoint: GET /health returns backend status and model availability.",
-    "section": "monitoring"
+    "content": "Dashboard runs separately on port 8765",
+    "section": "general_strategies",
+    "source": "learned"
+  },
+  {
+    "content": "Ollama must be running for LLM delegation features",
+    "section": "general_strategies",
+    "source": "learned"
   }
 ]

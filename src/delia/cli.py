@@ -219,8 +219,20 @@ def print_info(text: str) -> None:
         print(f"  {text}")
 
 
+def is_interactive() -> bool:
+    """Check if we're running in an interactive terminal."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def prompt_confirm(text: str, default: bool = True) -> bool:
-    """Prompt for yes/no confirmation."""
+    """Prompt for yes/no confirmation.
+
+    In non-interactive mode (no TTY), returns the default value.
+    """
+    if not is_interactive():
+        # Non-interactive: return default without prompting
+        return default
+
     if RICH_AVAILABLE:
         return Confirm.ask(text, default=default)
     else:
@@ -527,6 +539,9 @@ def init(
     # Check existing settings
     if target_path.exists() and not force:
         print_warning(f"settings.json already exists at {target_path}")
+        if not is_interactive():
+            print_info("Non-interactive mode: use --force to overwrite existing config.")
+            raise typer.Exit(0)
         if not prompt_confirm("Overwrite existing configuration?", default=False):
             print_info("Setup cancelled. Use --force to overwrite.")
             raise typer.Exit(0)
@@ -1116,9 +1131,16 @@ def init_project(
             print_info(f"Generating project summaries (parallel={parallel})...")
             await summarizer.sync_project(force=force, summarize=True, parallel=parallel)
 
-            # Generate playbook
-            print_info("Generating project playbook...")
-            from .playbook import generate_project_playbook
+            # Seed playbooks from profile templates (baseline strategies)
+            print_info("Seeding playbooks from profile templates...")
+            from .playbook import seed_playbooks_from_profiles, generate_project_playbook
+            tech_stack_for_seeds = _detect_project_tech_stack(project_root)
+            seed_counts = seed_playbooks_from_profiles(project_root, tech_stack_for_seeds, force=force)
+            if seed_counts:
+                print_success(f"Seeded {sum(seed_counts.values())} baseline bullets from profiles")
+
+            # Generate project-specific playbook bullets (adds to seeds)
+            print_info("Generating project-specific playbook bullets...")
             await generate_project_playbook(summarizer)
 
             print_success("Codebase analysis complete.")

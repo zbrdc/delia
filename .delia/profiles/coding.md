@@ -2,67 +2,53 @@
 
 Load this profile for: code generation, reviews, refactoring, implementation tasks.
 
-## Code Style
+## Function Signatures
 
-```python
-# Function signatures: Clear types, optional parameters with defaults
-async def delegate(
-    task: str,
-    content: str,
-    files: str | None = None,
-    model: str | None = None,
-    session_id: str | None = None,
-) -> dict[str, Any]:
-    """Docstring with Args and Returns."""
+```
+# Good: Clear types, optional parameters with defaults
+def process_item(
+    item: Item,
+    options: Options | None = None,
+    validate: bool = True,
+) -> Result:
+    """Process an item with optional validation."""
 ```
 
 ## Error Handling
 
-```python
-from .errors import BackendError, CircuitBreakerError
-
+```
 try:
-    response = await call_llm(backend, prompt, model)
-except CircuitBreakerError as e:
-    log.warning("circuit_breaker_open", backend=backend.id, error=str(e))
-    fallback = get_fallback_backend(backend)
-    if fallback:
-        response = await call_llm(fallback, prompt, model)
-    else:
-        raise BackendError(f"All backends unavailable: {e}") from e
+    result = process(data)
+except SpecificError as e:
+    log.warning("process_failed", error=str(e), data_id=data.id)
+    # Handle gracefully or re-raise with context
+    raise ProcessingError(f"Failed to process {data.id}") from e
 ```
 
-## Pydantic Models
+## Code Review Checklist
 
-```python
-class BackendConfig(BaseModel):
-    id: str
-    name: str
-    provider: str  # "ollama" | "llamacpp" | "gemini"
-    enabled: bool = True
-    priority: int = 1
-    model_config = ConfigDict(extra="forbid")
+- [ ] No hardcoded secrets or credentials
+- [ ] Error cases handled appropriately
+- [ ] Tests cover new functionality
+- [ ] No breaking changes to public API
+- [ ] Performance considered for hot paths
+
+## Best Practices
+
 ```
+ALWAYS:
+- Use type hints on all function signatures
+- Handle error cases explicitly
+- Write tests for new functionality
+- Use guard clauses for early returns
+- Follow existing code patterns in the project
+- Document public APIs
 
-## Anti-Patterns (NEVER DO)
-
-```python
-# BAD: Placeholder delegation
-async def new_function(...):
-    from ..old_module import old_function
-    return await old_function(...)  # NOT extraction!
-
-# BAD: Duplicate state
-# old_module.py has: LIVE_LOGS = []
-# new_module.py has: class LoggingService  # Same functionality = bug
+AVOID:
+- Deep nesting (max 3 levels)
+- Functions longer than 50 lines
+- Magic numbers without constants
+- Commented-out code
+- Hardcoded secrets or credentials
+- Breaking changes without versioning
 ```
-
-## Critical Files
-
-| File | Purpose |
-|------|---------|
-| `mcp_server.py` | MCP interface |
-| `orchestration/service.py` | Unified pipeline |
-| `routing.py` | Model selection |
-| `llm.py` | Centralized LLM calling |
-| `delegation.py` | Task delegation |

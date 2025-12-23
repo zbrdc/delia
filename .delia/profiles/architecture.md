@@ -1,58 +1,86 @@
 # Architecture Profile
 
-Load this profile for: design decisions, ADRs, system architecture, orchestration.
+Load this profile for: design decisions, patterns, refactoring, ADRs.
 
-## Model Tiers (8 Total)
+## Decision Records
 
-```python
-quick_tier:      7B-14B    → Simple Q&A, summarization
-coder_tier:      14B-30B   → Code generation, review
-moe_tier:        30B+ MoE  → Complex reasoning, planning
-thinking_tier:   Extended  → Deep analysis, debugging
-dispatcher_tier: 270M      → Fast task routing
-agentic_tier:    7B-14B    → Tool-calling loops
-swe_tier:        32B+      → Repo-scale refactoring
-```
-
-## Orchestration Modes (ADR-008)
-
-**Core:**
-- NONE - Default (90%+ of queries)
-- AGENTIC - Tool-calling loops
-- DEEP_THINKING - Primary advanced mode
-- VOTING - Confidence-weighted adaptive k
-- TREE_OF_THOUGHTS - Opt-in only (`tot=True`)
-
-**Pipeline:** CHAIN, WORKFLOW, BATCH
-**Utility:** STATUS_QUERY
-
-## Backend Scoring
-
-```python
-base_score = backend.priority * 100
-affinity_boost = 1.0 + (affinity - 0.5) * 0.4
-melon_boost = 1.0 + (sqrt(total_melons) * 0.02)
-health_penalty = 0.5 if failures > 0 else 1.0
-final_score = base_score * affinity_boost * melon_boost * health_penalty
-```
-
-## Intent Detection (3-Layer)
+For significant architectural decisions, create an ADR:
 
 ```
-Layer 1: Regex (fast, high confidence)
-   ↓ (if confidence < 0.9)
-Layer 2: Semantic (embeddings)
-   ↓ (if confidence < 0.7)
-Layer 3: LLM Classifier (accurate)
+# ADR-XXX: Title
+
+## Status
+Proposed | Accepted | Deprecated
+
+## Context
+What is the issue we're addressing?
+
+## Decision
+What is the change we're proposing?
+
+## Consequences
+What becomes easier or harder?
 ```
 
-## ADRs
+## Common Patterns
 
-| ADR | Title | Status |
-|-----|-------|--------|
-| 001 | Singleton Architecture | Accepted |
-| 002 | MCP-Native Paradigm | Accepted |
-| 003 | Centralized LLM Calling | Accepted |
-| 004 | Structured Error Types | Accepted |
-| 007 | Conversation Compaction | Accepted |
-| 008 | ACE-Aligned Simplification | Implemented |
+### Singleton
+```
+# Use for: managers, registries, shared state
+_instance = None
+
+def get_manager():
+    global _instance
+    if _instance is None:
+        _instance = Manager()
+    return _instance
+```
+
+### Factory
+```
+# Use for: creating objects with complex initialization
+def create_handler(config: Config) -> Handler:
+    if config.type == "http":
+        return HttpHandler(config)
+    elif config.type == "grpc":
+        return GrpcHandler(config)
+    raise ValueError(f"Unknown type: {config.type}")
+```
+
+### Registry
+```
+# Use for: plugins, providers, extensibility
+HANDLERS: dict[str, type[Handler]] = {}
+
+def register(name: str):
+    def decorator(cls):
+        HANDLERS[name] = cls
+        return cls
+    return decorator
+```
+
+## Refactoring Guidelines
+
+1. Extract when function exceeds 50 lines
+2. Split when class has >5 responsibilities
+3. Create interface when >2 implementations exist
+4. Move to separate module when file exceeds 500 lines
+
+## Best Practices
+
+```
+ALWAYS:
+- Write ADRs for significant architectural decisions
+- Use established patterns (Singleton, Factory, Registry)
+- Keep modules loosely coupled
+- Document public interfaces
+- Consider future extensibility without over-engineering
+
+AVOID:
+- Mixing concerns in single modules
+- Tight coupling between components
+- Circular dependencies
+- Premature abstraction
+- God classes with too many responsibilities
+- Undocumented architectural decisions
+```

@@ -787,6 +787,8 @@ def register_tool_handlers(mcp: FastMCP):
         message: str,
         path: str | None = None,
         prior_context: str | None = None,
+        working_files: str | None = None,
+        code_snippet: str | None = None,
     ) -> str:
         """
         Automatically detect context and load relevant playbooks from message + conversation.
@@ -808,6 +810,10 @@ def register_tool_handlers(mcp: FastMCP):
             prior_context: Optional recent assistant response(s) to include in detection.
                           Use this when the user's message is short/ambiguous but the
                           conversation context makes the task type clear.
+            working_files: Optional JSON array of file paths being edited (e.g., '["test_foo.py", "src/auth.py"]').
+                          File patterns are used to boost detection (test files -> testing, Dockerfile -> deployment).
+            code_snippet: Optional code content being edited. Code patterns are analyzed
+                         (e.g., @pytest.fixture -> testing, FastAPI decorators -> api).
 
         Returns:
             JSON with detected context, relevant bullets, and profile recommendations
@@ -819,17 +825,35 @@ def register_tool_handlers(mcp: FastMCP):
             auto_context(message="yes, do it",
                         prior_context="Would you like me to commit this fix to dev?")
             -> Detects "git" (context-aware)
+
+            auto_context(message="fix this", working_files='["test_auth.py"]')
+            -> Detects "testing" (file pattern)
+
+            auto_context(message="update this", code_snippet="@pytest.fixture\\ndef client():")
+            -> Detects "testing" (code pattern)
         """
         from pathlib import Path as PyPath
         from ..context_detector import (
             get_context_manager,
             get_relevant_profiles,
             detect_with_learning,
+            detect_task_type_enhanced,
         )
         from ..playbook import get_playbook_manager
 
         # Set project path first
         project_path = PyPath(path).resolve() if path else PyPath.cwd()
+
+        # Parse working_files from JSON string
+        files_list: list[str] | None = None
+        if working_files:
+            try:
+                files_list = json.loads(working_files)
+                if not isinstance(files_list, list):
+                    files_list = [str(files_list)]
+            except json.JSONDecodeError:
+                # Treat as single file path or comma-separated
+                files_list = [f.strip() for f in working_files.split(",") if f.strip()]
 
         # Combine message with prior context for detection
         # Prior context (e.g., assistant's last message) helps when user response is short
@@ -839,8 +863,20 @@ def register_tool_handlers(mcp: FastMCP):
             # The detection will pick up keywords from both
             detection_text = f"{message}\n\n[Prior context]: {prior_context}"
 
-        # Detect context using learning-enhanced detection
-        context = detect_with_learning(detection_text, project_path)
+        # Use enhanced detection if files or code provided, otherwise use learning-based
+        file_context = None
+        detected_language = None
+        if files_list or code_snippet:
+            enhanced_context = detect_task_type_enhanced(
+                detection_text,
+                working_files=files_list,
+                code_snippet=code_snippet,
+            )
+            context = enhanced_context
+            file_context = enhanced_context.file_context
+            detected_language = enhanced_context.detected_language
+        else:
+            context = detect_with_learning(detection_text, project_path)
 
         # Also update the context manager for backwards compatibility
         ctx_mgr = get_context_manager()
@@ -850,21 +886,162 @@ def register_tool_handlers(mcp: FastMCP):
         pm = get_playbook_manager()
         pm.set_project(project_path)
 
-        # Collect bullets for all detected tasks
+        # Collect bullets with semantic retrieval if embeddings available
+        # Falls back to utility × recency if no embeddings
         all_bullets = []
-        for task_type in context.all_tasks():
-            bullets = pm.get_top_bullets(task_type, limit=5 if task_type == context.primary_task else 3)
-            for b in bullets:
-                all_bullets.append({
-                    "id": b.id,
-                    "task_type": task_type,
-                    "content": b.content,
-                    "utility_score": b.utility_score,
-                    "is_primary": task_type == context.primary_task,
+        try:
+            from ..ace.retrieval import get_retriever
+            retriever = get_retriever()
+
+            for task_type in context.all_tasks():
+                limit = 5 if task_type == context.primary_task else 3
+                bullets = pm.load_playbook(task_type)
+
+                # Try semantic retrieval first
+                try:
+                    scored = await retriever.retrieve(
+                        bullets=bullets,
+                        query=detection_text,
+                        project_path=project_path,
+                        limit=limit,
+                    )
+                except Exception:
+                    # Fallback to utility × recency
+                    scored = retriever.retrieve_by_utility(bullets, limit=limit)
+
+                for s in scored:
+                    all_bullets.append({
+                        "id": s.bullet.id,
+                        "task_type": task_type,
+                        "content": s.bullet.content,
+                        "relevance_score": s.relevance_score,
+                        "utility_score": s.utility_score,
+                        "recency_score": s.recency_score,
+                        "final_score": s.final_score,
+                        "is_primary": task_type == context.primary_task,
+                    })
+        except Exception as e:
+            # Fallback to simple retrieval
+            log.warning("retrieval_fallback", error=str(e))
+            for task_type in context.all_tasks():
+                bullets = pm.get_top_bullets(task_type, limit=5 if task_type == context.primary_task else 3)
+                for b in bullets:
+                    all_bullets.append({
+                        "id": b.id,
+                        "task_type": task_type,
+                        "content": b.content,
+                        "utility_score": b.utility_score,
+                        "is_primary": task_type == context.primary_task,
+                    })
+
+        # Get relevant profiles based on context
+        profiles_dir = project_path / ".delia" / "profiles"
+        templates_dir = PyPath(__file__).parent.parent / "templates" / "profiles"
+
+        # Determine which profiles are relevant for this context
+        relevant_names = set(get_relevant_profiles(context))
+
+        # Add file-detected profiles (language/framework specific)
+        if file_context and file_context.profile_hints:
+            relevant_names.update(file_context.profile_hints)
+
+        # Discover all available profiles
+        all_available = set()
+        if profiles_dir.exists():
+            all_available.update(p.name for p in profiles_dir.glob("*.md"))
+
+        # Load relevant profiles with full content
+        loaded_profiles = []
+        for profile_name in sorted(relevant_names):
+            content = None
+
+            # Try project-specific profile first
+            profile_path = profiles_dir / profile_name
+            if profile_path.exists():
+                try:
+                    content = profile_path.read_text()
+                except Exception as e:
+                    log.debug("profile_read_failed", profile=profile_name, error=str(e))
+
+            # Fallback to template
+            if content is None:
+                template_path = templates_dir / profile_name
+                if template_path.exists():
+                    try:
+                        content = template_path.read_text()
+                    except Exception as e:
+                        log.debug("template_read_failed", profile=profile_name, error=str(e))
+
+            if content:
+                loaded_profiles.append({
+                    "name": profile_name,
+                    "content": content,
                 })
 
-        # Get relevant profiles
-        profiles = get_relevant_profiles(context)
+        # List other available profiles (not loaded, but agent can request)
+        loaded_names = {p["name"] for p in loaded_profiles}
+        other_available = sorted(all_available - loaded_names)
+
+        # Collect bullet IDs for easy reference
+        bullet_ids = [b["id"] for b in all_bullets]
+
+        # Task-specific tool recommendations
+        # Memory tools are useful for ALL tasks - they persist knowledge across sessions
+        MEMORY_TOOLS = [
+            {"tool": "list_memories", "use": "Check existing project knowledge"},
+            {"tool": "read_memory", "use": "Load relevant documented insights"},
+            {"tool": "write_memory", "use": "Persist learnings for future sessions"},
+        ]
+
+        TASK_TOOLS: dict[str, list[dict[str, str]]] = {
+            "coding": [
+                {"tool": "lsp_get_symbols", "use": "Understand file structure before editing"},
+                {"tool": "lsp_find_references", "use": "Find all usages before refactoring"},
+                {"tool": "lsp_goto_definition", "use": "Navigate to function/class definitions"},
+            ],
+            "debugging": [
+                {"tool": "lsp_find_references", "use": "Trace where problematic code is called"},
+                {"tool": "lsp_goto_definition", "use": "Jump to source of errors"},
+                {"tool": "coderag_search", "use": "Find semantically related code"},
+            ],
+            "testing": [
+                {"tool": "lsp_get_symbols", "use": "See what functions need test coverage"},
+                {"tool": "lsp_find_references", "use": "Find existing test patterns"},
+            ],
+            "architecture": [
+                {"tool": "lsp_get_symbols", "use": "Survey module structure"},
+                {"tool": "coderag_search", "use": "Find related patterns across codebase"},
+            ],
+            "git": [],
+            "project": [
+                {"tool": "coderag_search", "use": "Semantic search for concepts"},
+                {"tool": "lsp_find_symbol", "use": "Find classes/functions by name"},
+            ],
+            "security": [
+                {"tool": "lsp_find_references", "use": "Trace sensitive data flow"},
+                {"tool": "coderag_search", "use": "Find auth/validation patterns"},
+            ],
+            "api": [
+                {"tool": "lsp_get_symbols", "use": "See endpoint structure"},
+                {"tool": "lsp_find_references", "use": "Find endpoint usages"},
+            ],
+            "deployment": [],
+            "performance": [
+                {"tool": "lsp_find_references", "use": "Find hot path callers"},
+                {"tool": "coderag_search", "use": "Find similar optimization patterns"},
+            ],
+        }
+
+        # Get recommended tools for detected task
+        # Start with task-specific tools
+        recommended_tools = list(TASK_TOOLS.get(context.primary_task, []))
+        # Add tools from secondary tasks
+        for secondary in context.secondary_tasks[:2]:
+            for tool in TASK_TOOLS.get(secondary, []):
+                if tool not in recommended_tools:
+                    recommended_tools.append(tool)
+        # Always include memory tools - they're useful for ALL tasks
+        recommended_tools.extend(MEMORY_TOOLS)
 
         # Build response
         result = {
@@ -872,25 +1049,396 @@ def register_tool_handlers(mcp: FastMCP):
                 "primary_task": context.primary_task,
                 "secondary_tasks": context.secondary_tasks,
                 "confidence": context.confidence,
-                "matched_keywords": context.matched_keywords[:5],
-                "used_prior_context": prior_context is not None,
+                "matched_keywords": context.matched_keywords[:10],
+                "detected_language": detected_language,
+                "detected_frameworks": file_context.frameworks if file_context else None,
             },
             "bullets": all_bullets,
-            "profiles_to_load": profiles,
+            "bullet_ids": bullet_ids,  # Easy reference for complete_task()
+            "profiles": loaded_profiles,
+            "other_available_profiles": other_available,
+            "recommended_tools": recommended_tools,
+            "ace_workflow": {
+                "current_step": "APPLY",
+                "next_step": "complete_task()",
+                "instruction": (
+                    f"1. APPLY the {len(loaded_profiles)} profiles and {len(all_bullets)} bullets below to your work. "
+                    f"2. Track which bullet IDs you actually use. "
+                    f"3. When done, call complete_task(success=True/False, bullets_applied='{json.dumps(bullet_ids[:3])}...')"
+                ),
+            },
             "instructions": (
-                f"Detected task type: {context.primary_task}. "
-                f"Apply the {len(all_bullets)} bullets above to your work. "
-                f"After completing, call report_feedback() for each bullet_id."
+                f"Task: {context.primary_task}. "
+                + (f"Language: {detected_language}. " if detected_language else "")
+                + (f"Other profiles via get_profile(): {', '.join(other_available[:5])}. " if other_available else "")
+                + f"WORKFLOW: Apply bullets → complete_task(success, bullets_applied)"
             ),
-            "re_call_triggers": [
-                "Task type changes (e.g., coding → testing → git)",
-                "User asks about different aspect of codebase",
-                "About to perform git operations (commit, push, PR)",
-                "Switching between files of different languages/frameworks",
-            ],
         }
 
         return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    async def get_profile(
+        name: str,
+        path: str | None = None,
+    ) -> str:
+        """
+        Load a specific profile by name.
+
+        Use this when auto_context indicates additional profiles are available
+        and you need their guidance for your current task.
+
+        Args:
+            name: Profile filename (e.g., "deployment.md", "security.md")
+            path: Optional project path. If not provided, uses current directory.
+
+        Returns:
+            Profile content or error message
+
+        Example:
+            get_profile(name="deployment.md")
+            get_profile(name="api.md", path="/path/to/project")
+        """
+        from pathlib import Path as PyPath
+
+        project_path = PyPath(path).resolve() if path else PyPath.cwd()
+        profiles_dir = project_path / ".delia" / "profiles"
+        templates_dir = PyPath(__file__).parent.parent / "templates" / "profiles"
+
+        # Normalize name
+        if not name.endswith(".md"):
+            name = f"{name}.md"
+
+        content = None
+
+        # Try project-specific profile first
+        profile_path = profiles_dir / name
+        if profile_path.exists():
+            try:
+                content = profile_path.read_text()
+                source = "project"
+            except Exception as e:
+                return json.dumps({"error": f"Failed to read profile: {e}"})
+
+        # Fallback to template
+        if content is None:
+            template_path = templates_dir / name
+            if template_path.exists():
+                try:
+                    content = template_path.read_text()
+                    source = "template"
+                except Exception as e:
+                    return json.dumps({"error": f"Failed to read template: {e}"})
+
+        if content is None:
+            # List available profiles
+            available = []
+            if profiles_dir.exists():
+                available.extend(p.name for p in profiles_dir.glob("*.md"))
+            return json.dumps({
+                "error": f"Profile '{name}' not found",
+                "available_profiles": sorted(available),
+            }, indent=2)
+
+        return json.dumps({
+            "name": name,
+            "source": source,
+            "content": content,
+        }, indent=2)
+
+    @mcp.tool()
+    async def complete_task(
+        success: bool,
+        bullets_applied: str,
+        task_summary: str | None = None,
+        failure_reason: str | None = None,
+        new_insight: str | None = None,
+        path: str | None = None,
+    ) -> str:
+        """
+        Complete an ACE task and update bullet feedback in one call.
+
+        **CRITICAL**: Call this when you finish a task to close the ACE learning loop.
+        This replaces calling report_feedback() multiple times.
+
+        The ACE workflow:
+        1. auto_context() → get bullets + profiles
+        2. Apply bullets to your work
+        3. complete_task() → report success/failure + which bullets you used
+
+        Args:
+            success: Whether the task completed successfully
+            bullets_applied: JSON array of bullet IDs that were applied (e.g., '["strat-abc123", "strat-def456"]')
+            task_summary: Brief description of what was accomplished
+            failure_reason: If success=False, why did it fail?
+            new_insight: If you learned something new, describe it for future playbook addition
+            path: Optional project path
+
+        Returns:
+            JSON with feedback recorded and any new bullets added
+
+        Example:
+            complete_task(
+                success=True,
+                bullets_applied='["strat-a1b2c3", "strat-d4e5f6"]',
+                task_summary="Implemented JWT authentication with refresh tokens"
+            )
+
+            complete_task(
+                success=False,
+                bullets_applied='["strat-a1b2c3"]',
+                failure_reason="Library version conflict with existing deps",
+                new_insight="Check dependency compatibility before recommending libraries"
+            )
+        """
+        from pathlib import Path as PyPath
+        from ..playbook import get_playbook_manager
+
+        project_path = PyPath(path).resolve() if path else PyPath.cwd()
+        pm = get_playbook_manager()
+        pm.set_project(project_path)
+
+        # Parse bullets_applied
+        try:
+            bullet_ids = json.loads(bullets_applied) if bullets_applied else []
+            if not isinstance(bullet_ids, list):
+                bullet_ids = [bullet_ids]
+        except json.JSONDecodeError:
+            # Try comma-separated
+            bullet_ids = [b.strip() for b in bullets_applied.split(",") if b.strip()]
+
+        # Record feedback for each bullet
+        feedback_recorded = []
+        for bullet_id in bullet_ids:
+            # Find which task_type this bullet belongs to
+            for task_type in ["coding", "testing", "debugging", "architecture", "git",
+                             "security", "api", "performance", "deployment", "project"]:
+                bullets = pm.load_playbook(task_type)
+                if any(b.id == bullet_id for b in bullets):
+                    recorded = pm.record_feedback(bullet_id, task_type, helpful=success)
+                    if recorded:
+                        feedback_recorded.append({
+                            "bullet_id": bullet_id,
+                            "task_type": task_type,
+                            "marked": "helpful" if success else "harmful",
+                        })
+                    break
+
+        result = {
+            "status": "completed",
+            "success": success,
+            "feedback_recorded": feedback_recorded,
+            "bullets_updated": len(feedback_recorded),
+        }
+
+        # Determine task type from the bullets or default to coding
+        task_type = "coding"
+        if feedback_recorded:
+            task_type = feedback_recorded[0]["task_type"]
+
+        # =====================================================================
+        # ACE LEARNING LOOP: Reflector → Curator pipeline
+        # =====================================================================
+        # On failure: Run Reflector to analyze what went wrong, then Curator
+        # to apply delta updates. This is the core ACE learning mechanism.
+        # =====================================================================
+        if not success and failure_reason:
+            try:
+                from ..ace.reflector import get_reflector
+                from ..ace.curator import get_curator
+
+                reflector = get_reflector()
+                curator = get_curator(str(project_path))
+
+                # Reflect on the failure to extract insights
+                reflection = await reflector.reflect(
+                    task_description=task_summary or "Task execution",
+                    task_type=task_type,
+                    task_succeeded=False,
+                    outcome=failure_reason,
+                    tool_calls=None,  # Could be passed in future
+                    applied_bullets=bullet_ids,
+                    error_trace=failure_reason,
+                    user_feedback=new_insight,
+                )
+
+                # Curate: Apply delta updates based on reflection
+                curation = await curator.curate(reflection, auto_prune=False)
+
+                result["ace_reflection"] = {
+                    "insights_extracted": len(reflection.insights),
+                    "bullets_tagged_helpful": len(reflection.bullets_to_tag_helpful),
+                    "bullets_tagged_harmful": len(reflection.bullets_to_tag_harmful),
+                    "root_causes": reflection.root_causes[:2] if reflection.root_causes else [],
+                }
+                result["ace_curation"] = {
+                    "bullets_added": curation.bullets_added,
+                    "bullets_removed": curation.bullets_removed,
+                    "dedup_prevented": curation.dedup_prevented,
+                    "feedback_recorded": curation.feedback_recorded,
+                }
+
+                log.info(
+                    "ace_reflection_complete",
+                    insights=len(reflection.insights),
+                    curation_added=curation.bullets_added,
+                )
+            except Exception as e:
+                log.warning("ace_reflection_failed", error=str(e))
+                result["ace_reflection_error"] = str(e)
+
+        # If user provided explicit insight (regardless of reflection), add it
+        if new_insight:
+            try:
+                from ..ace.curator import get_curator
+                curator = get_curator(str(project_path))
+
+                added, existing_id = await curator.add_bullet(
+                    task_type=task_type,
+                    content=new_insight,
+                    section="learned_strategies" if success else "failure_modes",
+                    source="reflector",
+                )
+
+                if added:
+                    result["new_bullet_added"] = True
+                    result["insight_recorded"] = new_insight
+                else:
+                    result["new_bullet_added"] = False
+                    result["similar_bullet_exists"] = existing_id
+            except Exception as e:
+                result["insight_error"] = str(e)
+
+        if task_summary:
+            result["task_summary"] = task_summary
+        if failure_reason:
+            result["failure_reason"] = failure_reason
+
+        log.info(
+            "ace_task_completed",
+            success=success,
+            bullets_updated=len(feedback_recorded),
+            new_insight=bool(new_insight),
+        )
+
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    async def reflect(
+        task_description: str,
+        task_type: str = "coding",
+        success: bool = True,
+        outcome: str | None = None,
+        error_trace: str | None = None,
+        applied_bullets: str | None = None,
+        path: str | None = None,
+    ) -> str:
+        """
+        Manually trigger ACE Reflector to analyze a task execution.
+
+        Use this tool when you want to analyze what happened during a task
+        and extract insights for the playbook. The Reflector will:
+        1. Analyze the task outcome (success/failure)
+        2. Identify what worked and what didn't
+        3. Extract strategic insights
+        4. Optionally curate the playbook with new bullets
+
+        Args:
+            task_description: What was the task trying to accomplish
+            task_type: coding, testing, debugging, architecture, git, etc.
+            success: Whether the task succeeded
+            outcome: Description of what happened
+            error_trace: If failed, the error message or stack trace
+            applied_bullets: JSON array of bullet IDs that were applied
+            path: Optional project path
+
+        Returns:
+            JSON with reflection insights and curation results
+
+        Example:
+            reflect(
+                task_description="Implement user authentication",
+                task_type="coding",
+                success=False,
+                outcome="Tests failed due to missing mock",
+                error_trace="AssertionError: mock not configured"
+            )
+        """
+        from pathlib import Path as PyPath
+
+        project_path = PyPath(path).resolve() if path else PyPath.cwd()
+
+        # Parse applied_bullets
+        bullet_ids = []
+        if applied_bullets:
+            try:
+                bullet_ids = json.loads(applied_bullets)
+                if not isinstance(bullet_ids, list):
+                    bullet_ids = [bullet_ids]
+            except json.JSONDecodeError:
+                bullet_ids = [b.strip() for b in applied_bullets.split(",") if b.strip()]
+
+        try:
+            from ..ace.reflector import get_reflector
+            from ..ace.curator import get_curator
+
+            reflector = get_reflector()
+            curator = get_curator(str(project_path))
+
+            # Run reflection
+            reflection = await reflector.reflect(
+                task_description=task_description,
+                task_type=task_type,
+                task_succeeded=success,
+                outcome=outcome or ("Task completed successfully" if success else "Task failed"),
+                tool_calls=None,
+                applied_bullets=bullet_ids,
+                error_trace=error_trace,
+                user_feedback=None,
+            )
+
+            # Curate the playbook based on reflection
+            curation = await curator.curate(reflection, auto_prune=False)
+
+            result = {
+                "reflection": {
+                    "task_succeeded": reflection.task_succeeded,
+                    "task_type": reflection.task_type,
+                    "insights_count": len(reflection.insights),
+                    "insights": [
+                        {"content": i.content, "type": i.insight_type.value, "confidence": i.confidence}
+                        for i in reflection.insights[:5]  # Limit to 5
+                    ],
+                    "root_causes": reflection.root_causes[:3] if reflection.root_causes else [],
+                    "correct_approaches": reflection.correct_approaches[:3] if reflection.correct_approaches else [],
+                    "bullets_tagged_helpful": reflection.bullets_to_tag_helpful,
+                    "bullets_tagged_harmful": reflection.bullets_to_tag_harmful,
+                },
+                "curation": {
+                    "bullets_added": curation.bullets_added,
+                    "bullets_removed": curation.bullets_removed,
+                    "bullets_merged": curation.bullets_merged,
+                    "dedup_prevented": curation.dedup_prevented,
+                    "feedback_recorded": curation.feedback_recorded,
+                },
+            }
+
+            log.info(
+                "manual_reflection_complete",
+                task_type=task_type,
+                success=success,
+                insights=len(reflection.insights),
+                curation_added=curation.bullets_added,
+            )
+
+            return json.dumps(result, indent=2)
+
+        except Exception as e:
+            log.error("reflection_failed", error=str(e))
+            return json.dumps({
+                "error": str(e),
+                "message": "Reflection failed. Check if LLM backend is available.",
+            }, indent=2)
 
     # =========================================================================
     # ACE Workflow Checkpoint Tools
@@ -1041,12 +1589,17 @@ def register_tool_handlers(mcp: FastMCP):
                 "tests": "Tests passing? New tests needed?",
                 "linting": "Code formatted and linted?",
                 "documentation": "Docs updated if needed?",
-                "feedback": "Called report_feedback() for applied bullets?",
+                "ace_complete": "Called complete_task(success, bullets_applied)?",
+            },
+            "ace_workflow": {
+                "final_step": "complete_task(success=True/False, bullets_applied='[\"strat-xxx\", ...]')",
+                "purpose": "Records feedback for all bullets in one call, closing the ACE learning loop",
             },
             "guidance": (
                 "Read relevant memory files to see what should be done when a task completes. "
                 "For exploration-only tasks, tests and linting may not be needed. "
-                "For code changes, verify the full validation workflow."
+                "For code changes, verify the full validation workflow. "
+                "ALWAYS call complete_task() to close the ACE learning loop."
             ),
         }, indent=2)
 

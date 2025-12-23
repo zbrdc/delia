@@ -58,21 +58,61 @@ async def playbook_tool(
     if action == "add":
         # add_playbook_bullet(task_type, content, section)
         content = kwargs.get("content")
-        section = kwargs.get("section", "general_strategies")
+        section = kwargs.get("section") or "general_strategies"  # Handle None explicitly
 
         if not task_type or not content:
             return json.dumps({"error": "task_type and content required for add action"})
 
-        bullet = playbook_manager.add_bullet(task_type, content, section)
-        return json.dumps({
-            "status": "added",
-            "bullet": {
-                "id": bullet.id,
-                "content": bullet.content,
-                "section": bullet.section,
-                "task_type": task_type
-            }
-        })
+        # Use Curator for deduplication-aware adding
+        try:
+            from delia.ace.curator import get_curator
+            project_path = Path(path) if path else None
+            curator = get_curator(str(project_path) if project_path else None)
+
+            added, existing_id = await curator.add_bullet(task_type, content, section)
+
+            if added:
+                # Get the newly added bullet
+                bullets = playbook_manager.load_playbook(task_type)
+                bullet = next((b for b in bullets if b.content == content), None)
+                return json.dumps({
+                    "status": "added",
+                    "bullet": {
+                        "id": bullet.id if bullet else "unknown",
+                        "content": content,
+                        "section": section,
+                        "task_type": task_type
+                    }
+                })
+            else:
+                return json.dumps({
+                    "status": "duplicate_prevented",
+                    "existing_bullet_id": existing_id,
+                    "message": f"Similar bullet already exists: {existing_id}"
+                })
+        except Exception as e:
+            # Fallback to direct add if curator fails
+            log.warning("curator_add_fallback", error=str(e))
+            bullet = playbook_manager.add_bullet(task_type, content, section)
+
+            # Try to generate embedding even in fallback
+            try:
+                from delia.ace.retrieval import get_retriever
+                project_path_resolved = Path(path) if path else Path.cwd()
+                retriever = get_retriever()
+                await retriever.add_bullet_embedding(bullet.id, content, project_path_resolved)
+            except Exception:
+                pass  # Embedding generation is best-effort
+
+            return json.dumps({
+                "status": "added",
+                "bullet": {
+                    "id": bullet.id,
+                    "content": bullet.content,
+                    "section": bullet.section,
+                    "task_type": task_type
+                }
+            })
 
     elif action == "write":
         # write_playbook(task_type, bullets)
@@ -396,14 +436,41 @@ async def profiles_tool(
 
     if action == "recommend":
         analyze_gaps = kwargs.get("analyze_gaps", True)
-        # Delegate to existing handler
-        from ..tools.handlers import register_tool_handlers
-        # Simple inline implementation
-        from ..playbook import detect_tech_stack
-        tech_stack = detect_tech_stack(project_path)
+        from ..playbook import detect_tech_stack, recommend_profiles
+
+        # Gather file paths and dependencies for tech stack detection
+        file_paths = []
+        for ext in ["*.py", "*.ts", "*.tsx", "*.js", "*.jsx", "*.rs", "*.go"]:
+            file_paths.extend([str(p) for p in project_path.rglob(ext)])
+
+        dependencies = []
+        pyproject = project_path / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                import tomllib
+                with open(pyproject, "rb") as f:
+                    data = tomllib.load(f)
+                deps = data.get("project", {}).get("dependencies", [])
+                dependencies.extend(deps)
+            except Exception:
+                pass
+
+        package_json = project_path / "package.json"
+        if package_json.exists():
+            try:
+                with open(package_json) as f:
+                    pkg = json.load(f)
+                dependencies.extend(list(pkg.get("dependencies", {}).keys()))
+                dependencies.extend(list(pkg.get("devDependencies", {}).keys()))
+            except Exception:
+                pass
+
+        tech_stack = detect_tech_stack(file_paths, dependencies)
+        recommendations = recommend_profiles(tech_stack, project_path)
+
         result = {
             "tech_stack": tech_stack,
-            "recommendations": [],  # Simplified for now
+            "recommendations": [{"profile": r.profile, "reason": r.reason, "priority": r.priority} for r in recommendations],
             "analyze_gaps": analyze_gaps
         }
         return json.dumps(result)
@@ -417,14 +484,41 @@ async def profiles_tool(
 
     elif action == "reevaluate":
         force = kwargs.get("force", False)
-        # Simple re-evaluation
         from ..playbook import detect_tech_stack
-        tech_stack = detect_tech_stack(project_path)
+
+        # Gather file paths and dependencies for tech stack detection
+        file_paths = []
+        for ext in ["*.py", "*.ts", "*.tsx", "*.js", "*.jsx", "*.rs", "*.go"]:
+            file_paths.extend([str(p) for p in project_path.rglob(ext)])
+
+        dependencies = []
+        pyproject = project_path / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                import tomllib
+                with open(pyproject, "rb") as f:
+                    data = tomllib.load(f)
+                deps = data.get("project", {}).get("dependencies", [])
+                dependencies.extend(deps)
+            except Exception:
+                pass
+
+        package_json = project_path / "package.json"
+        if package_json.exists():
+            try:
+                with open(package_json) as f:
+                    pkg = json.load(f)
+                dependencies.extend(list(pkg.get("dependencies", {}).keys()))
+                dependencies.extend(list(pkg.get("devDependencies", {}).keys()))
+            except Exception:
+                pass
+
+        tech_stack = detect_tech_stack(file_paths, dependencies)
         eval_state = project_path / ".delia" / "evaluation_state.json"
         eval_state.parent.mkdir(parents=True, exist_ok=True)
         import time
         eval_state.write_text(json.dumps({"last_eval": time.time(), "tech_stack": tech_stack}))
-        result = {"status": "reevaluated", "tech_stack": tech_stack}
+        result = {"status": "reevaluated", "tech_stack": tech_stack, "force": force}
         return json.dumps(result)
 
     elif action == "cleanup":
@@ -493,15 +587,19 @@ async def project_tool(
         phase = kwargs.get("phase", "overview")
 
         # Simple codebase scan
-        from ..orchestration.constants import CODE_EXTENSIONS, IGNORE_DIRS
+        from ..orchestration.constants import CODE_EXTENSIONS, IGNORE_DIRS, IGNORE_FILE_PATTERNS
         files = []
         for f in project_path.rglob("*"):
             if any(part in IGNORE_DIRS for part in f.parts):
                 continue
-            if f.suffix in CODE_EXTENSIONS and f.is_file():
-                files.append(str(f.relative_to(project_path)))
-                if len(files) >= max_files:
-                    break
+            if not f.is_file() or f.suffix not in CODE_EXTENSIONS:
+                continue
+            # Skip test files
+            if any(pattern in f.name for pattern in IGNORE_FILE_PATTERNS):
+                continue
+            files.append(str(f.relative_to(project_path)))
+            if len(files) >= max_files:
+                break
 
         result = {"phase": phase, "files": files[:max_files], "total": len(files)}
         return json.dumps(result)

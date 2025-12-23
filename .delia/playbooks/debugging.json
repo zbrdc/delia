@@ -1,35 +1,74 @@
 [
   {
-    "content": "Check backend health with health() tool before debugging LLM issues.",
-    "id": "strat-8245871f",
+    "content": "Check structlog output for detailed traces",
+    "id": "strat-7d72fb83",
     "section": "general_strategies",
-    "helpful_count": 0,
-    "harmful_count": 1,
-    "created_at": "2025-12-21T23:13:47.302645",
-    "last_used": "2025-12-21T23:16:34.597536",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:39:44.473215",
+    "last_used": "2025-12-22T20:45:37.402002",
     "source_task": null,
-    "utility_score": 0.0
+    "source": "learned",
+    "utility_score": 1.0
   },
   {
-    "content": "Use structlog context to trace request flow through async handlers.",
-    "id": "strat-bdb45de5",
+    "content": "MCP tool errors are returned in error key of result",
+    "id": "strat-e077ebc0",
+    "section": "general_strategies",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:39:44.473227",
+    "last_used": "2025-12-22T20:45:37.402296",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
+  },
+  {
+    "content": "LSP issues often stem from language server not running",
+    "id": "strat-18c6d664",
     "section": "general_strategies",
     "helpful_count": 0,
     "harmful_count": 0,
-    "created_at": "2025-12-21T23:13:47.302658",
+    "created_at": "2025-12-22T20:39:44.473232",
     "last_used": null,
     "source_task": null,
+    "source": "learned",
     "utility_score": 0.5
   },
   {
-    "content": "LSP tools require language server running - check lsp_client.py initialization.",
-    "id": "strat-f19fbb72",
+    "content": "Use health() tool to check backend connectivity",
+    "id": "strat-ab17e78d",
     "section": "general_strategies",
     "helpful_count": 0,
     "harmful_count": 0,
-    "created_at": "2025-12-21T23:13:47.302662",
+    "created_at": "2025-12-22T20:39:44.473235",
     "last_used": null,
     "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "Dashboard at localhost:8765 shows real-time tool usage",
+    "id": "strat-595f499a",
+    "section": "general_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:39:44.473239",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "When writing regex patterns for context detection, always include common verb forms and plurals using patterns like `s?` for plurals and `(ed|es|ing)?` for verb conjugations. This prevents missing common variations like \"crashes\" vs \"crash\".",
+    "id": "strat-69ba19c8",
+    "section": "learned_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:45:37.943324",
+    "last_used": null,
+    "source_task": "debugging",
+    "source": "reflector",
     "utility_score": 0.5
   }
 ]

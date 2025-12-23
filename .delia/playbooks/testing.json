@@ -1,22 +1,122 @@
 [
   {
-    "content": "All async tests must use @pytest.mark.asyncio decorator.",
-    "section": "general_strategies"
+    "content": "Use pytest with async support via pytest-asyncio",
+    "id": "strat-a6fb68f0",
+    "section": "general_strategies",
+    "helpful_count": 4,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T18:59:38.180289",
+    "last_used": "2025-12-22T20:43:07.610960",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
   },
   {
-    "content": "Use httpx MockTransport for testing HTTP calls, not live backends.",
-    "section": "general_strategies"
+    "content": "Mock external services (Ollama, LSP) in unit tests",
+    "id": "strat-ca993479",
+    "section": "general_strategies",
+    "helpful_count": 4,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T18:59:38.180312",
+    "last_used": "2025-12-22T20:43:07.611230",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
   },
   {
-    "content": "Test data directory isolation: DELIA_DATA_DIR=/tmp/delia-test-data uv run pytest.",
-    "section": "general_strategies"
+    "content": "Integration tests go in tests/integration/",
+    "id": "strat-f7610b45",
+    "section": "general_strategies",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T18:59:38.180318",
+    "last_used": "2025-12-22T20:43:07.612226",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
   },
   {
-    "content": "Run uv run pytest before every commit. No exceptions.",
-    "section": "general_strategies"
+    "content": "Use fixtures for common setup patterns",
+    "id": "strat-70b45e4a",
+    "section": "general_strategies",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T18:59:38.180322",
+    "last_used": "2025-12-22T20:43:07.613249",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
   },
   {
-    "content": "When refactoring, update tests to match new API instead of reverting code to pass stale tests.",
-    "section": "general_strategies"
+    "content": "Test MCP tools via their handler functions directly",
+    "id": "strat-0301ab42",
+    "section": "general_strategies",
+    "helpful_count": 3,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T18:59:38.180325",
+    "last_used": "2025-12-22T20:43:07.612028",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
+  },
+  {
+    "content": "Test bullet for integration check",
+    "id": "strat-e2421844",
+    "section": "general_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T18:59:38.636346",
+    "last_used": null,
+    "source_task": "testing",
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "TEST_BULLET: Verify ACE feature completeness via systematic testing",
+    "id": "strat-f357257a",
+    "section": "general_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:35:17.592622",
+    "last_used": null,
+    "source_task": "testing",
+    "source": "reflector",
+    "utility_score": 0.5
+  },
+  {
+    "content": "TEST_BULLET_FOR_DELETE: Temporary bullet to test delete functionality",
+    "id": "strat-ad65ed4d",
+    "section": "general_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:38:38.190722",
+    "last_used": null,
+    "source_task": "testing",
+    "source": "reflector",
+    "utility_score": 0.5
+  },
+  {
+    "content": "ACE Framework integration testing should follow a systematic pattern: auto_context \u2192 test each component \u2192 complete_task with feedback",
+    "id": "strat-299c84b0",
+    "section": "learned_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:41:32.144011",
+    "last_used": null,
+    "source_task": "testing",
+    "source": "reflector",
+    "utility_score": 0.5
+  },
+  {
+    "content": "ACE Framework testing revealed that debugging context detection needs improvement - \"crash\" keywords should trigger debugging task type instead of defaulting to project. Consider adding crash/error/exception keywords to debugging detection patterns.",
+    "id": "strat-11b83e25",
+    "section": "learned_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:43:07.986831",
+    "last_used": null,
+    "source_task": "testing",
+    "source": "reflector",
+    "utility_score": 0.5
   }
 ]

@@ -55,6 +55,10 @@ class PlaybookBullet(BaseModel):
     created_at: str = Field(default_factory=_now_iso)
     last_used: str | None = None
     source_task: str | None = Field(default=None, description="Reference to the task that generated this")
+    source: Literal["seed", "learned", "manual", "reflector", "curator"] = Field(
+        default="learned",
+        description="Origin: 'seed' from profiles, 'learned' from feedback, 'manual' from user, 'reflector'/'curator' from ACE"
+    )
 
     @computed_field
     @property
@@ -167,20 +171,50 @@ class PlaybookManager:
         except Exception as e:
             log.error("playbook_save_failed", task_type=task_type, error=str(e))
 
-    def add_bullet(self, task_type: str, content: str, section: str = "general_strategies") -> PlaybookBullet:
+    def add_bullet(
+        self,
+        task_type: str,
+        content: str,
+        section: str = "general_strategies",
+        source: Literal["seed", "learned", "manual", "reflector", "curator"] = "learned",
+    ) -> PlaybookBullet:
         """Add a new strategic bullet to a playbook."""
         bullets = self.load_playbook(task_type)
-        
+
         # Simple deduplication check
         for b in bullets:
             if b.content.strip().lower() == content.strip().lower():
                 log.debug("playbook_duplicate_skipped", content=content[:30])
                 return b
-                
-        new_bullet = PlaybookBullet(content=content, section=section, source_task=task_type)
+
+        new_bullet = PlaybookBullet(
+            content=content,
+            section=section,
+            source_task=task_type,
+            source=source,
+        )
         bullets.append(new_bullet)
         self.save_playbook(task_type, bullets)
         return new_bullet
+
+    def delete_bullet(self, task_type: str, bullet_id: str) -> bool:
+        """Delete a bullet from a playbook by its ID.
+
+        Returns True if the bullet was found and deleted, False otherwise.
+        """
+        bullets = self.load_playbook(task_type)
+        original_count = len(bullets)
+
+        # Filter out the bullet with matching ID
+        bullets = [b for b in bullets if b.id != bullet_id]
+
+        if len(bullets) < original_count:
+            self.save_playbook(task_type, bullets)
+            log.info("playbook_bullet_deleted", task_type=task_type, bullet_id=bullet_id)
+            return True
+
+        log.warning("playbook_bullet_not_found", task_type=task_type, bullet_id=bullet_id)
+        return False
 
     def record_feedback(self, bullet_id: str, task_type: str, helpful: bool):
         """Update the helpful/harmful count for a bullet."""
@@ -906,12 +940,12 @@ def save_evaluation_state(project_root: Path, state: EvaluationState) -> None:
 
 
 def count_code_lines(project_root: Path) -> int:
-    """Count total lines of code in the project."""
-    from .orchestration.constants import CODE_EXTENSIONS, IGNORE_DIRS
+    """Count total lines of code in the project (excluding tests)."""
+    from .orchestration.constants import CODE_EXTENSIONS, should_ignore_file
 
     total_lines = 0
     for file_path in project_root.rglob("*"):
-        if any(part in IGNORE_DIRS for part in file_path.parts):
+        if should_ignore_file(file_path):
             continue
         if file_path.suffix in CODE_EXTENSIONS and file_path.is_file():
             try:
@@ -1374,3 +1408,312 @@ def _get_obsolete_reason(profile_name: str, tech_stack: dict[str, Any]) -> str:
             return f"{required} not detected in project (found: {', '.join(all_detected[:3]) or 'none'})"
     
     return "No longer matches project tech stack"
+
+
+# =============================================================================
+# Profile to Playbook Seed Conversion (ACE Framework)
+# =============================================================================
+
+import re
+from dataclasses import dataclass
+from typing import Iterator
+
+
+@dataclass
+class ExtractedBullet:
+    """A bullet extracted from a profile markdown file."""
+    content: str
+    section: str
+    profile_source: str
+
+
+def parse_profile_to_bullets(profile_content: str, profile_name: str) -> list[ExtractedBullet]:
+    """
+    Parse a profile markdown file and extract atomic bullet strategies.
+
+    Extraction rules:
+    1. Lines in ALWAYS/NEVER/AVOID blocks -> individual bullets
+    2. Bullet points (- or *) that are actionable strategies
+    3. Skip code examples, headings, and prose descriptions
+
+    Args:
+        profile_content: The markdown content of the profile
+        profile_name: Name of the profile (e.g., "python.md")
+
+    Returns:
+        List of extracted bullets
+    """
+    bullets: list[ExtractedBullet] = []
+    lines = profile_content.split("\n")
+
+    current_section = "general"
+    in_code_block = False
+    in_rules_block = False  # ALWAYS/NEVER/AVOID block
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Track code blocks to skip
+        if stripped.startswith("```"):
+            # Check if this is the start of an ALWAYS/NEVER block
+            if not in_code_block:
+                # Look ahead for rule patterns
+                next_lines = "\n".join(lines[i+1:i+5])
+                if re.search(r"^(ALWAYS|NEVER|AVOID|DO NOT):", next_lines, re.MULTILINE):
+                    in_rules_block = True
+            else:
+                in_rules_block = False
+            in_code_block = not in_code_block
+            continue
+
+        # Inside code block - check for rule patterns
+        if in_code_block and in_rules_block:
+            # Extract ALWAYS/NEVER/AVOID items
+            if stripped.startswith("- "):
+                content = stripped[2:].strip()
+                if len(content) > 10 and not content.startswith("#"):
+                    bullets.append(ExtractedBullet(
+                        content=content,
+                        section=current_section,
+                        profile_source=profile_name,
+                    ))
+            continue
+
+        # Skip regular code blocks
+        if in_code_block:
+            continue
+
+        # Track section from headings
+        if stripped.startswith("## "):
+            section_name = stripped[3:].strip().lower()
+            # Normalize section names
+            section_map = {
+                "core principles": "principles",
+                "best practices": "best_practices",
+                "file organization": "structure",
+                "naming conventions": "naming",
+                "error handling": "error_handling",
+                "async patterns": "async",
+                "hooks best practices": "hooks",
+                "performance optimization": "performance",
+                "state management": "state",
+                "accessibility": "accessibility",
+            }
+            current_section = section_map.get(section_name, section_name.replace(" ", "_"))
+            continue
+
+        # Extract bullet points that are strategies (not in code blocks)
+        if stripped.startswith("- ") and not in_code_block:
+            content = stripped[2:].strip()
+            # Filter for actionable content
+            if _is_actionable_bullet(content):
+                bullets.append(ExtractedBullet(
+                    content=content,
+                    section=current_section,
+                    profile_source=profile_name,
+                ))
+
+    return bullets
+
+
+def _is_actionable_bullet(content: str) -> bool:
+    """Check if a bullet is an actionable strategy worth keeping."""
+    # Too short
+    if len(content) < 15:
+        return False
+
+    # Skip file paths, imports, etc.
+    if content.startswith(("├", "│", "└", "import ", "from ")):
+        return False
+
+    # Skip pure examples/references
+    if content.startswith(("Example:", "See:", "Note:", "http", "`")):
+        return False
+
+    # Prefer bullets that start with action words or have clear directives
+    action_patterns = [
+        r"^(Use|Always|Never|Avoid|Prefer|Add|Create|Define|Implement|Handle)",
+        r"^(Ensure|Maintain|Follow|Check|Validate|Test|Run|Keep)",
+        r"should|must|always|never|avoid|prefer",
+    ]
+
+    for pattern in action_patterns:
+        if re.search(pattern, content, re.IGNORECASE):
+            return True
+
+    # Accept bullets with code patterns (likely technical guidance)
+    if "`" in content or "()" in content:
+        return True
+
+    return False
+
+
+def seed_playbooks_from_profiles(
+    project_path: Path,
+    detected_tech: dict[str, Any],
+    force: bool = False,
+) -> dict[str, int]:
+    """
+    Seed project playbooks from profile templates based on detected tech stack.
+
+    This is called during project initialization to provide baseline strategies
+    that can then be refined through feedback.
+
+    Args:
+        project_path: Path to the project
+        detected_tech: Tech stack detection results (languages, frameworks)
+        force: If True, re-seed even if playbooks exist
+
+    Returns:
+        Dict mapping task_type to number of seeds added
+    """
+    from . import paths
+
+    templates_dir = Path(__file__).parent / "templates" / "profiles"
+    playbooks_dir = project_path / ".delia" / "playbooks"
+    playbooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine which profiles to seed from
+    profiles_to_load = _select_profiles_for_tech(detected_tech, templates_dir)
+
+    log.info("seeding_playbooks", profiles=profiles_to_load)
+
+    # Map profile sections to playbook task types
+    section_to_task = {
+        "principles": "coding",
+        "best_practices": "coding",
+        "naming": "coding",
+        "async": "coding",
+        "performance": "performance",
+        "error_handling": "debugging",
+        "hooks": "coding",
+        "state": "coding",
+        "accessibility": "coding",
+        "structure": "project",
+        "security": "security",
+        "testing": "testing",
+        "deployment": "deployment",
+        "git": "git",
+    }
+
+    results: dict[str, int] = {}
+    pm = PlaybookManager(playbooks_dir)
+
+    for profile_name in profiles_to_load:
+        profile_path = templates_dir / profile_name
+        if not profile_path.exists():
+            continue
+
+        try:
+            content = profile_path.read_text()
+            extracted = parse_profile_to_bullets(content, profile_name)
+
+            for bullet in extracted:
+                # Map section to task type
+                task_type = section_to_task.get(bullet.section, "coding")
+
+                # Check if playbook already has content (skip unless force)
+                if not force:
+                    existing = pm.load_playbook(task_type)
+                    # Only seed if playbook is empty or has only seeds
+                    has_learned = any(b.source == "learned" for b in existing)
+                    if has_learned:
+                        continue
+
+                # Add as seed bullet
+                pm.add_bullet(
+                    task_type=task_type,
+                    content=bullet.content,
+                    section=bullet.section,
+                    source="seed",
+                )
+                results[task_type] = results.get(task_type, 0) + 1
+
+        except Exception as e:
+            log.warning("profile_seed_failed", profile=profile_name, error=str(e))
+
+    log.info("playbooks_seeded", results=results)
+    return results
+
+
+def _select_profiles_for_tech(tech_stack: dict[str, Any], templates_dir: Path) -> list[str]:
+    """Select which profiles to load based on detected tech stack."""
+    profiles = ["core.md"]  # Always include core
+
+    # Map languages/frameworks to profiles
+    lang = tech_stack.get("primary_language", "").lower()
+    frameworks = [f.lower() for f in tech_stack.get("frameworks", [])]
+
+    # Language profiles
+    lang_profiles = {
+        "python": "python.md",
+        "typescript": "typescript.md",
+        "javascript": "typescript.md",  # Use TS profile for JS too
+        "rust": "rust.md",
+        "go": "golang.md",
+        "java": "java.md",
+        "c": "c.md",
+        "cpp": "cpp.md",
+        "c++": "cpp.md",
+    }
+
+    if lang in lang_profiles:
+        profiles.append(lang_profiles[lang])
+
+    # Framework profiles
+    framework_profiles = {
+        "fastapi": "fastapi.md",
+        "django": "django.md",
+        "flask": "python.md",  # No flask.md, use python
+        "react": "react.md",
+        "vue": "vue.md",
+        "angular": "angular.md",
+        "svelte": "svelte.md",
+        "nextjs": "nextjs.md",
+        "next.js": "nextjs.md",
+        "nestjs": "nestjs.md",
+        "nest.js": "nestjs.md",
+        "laravel": "laravel.md",
+        "flutter": "flutter.md",
+    }
+
+    for fw in frameworks:
+        fw_lower = fw.lower()
+        for pattern, profile in framework_profiles.items():
+            if pattern in fw_lower:
+                if profile not in profiles:
+                    profiles.append(profile)
+
+    # Special detection
+    if tech_stack.get("is_async"):
+        # Async projects benefit from API patterns
+        if "api.md" not in profiles:
+            profiles.append("api.md")
+
+    # Only include profiles that exist
+    return [p for p in profiles if (templates_dir / p).exists()]
+
+
+def get_seed_stats(project_path: Path) -> dict[str, Any]:
+    """Get statistics about seeded vs learned bullets in a project."""
+    playbooks_dir = project_path / ".delia" / "playbooks"
+    if not playbooks_dir.exists():
+        return {"seeded": 0, "learned": 0, "manual": 0, "total": 0}
+
+    pm = PlaybookManager(playbooks_dir)
+    all_bullets = pm.get_all_bullets()
+
+    stats = {"seeded": 0, "learned": 0, "manual": 0, "total": 0}
+
+    for task_type, bullets in all_bullets.items():
+        for b in bullets:
+            source = getattr(b, "source", "learned")  # Default for old bullets
+            if source == "seed":
+                stats["seeded"] += 1
+            elif source == "manual":
+                stats["manual"] += 1
+            else:
+                stats["learned"] += 1
+            stats["total"] += 1
+
+    return stats

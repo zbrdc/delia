@@ -1,39 +1,45 @@
-# Core Profile (Always Loaded)
+# ACE Framework: Core Profile (v1.1)
 
-You are an expert in LLM orchestration, Model Context Protocol (MCP) development, and distributed inference systems, specializing in Delia's architecture.
+## 1. Library-First Principle (The 50-Line Rule)
 
-## Build Commands
+**Constraint:** Do not write custom logic for problems solved by industry-standard libraries.
 
-```bash
-uv sync && uv pip install -e .    # Install
-uv run pytest                      # Test all
-delia serve                        # MCP server (stdio)
-delia serve --transport sse --port 8200  # HTTP/SSE
-```
+- **Trigger:** If the estimated implementation exceeds 50 lines or involves complex domains (Date/Time, Auth, Parsing, State Management), a library search is MANDATORY.
 
-## Key Principles
+- **Evaluation Protocol:**
+  1. **Search:** Check `pyproject.toml` or `package.json` for existing dependencies.
+  2. **External Audit:** Identify top 2 options based on Active Maintenance (update < 6 months ago) and Maturity (>1k stars/high DLs).
+  3. **Rationale:** Present a brief Pro/Con table to the user.
 
-1. **Backend Agnostic** - Unified `call_llm()` interface, no provider-specific logic in core
-2. **Async-First** - `async def` for all I/O, proper `await`, use `asyncio.gather()`
-3. **Type Safety** - Pydantic models, type hints, validate inputs early
-4. **Structured Logging** - `log.info("event_name", key=value)`
-5. **Separation of Concerns** - Single responsibility, config-driven behavior
-6. **Graceful Degradation** - Circuit breakers, automatic failover
-7. **Complete Integration** - No placeholders, remove old code when extracting
-8. **Tests Follow Implementation** - Update stale tests, don't revert working code
+- **Scratch Implementation:** Only permitted if the dependency overhead (size/security) outweighs the logic complexity.
 
-## Technology Stack
+## 2. Technical Standards & Patterns
 
-- Python 3.11+ (async/await, type hints)
-- FastAPI, Pydantic, httpx, structlog
-- MCP protocol (stdio/SSE)
-- Providers: Ollama, llama.cpp, Gemini
+All code must adhere to these strict mechanical requirements:
 
-## Profile Selection
+- **Signatures:** Strict Type Hinting is non-negotiable (e.g., Python `typing`, TypeScript `strict`).
+- **Asynchrony:** Use `async/await` for all I/O, Network, or File System operations. Synchronous blocking calls in these contexts are considered bugs.
+- **Nesting:** Maximum of 3 levels of indentation. If logic requires more, refactor into sub-functions.
+- **Logging:** Use structured context.
+  - Bad: `log.info("Saved user")`
+  - Good: `log.info("user_persistence_success", user_id=user.id, latency_ms=20)`
 
-When answering questions, select additional profiles based on context:
-- **Coding tasks** → Load `coding.md`
-- **Testing tasks** → Load `testing.md`
-- **Git/commits/PRs** → Load `git.md`
-- **Architecture/design** → Load `architecture.md`
-- **Debugging/errors** → Load `debugging.md`
+## 3. Pre-Flight Checklist (Mandatory)
+
+Before a single line of code is finalized, verify against the codebase:
+
+1. **Pattern Match:** `grep` or search the `/core` or `/utils` directories. If a similar utility exists, import it; do not recreate it.
+2. **Validation:** Inputs must be validated at the entry point (e.g., Pydantic models, Zod schemas). Fail fast with specific exceptions.
+3. **Clean-up:** When refactoring, the old implementation must be deleted. No "ghost code" or commented-out blocks.
+
+## 4. Anti-Patterns (Zero Tolerance)
+
+- **The Placeholder:** Never output `// TODO: Implement logic here`. Provide a functional skeleton or the full logic.
+- **State Duplication:** Never store the same data in two different modules. Define a single source of truth.
+- **Magic Values:** No hardcoded strings or integers. All configuration must reside in `.env` or `config.py`.
+- **Bypassing Integration:** New modules must be wired into the main application. Isolated code that isn't called is a failure.
+
+## 5. Documentation Requirements
+
+- **Public API:** Every public class/function requires a docstring defining Parameters, Return Type, and Exceptions raised.
+- **"The Why":** Comments should explain *why* a specific architectural choice or edge case handling exists, not *what* the code is doing (the code should be self-documenting).

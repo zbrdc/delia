@@ -95,7 +95,16 @@ class UserTrackingMiddleware(Middleware):
             success, error_msg = False, str(e); raise
         finally:
             elapsed_ms = int((time.time() - start_time) * 1000)
+            tool_name = context.method or getattr(context.message, "name", None) or "unknown"
+
+            # Record to stats service (always, for dashboard metrics)
+            container.stats_service.record_tool_call(
+                tool_name=tool_name,
+                elapsed_ms=elapsed_ms,
+                success=success,
+                error=error_msg if not success else None,
+            )
+
             if client:
-                tool_name = context.method or getattr(context.message, "name", None) or "unknown"
                 container.user_tracker.record_request(client_id=client.client_id, task_type=tool_name, model_tier="", tokens=0, elapsed_ms=elapsed_ms, success=success, error=error_msg)
         return result

@@ -38,6 +38,7 @@ log = structlog.get_logger()
 # Constants for deque/list size limits
 MAX_RECENT_CALLS = 50
 MAX_RESPONSE_TIMES = 100
+MAX_TOOL_HISTORY = 200
 
 
 class StatsService:
@@ -95,6 +96,10 @@ class StatsService:
             "moe": [],
             "thinking": [],
         }
+
+        # MCP Tool call tracking
+        self.tool_calls: dict[str, dict[str, int]] = {}  # {tool_name: {calls, total_ms}}
+        self.recent_tool_calls: deque[dict] = deque(maxlen=MAX_TOOL_HISTORY)
 
         # Thread safety
         self._lock = threading.Lock()
@@ -179,6 +184,60 @@ class StatsService:
             else:
                 self.task_stats["other"] += 1
 
+    def record_tool_call(
+        self,
+        tool_name: str,
+        elapsed_ms: int,
+        success: bool = True,
+        error: str | None = None,
+    ) -> None:
+        """
+        Thread-safe recording of an MCP tool call.
+
+        Args:
+            tool_name: Name of the MCP tool called
+            elapsed_ms: Execution time in milliseconds
+            success: Whether the tool call succeeded
+            error: Error message if failed
+        """
+        with self._lock:
+            # Initialize tool entry if needed
+            if tool_name not in self.tool_calls:
+                self.tool_calls[tool_name] = {"calls": 0, "total_ms": 0, "errors": 0}
+
+            # Update aggregate stats
+            self.tool_calls[tool_name]["calls"] += 1
+            self.tool_calls[tool_name]["total_ms"] += elapsed_ms
+            if not success:
+                self.tool_calls[tool_name]["errors"] += 1
+
+            # Add to recent history
+            self.recent_tool_calls.append({
+                "ts": datetime.now().isoformat(),
+                "tool": tool_name,
+                "ms": elapsed_ms,
+                "success": success,
+                "error": error,
+            })
+
+    def get_tool_stats(self) -> dict[str, dict]:
+        """
+        Get aggregated tool call statistics.
+
+        Returns:
+            Dict of tool stats with avg_ms calculated.
+        """
+        with self._lock:
+            result = {}
+            for tool_name, stats in self.tool_calls.items():
+                result[tool_name] = {
+                    "calls": stats["calls"],
+                    "errors": stats["errors"],
+                    "avg_ms": round(stats["total_ms"] / stats["calls"], 1) if stats["calls"] > 0 else 0,
+                    "total_ms": stats["total_ms"],
+                }
+            return result
+
     def get_snapshot(self) -> tuple[dict, dict, dict, list]:
         """
         Take atomic snapshot of all in-memory stats under lock.
@@ -229,6 +288,8 @@ class StatsService:
             _, task_stats_snapshot, response_times_snapshot, recent_calls_snapshot = (
                 self.get_snapshot()
             )
+            tool_stats_snapshot = self.get_tool_stats()
+            recent_tools = list(self.recent_tool_calls)[-MAX_TOOL_HISTORY:]
 
             data = {
                 "task_stats": task_stats_snapshot,
@@ -238,6 +299,8 @@ class StatsService:
                     "coder": response_times_snapshot["coder"][-MAX_RESPONSE_TIMES:],
                     "moe": response_times_snapshot["moe"][-MAX_RESPONSE_TIMES:],
                 },
+                "tool_stats": tool_stats_snapshot,
+                "recent_tool_calls": recent_tools,
             }
             temp_file = self.enhanced_stats_file.with_suffix(".tmp")
             temp_file.write_text(json.dumps(data, indent=2))

@@ -1,49 +1,66 @@
-# Git Workflow Profile
+# Git Profile
 
-Load this profile for: commits, branches, PRs, version control.
+Load this profile for: version control, branching, commits, PRs.
 
-## When to Create Branches
+## Branch Decision
 
-- **Feature branches**: New features, refactors, multi-file changes
-  - `feature/add-voting-confidence`, `refactor/extract-tools`
-- **Fix branches**: Bug fixes (`fix/circuit-breaker-timeout`)
-- **Stay on main**: Single-file docs, typos, trivial changes
-- **Ask if uncertain**: Unclear scope → ask before branching
+| Change Type | Branch? | Naming |
+|-------------|---------|--------|
+| Single-file trivial fix | No, commit to main | - |
+| Multi-file changes | Yes | feature/, fix/, refactor/ |
+| Experimental work | Yes | experiment/ |
+| Breaking changes | Yes + PR review | breaking/ |
 
-## When to Commit
+## Commit Format
 
-- **Atomic**: Each commit compiles and passes tests
-- **After validation**: Verify change works before committing
-- **Separate concerns**: Don't batch unrelated changes
+```
+type(scope): description
 
-## Commit Messages
-
-```bash
-feat: Add confidence-weighted voting per ADR-008
-fix: Resolve circuit breaker false positives
-refactor: Extract tool handlers to dedicated module
-docs: Update orchestration modes for ADR-008
-test: Update stale tests for new delegation API
-chore: Update dependencies
+Examples:
+- feat(auth): Add OAuth2 login flow
+- fix(api): Resolve timeout on large requests
+- refactor(core): Extract validation to utility
+- docs(readme): Update installation steps
+- test(unit): Add coverage for edge cases
 ```
 
-## When to Push
+## Commit Message Rules
 
-- After stable checkpoint (feature complete, tested)
-- Before context switch (stepping away)
-- NEVER push broken code
-- NEVER force push main/master
+- Imperative mood: "Add" not "Added"
+- Concise subject (<72 chars)
+- Body explains "why" not "what"
+- Reference issues: "Fixes #123"
 
-## Pull Requests
+## Git Safety
 
-- PR from feature branch → main
-- Draft PR for work-in-progress
-- Include: summary, test plan, ADR links
-- Small PRs preferred
+NEVER:
+- Force-push to main/master
+- Skip hooks without explicit reason
+- Commit secrets or credentials
+- Leave work uncommitted overnight
 
-## What NOT to Commit
+## PR Guidelines
 
-- Secrets (`.env`, API keys)
-- Generated files (`__pycache__`, builds)
-- Local config (`.delia.local.md`)
-- Incomplete refactors
+- Small PRs preferred (<400 lines)
+- Include test plan
+- Link related issues
+- Request review from relevant owners
+
+## Best Practices
+
+```
+ALWAYS:
+- Use imperative mood in commit messages
+- Write descriptive commit messages explaining "why"
+- Keep commits atomic and focused
+- Test before pushing
+- Create branches for multi-file changes
+
+AVOID:
+- Force-pushing to main/master
+- Skipping hooks without explicit reason
+- Committing secrets or credentials
+- Leaving work uncommitted overnight
+- Large PRs that are hard to review
+- Vague commit messages like "fix bug"
+```

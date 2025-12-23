@@ -1,14 +1,22 @@
 [
   {
-    "content": "Never log API keys or tokens - use structlog filtering.",
-    "section": "general_strategies"
+    "content": "Never log or expose API keys",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "Validate all file paths to prevent directory traversal.",
-    "section": "general_strategies"
+    "content": "Validate all file paths to prevent traversal",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "Sanitize user input before passing to shell commands.",
-    "section": "general_strategies"
+    "content": "MCP tools run with user permissions - be cautious with file ops",
+    "section": "general_strategies",
+    "source": "learned"
+  },
+  {
+    "content": "Settings files may contain sensitive backend URLs",
+    "section": "general_strategies",
+    "source": "learned"
   }
 ]

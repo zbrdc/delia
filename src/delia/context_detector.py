@@ -40,12 +40,12 @@ TASK_PATTERNS_WEIGHTED: dict[TaskType, list[tuple[str, int]]] = {
         (r"\b(tdd|test.driven)\b", 3),
     ],
     "debugging": [
-        (r"\b(bug|debug|issue|problem)\b", 3),
-        (r"\b(error|exception|traceback|stack.?trace)\b", 2),
-        (r"\b(broken|failing|crash|crashed|down|outage)\b", 3),
+        (r"\b(bug|debug|issue|problem)s?\b", 3),
+        (r"\b(error|exception|traceback|stack.?trace)s?\b", 2),
+        (r"\b(broken|failing|fails?|crash(ed|es|ing)?|down|outage)\b", 3),
         (r"\b(not working|doesn.?t work|won.?t work|stopped)\b", 3),
         (r"\b(fix|fixing|fixed)\b", 2),  # "fix" often means debugging
-        (r"\b(investigate|diagnose|troubleshoot)\b", 3),
+        (r"\b(investigate|diagnos(e|ing)|troubleshoot)\b", 3),
     ],
     "architecture": [
         (r"\b(design|architecture|architect)\b", 3),
@@ -271,6 +271,496 @@ def get_relevant_profiles(context: DetectedContext) -> list[str]:
                 profiles.append(profile)
 
     return profiles
+
+
+# =============================================================================
+# FILE-BASED CONTEXT DETECTION
+# =============================================================================
+
+# File path patterns that indicate task types
+# Format: (glob_pattern, task_type, weight)
+FILE_PATTERNS: list[tuple[str, TaskType, int]] = [
+    # Testing
+    ("test_*.py", "testing", 3),
+    ("*_test.py", "testing", 3),
+    ("*_test.go", "testing", 3),
+    ("*.test.ts", "testing", 3),
+    ("*.test.tsx", "testing", 3),
+    ("*.spec.ts", "testing", 3),
+    ("*.spec.tsx", "testing", 3),
+    ("tests/**", "testing", 2),
+    ("__tests__/**", "testing", 2),
+    ("conftest.py", "testing", 3),
+    ("pytest.ini", "testing", 2),
+    ("jest.config.*", "testing", 2),
+
+    # Deployment/CI
+    ("Dockerfile", "deployment", 3),
+    ("docker-compose*.yml", "deployment", 3),
+    (".github/workflows/*.yml", "deployment", 3),
+    (".gitlab-ci.yml", "deployment", 3),
+    ("Jenkinsfile", "deployment", 3),
+    ("k8s/**", "deployment", 2),
+    ("kubernetes/**", "deployment", 2),
+    ("helm/**", "deployment", 2),
+    ("terraform/**", "deployment", 2),
+
+    # Security
+    ("**/auth/**", "security", 2),
+    ("**/security/**", "security", 2),
+    ("**/authentication/**", "security", 2),
+    ("**/authorization/**", "security", 2),
+
+    # API
+    ("**/api/**", "api", 2),
+    ("**/routes/**", "api", 2),
+    ("**/endpoints/**", "api", 2),
+    ("openapi.yaml", "api", 3),
+    ("swagger.yaml", "api", 3),
+
+    # Git
+    (".gitignore", "git", 2),
+    (".gitattributes", "git", 2),
+
+    # Performance
+    ("**/cache/**", "performance", 2),
+    ("**/caching/**", "performance", 2),
+]
+
+
+def detect_from_files(file_paths: list[str]) -> dict[TaskType, int]:
+    """
+    Detect task type signals from file paths.
+
+    Args:
+        file_paths: List of file paths being worked on
+
+    Returns:
+        Dict mapping task types to weighted scores
+    """
+    import fnmatch
+    from pathlib import Path
+
+    scores: dict[TaskType, int] = {}
+
+    for file_path in file_paths:
+        path = Path(file_path)
+        name = path.name
+        full_path = str(path)
+
+        for pattern, task_type, weight in FILE_PATTERNS:
+            # Try matching against filename and full path
+            if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(full_path, pattern):
+                scores[task_type] = scores.get(task_type, 0) + weight
+                log.debug("file_pattern_match", file=name, pattern=pattern, task=task_type)
+
+    return scores
+
+
+# File extension to language/framework mapping for profile loading
+# Format: extension -> (language, frameworks, profile_hints)
+# Profile hints map to actual files in templates/profiles/
+EXTENSION_MAP: dict[str, tuple[str, list[str], list[str]]] = {
+    # Python
+    ".py": ("python", [], ["python.md"]),
+    ".pyi": ("python", [], ["python.md"]),
+    ".pyx": ("python", ["cython"], ["python.md"]),
+    ".ipynb": ("python", ["jupyter"], ["python.md", "ml.md"]),
+
+    # TypeScript/JavaScript
+    ".ts": ("typescript", [], ["typescript.md"]),
+    ".tsx": ("typescript", ["react"], ["typescript.md", "react.md"]),
+    ".js": ("javascript", [], ["typescript.md"]),  # Use typescript.md for JS too
+    ".jsx": ("javascript", ["react"], ["typescript.md", "react.md"]),
+    ".mjs": ("javascript", [], ["typescript.md"]),
+    ".cjs": ("javascript", [], ["typescript.md"]),
+    ".vue": ("vue", ["vue"], ["vue.md", "typescript.md"]),
+    ".svelte": ("svelte", ["svelte"], ["svelte.md", "typescript.md"]),
+
+    # Go
+    ".go": ("go", [], ["golang.md"]),
+
+    # Rust
+    ".rs": ("rust", [], ["rust.md"]),
+
+    # C/C++
+    ".c": ("c", [], ["c.md"]),
+    ".h": ("c", [], ["c.md"]),
+    ".cpp": ("cpp", [], ["cpp.md"]),
+    ".hpp": ("cpp", [], ["cpp.md"]),
+    ".cc": ("cpp", [], ["cpp.md"]),
+
+    # Mobile
+    ".swift": ("swift", ["ios"], ["ios.md"]),
+    ".m": ("objc", ["ios"], ["ios.md"]),
+    ".kt": ("kotlin", ["android"], ["android.md"]),
+    ".kts": ("kotlin", ["android"], ["android.md"]),
+    ".java": ("java", [], []),  # Could be Android or backend
+    ".dart": ("dart", ["flutter"], ["flutter.md"]),
+
+    # PHP/Laravel
+    ".php": ("php", [], ["laravel.md"]),
+    ".blade.php": ("php", ["laravel"], ["laravel.md"]),
+
+    # Ruby
+    ".rb": ("ruby", [], []),
+    ".rake": ("ruby", [], []),
+    ".erb": ("ruby", ["rails"], []),
+
+    # Shell/DevOps
+    ".sh": ("shell", [], []),
+    ".bash": ("shell", [], []),
+    ".zsh": ("shell", [], []),
+
+    # SQL
+    ".sql": ("sql", [], []),
+
+    # Solidity/Web3
+    ".sol": ("solidity", [], ["solidity.md"]),
+
+    # Config/Data
+    ".yaml": ("yaml", [], []),
+    ".yml": ("yaml", [], []),
+    ".json": ("json", [], []),
+    ".toml": ("toml", [], []),
+
+    # CSS/Styling
+    ".css": ("css", [], ["css.md"]),
+    ".scss": ("css", ["sass"], ["css.md"]),
+    ".less": ("css", ["less"], ["css.md"]),
+
+    # Markup
+    ".html": ("html", [], []),
+    ".htm": ("html", [], []),
+    ".md": ("markdown", [], []),
+    ".mdx": ("mdx", ["react"], ["react.md"]),
+}
+
+
+@dataclass
+class FileContext:
+    """Context derived from file analysis."""
+    language: str | None = None
+    frameworks: list[str] | None = None
+    profile_hints: list[str] | None = None
+    task_scores: dict[str, int] | None = None
+
+
+def detect_from_files_enhanced(file_paths: list[str]) -> tuple[dict[TaskType, int], FileContext]:
+    """
+    Enhanced file detection that returns both task scores and language context.
+
+    Args:
+        file_paths: List of file paths being worked on
+
+    Returns:
+        Tuple of (task_scores, FileContext with language/framework info)
+    """
+    import fnmatch
+    from pathlib import Path
+
+    scores: dict[TaskType, int] = {}
+    languages: set[str] = set()
+    frameworks: set[str] = set()
+    profile_hints: set[str] = set()
+
+    for file_path in file_paths:
+        path = Path(file_path)
+        name = path.name
+        full_path = str(path)
+
+        # Check task patterns (testing, deployment, etc.)
+        for pattern, task_type, weight in FILE_PATTERNS:
+            if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(full_path, pattern):
+                scores[task_type] = scores.get(task_type, 0) + weight
+                log.debug("file_pattern_match", file=name, pattern=pattern, task=task_type)
+
+        # Check extension for language/framework
+        ext = path.suffix.lower()
+        if ext in EXTENSION_MAP:
+            lang, fws, hints = EXTENSION_MAP[ext]
+            languages.add(lang)
+            frameworks.update(fws)
+            profile_hints.update(hints)
+
+        # Special file detection - frameworks and languages from config files
+        name_lower = name.lower()
+
+        # Python ecosystem
+        if name in {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"}:
+            languages.add("python")
+            profile_hints.add("python.md")
+        elif name == "manage.py" or "django" in full_path:
+            frameworks.add("django")
+            profile_hints.add("django.md")
+
+        # JavaScript/Node ecosystem
+        elif name == "package.json":
+            languages.add("javascript")
+            # Framework detection will happen via content analysis if needed
+        elif name in {"next.config.js", "next.config.mjs", "next.config.ts"}:
+            frameworks.add("nextjs")
+            profile_hints.add("nextjs.md")
+        elif name in {"nuxt.config.js", "nuxt.config.ts"}:
+            frameworks.add("nuxt")
+            profile_hints.add("vue.md")
+        elif name == "angular.json":
+            frameworks.add("angular")
+            profile_hints.add("angular.md")
+        elif name in {"vite.config.ts", "vite.config.js"}:
+            frameworks.add("vite")
+        elif name in {"svelte.config.js", "svelte.config.ts"}:
+            frameworks.add("svelte")
+            profile_hints.add("svelte.md")
+        elif name == "nest-cli.json" or "nestjs" in full_path:
+            frameworks.add("nestjs")
+            profile_hints.add("nestjs.md")
+
+        # Rust
+        elif name == "Cargo.toml":
+            languages.add("rust")
+            profile_hints.add("rust.md")
+
+        # Go
+        elif name == "go.mod" or name == "go.sum":
+            languages.add("go")
+            profile_hints.add("golang.md")
+
+        # Ruby/Rails
+        elif name == "Gemfile" or name == "Rakefile":
+            languages.add("ruby")
+        elif name == "config.ru" or "rails" in full_path:
+            frameworks.add("rails")
+
+        # PHP/Laravel
+        elif name == "composer.json":
+            languages.add("php")
+        elif name == "artisan" or "laravel" in full_path:
+            frameworks.add("laravel")
+            profile_hints.add("laravel.md")
+
+        # Mobile
+        elif name == "Podfile" or name.endswith(".xcodeproj"):
+            frameworks.add("ios")
+            profile_hints.add("ios.md")
+        elif name == "build.gradle" or name == "build.gradle.kts":
+            frameworks.add("android")
+            profile_hints.add("android.md")
+        elif name == "pubspec.yaml":
+            frameworks.add("flutter")
+            profile_hints.add("flutter.md")
+
+        # ML/AI
+        elif name in {"model.py", "train.py", "dataset.py"} or "models" in full_path:
+            profile_hints.add("ml.md")
+        elif "torch" in full_path or "tensorflow" in full_path:
+            profile_hints.add("deeplearning.md")
+
+        # Web3/Blockchain
+        elif name == "hardhat.config.js" or name == "truffle-config.js":
+            frameworks.add("solidity")
+            profile_hints.add("solidity.md")
+
+        # FastAPI detection
+        elif "fastapi" in full_path or name == "main.py":
+            # Will verify via content, but hint it
+            profile_hints.add("fastapi.md")
+
+    file_ctx = FileContext(
+        language=list(languages)[0] if len(languages) == 1 else None,
+        frameworks=list(frameworks) if frameworks else None,
+        profile_hints=list(profile_hints) if profile_hints else None,
+        task_scores=scores if scores else None,
+    )
+
+    return scores, file_ctx
+
+
+# =============================================================================
+# CODE-BASED CONTEXT DETECTION
+# =============================================================================
+
+# Code patterns that indicate task types
+# Format: (regex_pattern, task_type, weight)
+CODE_PATTERNS: list[tuple[str, TaskType, int]] = [
+    # Testing
+    (r"@pytest\.(mark|fixture)", "testing", 3),
+    (r"\bassert\s+", "testing", 2),
+    (r"\bmock\.|Mock\(|patch\(", "testing", 3),
+    (r"describe\(|it\(|test\(|expect\(", "testing", 3),
+    (r"beforeEach|afterEach|beforeAll|afterAll", "testing", 2),
+
+    # Security
+    (r"password|secret|api_key|token", "security", 2),
+    (r"encrypt|decrypt|hash|bcrypt|argon", "security", 3),
+    (r"authenticate|authorize|jwt|oauth", "security", 3),
+    (r"sanitize|escape|validate_input", "security", 2),
+
+    # Performance
+    (r"@cache|@lru_cache|@cached", "performance", 3),
+    (r"asyncio\.gather|concurrent\.futures", "performance", 2),
+    (r"\.prefetch_related|\.select_related", "performance", 2),
+    (r"redis\.|memcache", "performance", 2),
+
+    # API
+    (r"@app\.(get|post|put|delete|patch)", "api", 3),
+    (r"@router\.(get|post|put|delete|patch)", "api", 3),
+    (r"FastAPI|APIRouter|HTTPException", "api", 3),
+    (r"fetch\(|axios\.|requests\.", "api", 2),
+    (r"response\.json|JsonResponse", "api", 2),
+
+    # Debugging
+    (r"print\(|console\.log|logger\.(debug|error)", "debugging", 1),
+    (r"breakpoint\(\)|pdb\.set_trace", "debugging", 3),
+    (r"traceback|exception|raise\s+\w+Error", "debugging", 2),
+
+    # Deployment
+    (r"FROM\s+\w+|COPY\s+|RUN\s+|ENTRYPOINT", "deployment", 3),
+    (r"docker|container|kubernetes|k8s", "deployment", 2),
+
+    # Git (rarely in code, but sometimes)
+    (r"git\.(commit|push|pull|clone)", "git", 2),
+]
+
+# Compile code patterns
+COMPILED_CODE_PATTERNS: list[tuple[re.Pattern, TaskType, int]] = [
+    (re.compile(pattern, re.IGNORECASE), task_type, weight)
+    for pattern, task_type, weight in CODE_PATTERNS
+]
+
+
+def detect_from_code(code_snippet: str) -> dict[TaskType, int]:
+    """
+    Detect task type signals from code content.
+
+    Args:
+        code_snippet: Code being edited or reviewed
+
+    Returns:
+        Dict mapping task types to weighted scores
+    """
+    scores: dict[TaskType, int] = {}
+
+    for pattern, task_type, weight in COMPILED_CODE_PATTERNS:
+        matches = pattern.findall(code_snippet)
+        if matches:
+            scores[task_type] = scores.get(task_type, 0) + (len(matches) * weight)
+            log.debug("code_pattern_match", pattern=pattern.pattern[:30], task=task_type, count=len(matches))
+
+    return scores
+
+
+@dataclass
+class EnhancedDetectedContext(DetectedContext):
+    """Extended context with file/code analysis results."""
+    file_context: FileContext | None = None
+    detected_language: str | None = None
+
+
+def detect_task_type_enhanced(
+    message: str,
+    working_files: list[str] | None = None,
+    code_snippet: str | None = None,
+) -> EnhancedDetectedContext:
+    """
+    Enhanced task type detection using message, files, and code.
+
+    Combines signals from:
+    1. Message keywords (existing behavior)
+    2. File paths being worked on (new)
+    3. Code content being edited (new)
+
+    Args:
+        message: The user's message
+        working_files: Optional list of file paths being edited
+        code_snippet: Optional code content being modified
+
+    Returns:
+        EnhancedDetectedContext with combined detection results and language info
+    """
+    from .language import detect_language
+
+    # Start with base message detection
+    base_context = detect_task_type(message)
+
+    # Collect additional scores
+    additional_scores: dict[TaskType, int] = {}
+    additional_keywords: list[str] = []
+    file_ctx: FileContext | None = None
+    detected_lang: str | None = None
+
+    # Add file-based signals (enhanced version with language detection)
+    if working_files:
+        file_scores, file_ctx = detect_from_files_enhanced(working_files)
+        for task, score in file_scores.items():
+            additional_scores[task] = additional_scores.get(task, 0) + score
+        if file_scores:
+            additional_keywords.append(f"files:{list(file_scores.keys())}")
+        if file_ctx.language:
+            additional_keywords.append(f"lang:{file_ctx.language}")
+            detected_lang = file_ctx.language
+
+    # Add code-based signals
+    if code_snippet:
+        code_scores = detect_from_code(code_snippet)
+        for task, score in code_scores.items():
+            additional_scores[task] = additional_scores.get(task, 0) + score
+        if code_scores:
+            additional_keywords.append(f"code:{list(code_scores.keys())}")
+
+        # Use existing language detector for code content
+        if not detected_lang:
+            file_path = working_files[0] if working_files else ""
+            detected_lang = detect_language(code_snippet, file_path)
+
+    # If no additional signals, return base detection (as enhanced type)
+    if not additional_scores:
+        return EnhancedDetectedContext(
+            primary_task=base_context.primary_task,
+            secondary_tasks=base_context.secondary_tasks,
+            confidence=base_context.confidence,
+            matched_keywords=base_context.matched_keywords,
+            file_context=file_ctx,
+            detected_language=detected_lang,
+        )
+
+    # Combine scores: base detection + additional signals
+    combined_scores: dict[TaskType, int] = {}
+
+    # Add base score
+    combined_scores[base_context.primary_task] = int(base_context.confidence * 6)
+    for task in base_context.secondary_tasks:
+        combined_scores[task] = combined_scores.get(task, 0) + 2
+
+    # Add file/code scores
+    for task, score in additional_scores.items():
+        combined_scores[task] = combined_scores.get(task, 0) + score
+
+    # Determine new primary and secondary tasks
+    sorted_tasks = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
+
+    primary_task = sorted_tasks[0][0]
+    primary_score = sorted_tasks[0][1]
+    secondary_tasks = [t for t, s in sorted_tasks[1:] if s > 0][:2]
+
+    # Log if detection changed
+    if primary_task != base_context.primary_task:
+        log.info(
+            "context_enhanced_by_files_or_code",
+            original=base_context.primary_task,
+            new=primary_task,
+            additional_scores=additional_scores,
+            language=detected_lang,
+        )
+
+    return EnhancedDetectedContext(
+        primary_task=primary_task,
+        secondary_tasks=secondary_tasks,
+        confidence=min(1.0, primary_score / 6),
+        matched_keywords=base_context.matched_keywords + additional_keywords,
+        file_context=file_ctx,
+        detected_language=detected_lang,
+    )
 
 
 class ContextManager:

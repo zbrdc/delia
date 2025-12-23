@@ -5,11 +5,7 @@
 
 import { NextResponse } from "next/server"
 import { readFile } from "fs/promises"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "..", "data")
-const GRAPH_FILE = join(DATA_DIR, "symbol_graph.json")
-const SUMMARY_FILE = join(DATA_DIR, "project_summary.json")
+import { getSymbolGraphFile, getProjectSummaryFile } from "@/lib/paths"
 
 interface GraphNode {
   id: string
@@ -26,13 +22,13 @@ interface GraphLink {
 
 export async function GET() {
   try {
-    const graphRaw = await readFile(GRAPH_FILE, "utf-8")
+    const graphRaw = await readFile(getSymbolGraphFile(), "utf-8")
     const graphData = JSON.parse(graphRaw)
 
     // Try to load summaries for richer tooltips
     let summaries: Record<string, { summary?: string }> = {}
     try {
-      const summaryRaw = await readFile(SUMMARY_FILE, "utf-8")
+      const summaryRaw = await readFile(getProjectSummaryFile(), "utf-8")
       summaries = JSON.parse(summaryRaw)
     } catch {
       // Summaries optional
@@ -42,8 +38,14 @@ export async function GET() {
     const links: GraphLink[] = []
     const nodeIds = new Set<string>()
 
-    // Build nodes
+    // Build nodes - filter to only Python source files
     for (const [path, node] of Object.entries(graphData)) {
+      // Only include Python files in src/delia/
+      if (!path.endsWith(".py")) continue
+      if (!path.startsWith("src/delia/")) continue
+      // Skip test files and __pycache__
+      if (path.includes("__pycache__") || path.includes("/tests/")) continue
+
       const fileNode = node as { symbols?: unknown[]; imports?: string[] }
       const dir = path.split("/").slice(0, -1).join("/") || "root"
 

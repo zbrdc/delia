@@ -450,12 +450,24 @@ class DeliaLSPClient:
         return result
 
     def _guess_language(self, file_path: str) -> str:
-        ext = Path(file_path).suffix
-        if ext == ".py": return "python"
-        if ext in (".ts", ".tsx"): return "typescript"
-        if ext in (".js", ".jsx"): return "javascript"
-        if ext == ".rs": return "rust"
-        if ext == ".go": return "go"
+        """Guess language from file path using centralized language detection."""
+        from .language import detect_language, EXTENSION_TO_LANGUAGE
+
+        ext = Path(file_path).suffix.lower()
+
+        # Use centralized extension map first
+        if ext in EXTENSION_TO_LANGUAGE:
+            lang = EXTENSION_TO_LANGUAGE[ext]
+            # Normalize for LSP (react -> typescript, vue -> typescript, etc.)
+            if lang in ("react", "vue", "svelte", "angular"):
+                return "typescript"
+            return lang
+
+        # Fallback to content-based detection (without content)
+        lang = detect_language("", file_path)
+        if lang != "unknown":
+            return lang
+
         return "plain"
 
     def _format_locations(self, result: Any) -> List[dict]:

@@ -78,6 +78,42 @@ def register_admin_tools(mcp: FastMCP):
         return json.dumps(status, indent=2)
 
     @mcp.tool()
+    async def dashboard_url() -> str:
+        """
+        Get the URL of the running Delia dashboard.
+
+        The dashboard auto-launches with the MCP server and provides:
+        - System health and backend status
+        - Tool usage metrics and analytics
+        - Session browser
+        - ACE Framework editor (playbooks, memories)
+        - Dependency graph visualization
+
+        Returns:
+            JSON with dashboard URL and status.
+        """
+        from ..mcp_server import _dashboard_port, _dashboard_process
+
+        if _dashboard_process is None or _dashboard_port is None:
+            return json.dumps({
+                "status": "not_running",
+                "message": "Dashboard not running. Ensure dashboard is built: cd dashboard && npm run build",
+            })
+
+        # Check if process is still alive
+        if _dashboard_process.poll() is not None:
+            return json.dumps({
+                "status": "stopped",
+                "message": "Dashboard process exited unexpectedly",
+            })
+
+        return json.dumps({
+            "status": "running",
+            "url": f"http://localhost:{_dashboard_port}",
+            "port": _dashboard_port,
+        })
+
+    @mcp.tool()
     async def models() -> str:
         """
         List all configured models across all GPU backends.
@@ -157,7 +193,7 @@ def register_admin_tools(mcp: FastMCP):
             call the tools listed in agent_instructions to complete initialization.
         """
         from pathlib import Path
-        from ..playbook import detect_tech_stack, playbook_manager
+        from ..playbook import detect_tech_stack, playbook_manager, seed_playbooks_from_profiles
         from ..orchestration.summarizer import get_summarizer
         from ..orchestration.graph import get_symbol_graph
         from ..llm import init_llm_module
@@ -189,11 +225,11 @@ def register_admin_tools(mcp: FastMCP):
         has_local_backends = len(available_backends) > 0
 
         try:
-            # Collect code files for tech stack detection
-            from ..orchestration.constants import CODE_EXTENSIONS, IGNORE_DIRS
+            # Collect code files for tech stack detection (excluding tests)
+            from ..orchestration.constants import CODE_EXTENSIONS, should_ignore_file
             code_files = []
             for file_path in project_root.rglob("*"):
-                if any(part in IGNORE_DIRS for part in file_path.parts):
+                if should_ignore_file(file_path):
                     continue
                 if file_path.suffix in CODE_EXTENSIONS and file_path.is_file():
                     code_files.append(str(file_path.relative_to(project_root)))
@@ -327,6 +363,12 @@ def register_admin_tools(mcp: FastMCP):
 
                 results["starter_profiles_copied"] = starter_profiles
 
+                # Seed playbooks from profile templates (source="seed")
+                # These provide baseline strategies that can be refined through feedback
+                seed_counts = seed_playbooks_from_profiles(project_root, tech_stack, force=force)
+                results["seeded_playbooks"] = seed_counts
+                log.info("seeded_playbooks_from_profiles", counts=seed_counts)
+
                 if has_existing_instructions:
                     # Project has existing instructions - agent should MERGE/UPDATE
                     results["UPDATE_INSTRUCTIONS"] = (
@@ -391,7 +433,11 @@ def register_admin_tools(mcp: FastMCP):
             if files_written:
                 results["files_written"] = files_written
 
-            # Step 4: Generate project playbook
+            # Step 4a: Seed playbooks from profile templates (baseline strategies)
+            seed_counts = seed_playbooks_from_profiles(project_root, tech_stack, force=force)
+            results["steps"].append({"step": "seed_playbooks", "counts": seed_counts})
+
+            # Step 4b: Generate project-specific playbook bullets (adds to seeds)
             from ..playbook import generate_project_playbook
             playbook_count = await generate_project_playbook(summarizer if not skip_index else get_summarizer())
             results["steps"].append({"step": "playbook", "bullets": playbook_count})
@@ -675,20 +721,45 @@ def register_admin_tools(mcp: FastMCP):
             try:
                 bullets = json.loads(bullets_json) if isinstance(bullets_json, str) else bullets_json
                 if bullets:  # Only write if there are bullets
-                    # Format bullets properly
-                    formatted = []
+                    playbook_path = playbooks_dir / f"{task_type}.json"
+
+                    # Load existing playbook (may contain seed bullets from profiles)
+                    existing_bullets = []
+                    existing_contents = set()
+                    if playbook_path.exists():
+                        try:
+                            existing_bullets = json.loads(playbook_path.read_text())
+                            existing_contents = {b.get("content", "").strip().lower() for b in existing_bullets if isinstance(b, dict)}
+                        except Exception:
+                            pass
+
+                    # Format and add new bullets with source="learned", avoiding duplicates
+                    new_count = 0
                     for b in bullets:
                         if isinstance(b, str):
-                            formatted.append({"content": b, "section": "general_strategies"})
+                            content = b.strip()
+                            if content.lower() not in existing_contents:
+                                existing_bullets.append({
+                                    "content": content,
+                                    "section": "general_strategies",
+                                    "source": "learned",
+                                })
+                                existing_contents.add(content.lower())
+                                new_count += 1
                         elif isinstance(b, dict):
-                            formatted.append({
-                                "content": b.get("content", str(b)),
-                                "section": b.get("section", "general_strategies"),
-                            })
-                    
-                    playbook_path = playbooks_dir / f"{task_type}.json"
-                    playbook_path.write_text(json.dumps(formatted, indent=2))
-                    results["indexed"].append(f"playbooks/{task_type}.json ({len(formatted)} bullets)")
+                            content = b.get("content", str(b)).strip()
+                            if content.lower() not in existing_contents:
+                                existing_bullets.append({
+                                    "content": content,
+                                    "section": b.get("section", "general_strategies"),
+                                    "source": "learned",
+                                })
+                                existing_contents.add(content.lower())
+                                new_count += 1
+
+                    playbook_path.write_text(json.dumps(existing_bullets, indent=2))
+                    seed_count = sum(1 for b in existing_bullets if isinstance(b, dict) and b.get("source") == "seed")
+                    results["indexed"].append(f"playbooks/{task_type}.json ({new_count} new + {seed_count} seeds = {len(existing_bullets)} total)")
             except Exception as e:
                 results[f"{task_type}_error"] = str(e)
         

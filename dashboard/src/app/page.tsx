@@ -18,10 +18,6 @@
 "use client"
 
 import { useEffect, useState, useCallback, useRef } from "react"
-import dynamic from "next/dynamic"
-
-// Dynamic import for force graph (client-side only)
-const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false })
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -215,28 +211,57 @@ interface IndexerResponse {
   files: IndexerFile[]
 }
 
-interface GraphNode {
+// Sessions
+interface SessionSummary {
   id: string
-  symbols: number
-  group: string
-  summary?: string
+  created_at: string
+  last_accessed: string
+  message_count: number
+  total_tokens: number
+  preview: string
 }
 
-interface GraphLink {
-  source: string
-  target: string
+interface SessionMessage {
+  role: "user" | "assistant" | "system"
+  content: string
+  timestamp: string
+  tokens?: number
+  model?: string
 }
 
-interface GraphResponse {
-  success: boolean
-  nodes: GraphNode[]
-  links: GraphLink[]
-  groups: string[]
-  stats: {
-    totalNodes: number
-    totalLinks: number
-    totalGroups: number
-  }
+interface SessionDetail {
+  session_id: string
+  created_at: string
+  last_accessed: string
+  messages: SessionMessage[]
+  total_tokens: number
+  original_task?: string
+}
+
+// Playbooks
+interface PlaybookSummary {
+  name: string
+  bullet_count: number
+  path: string
+}
+
+interface PlaybookBullet {
+  id: string
+  content: string
+  section?: string
+  helpful_count: number
+  harmful_count: number
+  created_at: string
+  last_used?: string
+  utility_score: number
+}
+
+// Memories
+interface MemorySummary {
+  name: string
+  size: number
+  path: string
+  modified: string
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -291,7 +316,7 @@ const normalizeModel = (model: string | undefined | null): "quick" | "coder" | "
   return "quick"
 }
 
-type TabType = "activity" | "backends" | "analytics" | "orchestration" | "logs"
+type TabType = "activity" | "backends" | "analytics" | "orchestration" | "sessions" | "ace" | "logs"
 
 export default function Dashboard() {
   const [stats, setStats] = useState<UsageStats | null>(null)
@@ -313,8 +338,18 @@ export default function Dashboard() {
   const [routingIntelligence, setRoutingIntelligence] = useState<RoutingIntelligence | null>(null)
   const [melonsData, setMelonsData] = useState<MelonsResponse | null>(null)
   const [indexerData, setIndexerData] = useState<IndexerResponse | null>(null)
-  const [graphData, setGraphData] = useState<GraphResponse | null>(null)
-  const graphRef = useRef<HTMLDivElement>(null)
+  // Sessions & ACE state
+  const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const [selectedSession, setSelectedSession] = useState<SessionDetail | null>(null)
+  const [playbooks, setPlaybooks] = useState<PlaybookSummary[]>([])
+  const [selectedPlaybook, setSelectedPlaybook] = useState<string | null>(null)
+  const [playookBullets, setPlaybookBullets] = useState<PlaybookBullet[]>([])
+  const [memories, setMemories] = useState<MemorySummary[]>([])
+  const [selectedMemory, setSelectedMemory] = useState<string | null>(null)
+  const [memoryContent, setMemoryContent] = useState<string>("")
+  const [aceSubTab, setAceSubTab] = useState<"playbooks" | "memories">("playbooks")
+  const [editingBullet, setEditingBullet] = useState<PlaybookBullet | null>(null)
+  const [editingMemory, setEditingMemory] = useState<boolean>(false)
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -402,12 +437,96 @@ export default function Dashboard() {
     } catch { /* ignore */ }
   }, [])
 
-  const fetchGraph = useCallback(async () => {
+  const fetchSessions = useCallback(async () => {
     try {
-      const res = await fetch("/api/graph")
-      if (res.ok) setGraphData(await res.json())
+      const res = await fetch("/api/sessions")
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success) setSessions(data.sessions || [])
+      }
     } catch { /* ignore */ }
   }, [])
+
+  const fetchSessionDetail = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/sessions?id=${id}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success) setSelectedSession(data.session)
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  const deleteSession = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/sessions?id=${id}`, { method: "DELETE" })
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== id))
+        if (selectedSession?.session_id === id) setSelectedSession(null)
+      }
+    } catch { /* ignore */ }
+  }, [selectedSession])
+
+  const fetchPlaybooks = useCallback(async () => {
+    try {
+      const res = await fetch("/api/playbooks")
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success) setPlaybooks(data.playbooks || [])
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  const fetchPlaybookDetail = useCallback(async (name: string) => {
+    try {
+      const res = await fetch(`/api/playbooks?name=${name}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success) {
+          setSelectedPlaybook(name)
+          setPlaybookBullets(data.bullets || [])
+        }
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  const fetchMemories = useCallback(async () => {
+    try {
+      const res = await fetch("/api/memories")
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success) setMemories(data.memories || [])
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  const fetchMemoryDetail = useCallback(async (name: string) => {
+    try {
+      const res = await fetch(`/api/memories?name=${name}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success) {
+          setSelectedMemory(name)
+          setMemoryContent(data.content || "")
+        }
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  const saveMemory = useCallback(async () => {
+    if (!selectedMemory) return
+    try {
+      const res = await fetch("/api/memories", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: selectedMemory, content: memoryContent })
+      })
+      if (res.ok) {
+        setEditingMemory(false)
+        fetchMemories()
+      }
+    } catch { /* ignore */ }
+  }, [selectedMemory, memoryContent, fetchMemories])
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -441,17 +560,15 @@ export default function Dashboard() {
     fetchRoutingIntelligence()
     fetchMelons()
     fetchIndexer()
-    fetchGraph()
     const interval = setInterval(() => {
       fetchStats()
       fetchCircuitBreaker()
       fetchRoutingIntelligence()
       fetchMelons()
       fetchIndexer()
-      fetchGraph()
     }, 10000)
     return () => clearInterval(interval)
-  }, [fetchStats, fetchCircuitBreaker, fetchRoutingIntelligence, fetchMelons, fetchIndexer, fetchGraph])
+  }, [fetchStats, fetchCircuitBreaker, fetchRoutingIntelligence, fetchMelons, fetchIndexer])
 
   useEffect(() => {
     if (activeTab === "logs") {
@@ -460,6 +577,19 @@ export default function Dashboard() {
       return () => clearInterval(interval)
     }
   }, [activeTab, fetchLogs])
+
+  useEffect(() => {
+    if (activeTab === "sessions") {
+      fetchSessions()
+    }
+  }, [activeTab, fetchSessions])
+
+  useEffect(() => {
+    if (activeTab === "ace") {
+      fetchPlaybooks()
+      fetchMemories()
+    }
+  }, [activeTab, fetchPlaybooks, fetchMemories])
 
   if (loading) {
     return (
@@ -568,6 +698,8 @@ export default function Dashboard() {
               { id: "backends", label: "Backends", icon: "🌱" },
               { id: "analytics", label: "Analytics", icon: "📈" },
               { id: "orchestration", label: "Orchestration", icon: "🧠" },
+              { id: "sessions", label: "Sessions", icon: "💬" },
+              { id: "ace", label: "ACE", icon: "🎯" },
               { id: "logs", label: "Logs", icon: "📜" },
             ] as const).map((tab) => (
               <button
@@ -1075,71 +1207,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Dependency Graph Visualization */}
-          <Card className="mt-4">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                🔗 Dependency Graph
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Interactive visualization of file dependencies ({graphData?.stats?.totalNodes || 0} files, {graphData?.stats?.totalLinks || 0} connections)
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div ref={graphRef} className="h-[500px] w-full border rounded-lg bg-muted/20 overflow-hidden">
-                {graphData?.nodes?.length ? (
-                  <ForceGraph2D
-                    graphData={{
-                      nodes: graphData.nodes.map(n => ({ ...n, val: Math.max(1, n.symbols) })),
-                      links: graphData.links
-                    }}
-                    nodeLabel={(node) => {
-                      const n = node as GraphNode & { id: string }
-                      return `${n.id}\n${n.symbols} symbols${n.summary ? `\n${n.summary}` : ''}`
-                    }}
-                    nodeColor={(node) => {
-                      const n = node as GraphNode
-                      const groups = graphData.groups || []
-                      const idx = groups.indexOf(n.group)
-                      const colors = ["#689B8A", "#FF6B7A", "#8BB5A6", "#4A7D6D", "#E85566", "#A8D4C4", "#FFB3BA"]
-                      return colors[idx % colors.length]
-                    }}
-                    nodeRelSize={4}
-                    linkColor={() => "rgba(100, 100, 100, 0.3)"}
-                    linkWidth={1}
-                    backgroundColor="transparent"
-                    width={graphRef.current?.clientWidth || 800}
-                    height={480}
-                    cooldownTicks={100}
-                    onNodeClick={(node) => {
-                      const n = node as GraphNode
-                      console.log("Clicked:", n.id)
-                    }}
-                  />
-                ) : (
-                  <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                    No graph data. Run `delia index` to build the dependency graph.
-                  </div>
-                )}
-              </div>
-              {graphData?.groups && graphData.groups.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-3">
-                  {graphData.groups.slice(0, 10).map((group, idx) => {
-                    const colors = ["#689B8A", "#FF6B7A", "#8BB5A6", "#4A7D6D", "#E85566", "#A8D4C4", "#FFB3BA"]
-                    return (
-                      <div key={group} className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors[idx % colors.length] }} />
-                        <span className="truncate max-w-[100px]">{group || "root"}</span>
-                      </div>
-                    )
-                  })}
-                  {graphData.groups.length > 10 && (
-                    <span className="text-[10px] text-muted-foreground">+{graphData.groups.length - 10} more</span>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
           </>
         )}
 
@@ -1207,6 +1274,326 @@ export default function Dashboard() {
                 </div>
               </CardContent>
             </Card>
+          </div>
+        )}
+
+        {/* Sessions Tab */}
+        {activeTab === "sessions" && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Sessions List */}
+            <Card className="lg:col-span-1">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  💬 Sessions
+                  <span className="text-xs text-muted-foreground font-normal">({sessions.length})</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-1 max-h-[500px] overflow-y-auto">
+                  {sessions.map((session) => (
+                    <div
+                      key={session.id}
+                      onClick={() => fetchSessionDetail(session.id)}
+                      className={`p-2 rounded cursor-pointer transition-colors ${
+                        selectedSession?.session_id === session.id
+                          ? "bg-primary/10 border border-primary/30"
+                          : "hover:bg-muted/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono text-muted-foreground">{session.id.slice(0, 8)}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(session.last_accessed).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <div className="text-sm truncate mt-1">{session.preview}</div>
+                      <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+                        <span>{session.message_count} msgs</span>
+                        <span>·</span>
+                        <span>{session.total_tokens.toLocaleString()} tokens</span>
+                      </div>
+                    </div>
+                  ))}
+                  {sessions.length === 0 && (
+                    <div className="h-32 flex items-center justify-center text-muted-foreground text-sm">
+                      No sessions found
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Session Detail */}
+            <Card className="lg:col-span-2">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">
+                    {selectedSession ? `Session ${selectedSession.session_id.slice(0, 8)}` : "Select a session"}
+                  </CardTitle>
+                  {selectedSession && (
+                    <button
+                      onClick={() => deleteSession(selectedSession.session_id)}
+                      className="text-xs text-destructive hover:underline"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+                {selectedSession && (
+                  <CardDescription className="text-xs">
+                    Created: {new Date(selectedSession.created_at).toLocaleString()} ·{" "}
+                    {selectedSession.messages?.length || 0} messages ·{" "}
+                    {selectedSession.total_tokens?.toLocaleString() || 0} tokens
+                  </CardDescription>
+                )}
+              </CardHeader>
+              <CardContent>
+                {selectedSession ? (
+                  <div className="space-y-3 max-h-[450px] overflow-y-auto">
+                    {selectedSession.messages?.map((msg, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-lg text-sm ${
+                          msg.role === "user"
+                            ? "bg-primary/10 ml-8"
+                            : msg.role === "assistant"
+                            ? "bg-muted mr-8"
+                            : "bg-yellow-500/10 text-xs"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] font-medium uppercase text-muted-foreground">
+                            {msg.role}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {msg.model && `${msg.model} · `}
+                            {msg.tokens && `${msg.tokens}t`}
+                          </span>
+                        </div>
+                        <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="h-[450px] flex items-center justify-center text-muted-foreground">
+                    Select a session to view messages
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* ACE Editor Tab */}
+        {activeTab === "ace" && (
+          <div className="space-y-4">
+            {/* Sub-tab navigation */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setAceSubTab("playbooks")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  aceSubTab === "playbooks" ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"
+                }`}
+              >
+                📚 Playbooks ({playbooks.length})
+              </button>
+              <button
+                onClick={() => setAceSubTab("memories")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  aceSubTab === "memories" ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"
+                }`}
+              >
+                🧠 Memories ({memories.length})
+              </button>
+            </div>
+
+            {aceSubTab === "playbooks" && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Playbook List */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Playbooks</CardTitle>
+                    <CardDescription className="text-xs">Strategic bullets by task type</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-1">
+                      {playbooks.map((pb) => (
+                        <div
+                          key={pb.name}
+                          onClick={() => fetchPlaybookDetail(pb.name)}
+                          className={`p-2 rounded cursor-pointer transition-colors flex items-center justify-between ${
+                            selectedPlaybook === pb.name
+                              ? "bg-primary/10 border border-primary/30"
+                              : "hover:bg-muted/50"
+                          }`}
+                        >
+                          <span className="font-medium text-sm">{pb.name}</span>
+                          <Badge variant="secondary" className="text-[10px]">{pb.bullet_count}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Bullets Editor */}
+                <Card className="lg:col-span-2">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">
+                      {selectedPlaybook ? `${selectedPlaybook} Bullets` : "Select a playbook"}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {selectedPlaybook && playookBullets.length > 0 ? (
+                      <div className="space-y-2 max-h-[450px] overflow-y-auto">
+                        {playookBullets.map((bullet) => (
+                          <div
+                            key={bullet.id}
+                            className="p-3 rounded-lg border bg-card/50 hover:bg-muted/30 transition-colors"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-sm flex-1">{bullet.content}</p>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span
+                                  className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                    bullet.utility_score > 0.6
+                                      ? "bg-green-500/20 text-green-500"
+                                      : bullet.utility_score > 0.4
+                                      ? "bg-yellow-500/20 text-yellow-500"
+                                      : "bg-muted text-muted-foreground"
+                                  }`}
+                                >
+                                  {(bullet.utility_score * 100).toFixed(0)}%
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 mt-2 text-[10px] text-muted-foreground">
+                              <span className="font-mono">{bullet.id}</span>
+                              {bullet.section && (
+                                <>
+                                  <span>·</span>
+                                  <span>{bullet.section}</span>
+                                </>
+                              )}
+                              <span>·</span>
+                              <span>👍 {bullet.helpful_count} 👎 {bullet.harmful_count}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : selectedPlaybook ? (
+                      <div className="h-[450px] flex items-center justify-center text-muted-foreground">
+                        No bullets in this playbook
+                      </div>
+                    ) : (
+                      <div className="h-[450px] flex items-center justify-center text-muted-foreground">
+                        Select a playbook to view bullets
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {aceSubTab === "memories" && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Memories List */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Memories</CardTitle>
+                    <CardDescription className="text-xs">Persistent project knowledge</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-1">
+                      {memories.map((mem) => (
+                        <div
+                          key={mem.name}
+                          onClick={() => fetchMemoryDetail(mem.name)}
+                          className={`p-2 rounded cursor-pointer transition-colors ${
+                            selectedMemory === mem.name
+                              ? "bg-primary/10 border border-primary/30"
+                              : "hover:bg-muted/50"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-sm">{mem.name}</span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {(mem.size / 1024).toFixed(1)}KB
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground mt-1">
+                            {new Date(mem.modified).toLocaleDateString()}
+                          </div>
+                        </div>
+                      ))}
+                      {memories.length === 0 && (
+                        <div className="h-20 flex items-center justify-center text-muted-foreground text-sm">
+                          No memories found
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Memory Editor */}
+                <Card className="lg:col-span-2">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base">
+                        {selectedMemory ? `${selectedMemory}.md` : "Select a memory"}
+                      </CardTitle>
+                      {selectedMemory && (
+                        <div className="flex gap-2">
+                          {editingMemory ? (
+                            <>
+                              <button
+                                onClick={() => setEditingMemory(false)}
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={saveMemory}
+                                className="text-xs text-primary hover:underline"
+                              >
+                                Save
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setEditingMemory(true)}
+                              className="text-xs text-primary hover:underline"
+                            >
+                              Edit
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {selectedMemory ? (
+                      editingMemory ? (
+                        <textarea
+                          value={memoryContent}
+                          onChange={(e) => setMemoryContent(e.target.value)}
+                          className="w-full h-[450px] p-3 rounded-lg border bg-background font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      ) : (
+                        <div className="h-[450px] overflow-y-auto">
+                          <pre className="text-sm whitespace-pre-wrap font-mono p-3 rounded-lg bg-muted/30">
+                            {memoryContent}
+                          </pre>
+                        </div>
+                      )
+                    ) : (
+                      <div className="h-[450px] flex items-center justify-center text-muted-foreground">
+                        Select a memory to view content
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
           </div>
         )}
       </main>

@@ -1,18 +1,74 @@
 [
   {
-    "content": "ADR-009: Consolidate tools using action-based parameters (playbook, memory, session, profiles, project, admin).",
-    "section": "general_strategies"
+    "content": "MCP server is the primary interface - tools are registered via decorators",
+    "id": "strat-a54db219",
+    "section": "general_strategies",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:22:27.127725",
+    "last_used": "2025-12-22T20:26:51.523724",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
   },
   {
-    "content": "Use set_project(path) to switch Delia's active project context. Per-project data lives in <project>/.delia/.",
-    "section": "general_strategies"
+    "content": "Playbooks store per-project learned patterns in .delia/playbooks/",
+    "id": "strat-ce39523f",
+    "section": "general_strategies",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:22:27.127737",
+    "last_used": "2025-12-22T20:26:51.524027",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
   },
   {
-    "content": "PathsConfig.get_project_root() walks up from cwd looking for .git, pyproject.toml, package.json markers.",
-    "section": "general_strategies"
+    "content": "Memories persist knowledge in .delia/memories/ as markdown",
+    "id": "strat-f5ef2931",
+    "section": "general_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:22:27.127741",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
   },
   {
-    "content": "Tool registration happens in mcp_server.py via register_*_tools() functions from tools/*.py modules.",
-    "section": "general_strategies"
+    "content": "Profiles are starter templates copied to .delia/profiles/",
+    "id": "strat-c2ff92ad",
+    "section": "general_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:22:27.127744",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
+  },
+  {
+    "content": "LSP integration provides semantic code navigation",
+    "id": "strat-e31e378e",
+    "section": "general_strategies",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:22:27.127748",
+    "last_used": "2025-12-22T20:26:51.534188",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
+  },
+  {
+    "content": "Multi-backend support via orchestration layer with tier-based routing",
+    "id": "strat-6c60f71b",
+    "section": "general_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:22:27.127751",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
   }
 ]

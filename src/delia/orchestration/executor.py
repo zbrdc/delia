@@ -24,8 +24,6 @@ from ..playbook import playbook_manager
 from ..session_manager import get_session_manager
 from .tuning import TuningAdvisor, get_tuning_advisor
 from ..prompts import (
-    ACE_CURATOR_PROMPT,
-    ACE_REFLECTOR_PROMPT,
     ModelRole,
     build_system_prompt,
 )
@@ -1017,33 +1015,51 @@ class OrchestrationExecutor:
         return "\n\n".join(found)
 
     async def _reflect_on_failure(self, task_type: str, message: str, response: str, error: str | None = None, backend_obj: Any | None = None) -> None:
+        """
+        Use the ACE Reflector → Curator pipeline to learn from failures.
+
+        This replaces the legacy approach of raw LLM calls with the proper
+        ACE modules that include:
+        - Structured reflection prompts
+        - Semantic deduplication before adding bullets
+        - Utility/recency scoring for retrieval
+        """
         try:
-            res = await call_llm(model=config.model_moe.default_model, prompt=f"Task: {message}\nResponse: {response}\nError: {error}", system=ACE_REFLECTOR_PROMPT, task_type="reflection", backend_obj=backend_obj, enable_thinking=True)
-            if res.get("success"):
-                data = json.loads(strip_thinking_tags(res["response"]))
-                lesson = data.get("playbook_update")
-                if lesson:
-                    await self._curate_playbook(task_type, lesson, backend_obj)
-                    log.info("ace_reflection_complete", task_type=task_type, lesson_len=len(lesson))
+            from ..ace.reflector import get_reflector
+            from ..ace.curator import get_curator
+            from pathlib import Path
+
+            reflector = get_reflector()
+            curator = get_curator(str(Path.cwd()))
+
+            # Get bullet IDs that were used (approximation: top bullets for this task type)
+            top_bullets = playbook_manager.get_top_bullets(task_type, limit=5)
+            applied_bullet_ids = [b.id for b in top_bullets]
+
+            # Run structured reflection
+            reflection = await reflector.reflect(
+                task_description=message,
+                task_type=task_type,
+                task_succeeded=False,
+                outcome=response,
+                tool_calls=None,
+                applied_bullets=applied_bullet_ids,
+                error_trace=error,
+                user_feedback=None,
+            )
+
+            # Curate the playbook with delta updates
+            curation = await curator.curate(reflection, auto_prune=False)
+
+            log.info(
+                "ace_reflection_complete",
+                task_type=task_type,
+                insights=len(reflection.insights),
+                bullets_added=curation.bullets_added,
+                dedup_prevented=curation.dedup_prevented,
+            )
         except Exception as e:
             log.warning("ace_reflection_failed", task_type=task_type, error=str(e))
-
-    async def _curate_playbook(self, task_type: str, lesson: str, backend_obj: Any | None = None) -> None:
-        try:
-            pb = playbook_manager.load_playbook(task_type)
-            pb_text = "\n".join([f"- {b.content}" for b in pb])
-            res = await call_llm(model=config.model_moe.default_model, prompt=f"Current: {pb_text}\nNew: {lesson}", system=ACE_CURATOR_PROMPT, task_type="curation", backend_obj=backend_obj)
-            if res.get("success"):
-                data = json.loads(strip_thinking_tags(res["response"]))
-                operations_applied = 0
-                for op in data.get("operations", []):
-                    if op.get("type") == "ADD":
-                        playbook_manager.add_bullet(task_type, op["content"], op.get("section", "strategies"))
-                        operations_applied += 1
-                if operations_applied > 0:
-                    log.info("playbook_curated", task_type=task_type, operations=operations_applied)
-        except Exception as e:
-            log.warning("playbook_curation_failed", task_type=task_type, error=str(e))
 
 _executor: OrchestrationExecutor | None = None
 

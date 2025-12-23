@@ -1,14 +1,62 @@
 [
   {
-    "content": "MCP tools registered via @mcp.tool() decorator in FastMCP.",
-    "section": "general_strategies"
+    "content": "MCP tools follow Model Context Protocol specification",
+    "id": "strat-766d14c4",
+    "section": "general_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:40:32.170455",
+    "last_used": null,
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 0.5
   },
   {
-    "content": "Tool functions return JSON strings for complex responses.",
-    "section": "general_strategies"
+    "content": "REST API uses FastAPI with automatic OpenAPI docs",
+    "id": "strat-a362b26e",
+    "section": "general_strategies",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:40:32.170467",
+    "last_used": "2025-12-22T20:42:32.674221",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
   },
   {
-    "content": "Use Pydantic models for tool parameter validation.",
-    "section": "general_strategies"
+    "content": "All endpoints return JSON responses",
+    "id": "strat-2b254754",
+    "section": "general_strategies",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:40:32.170472",
+    "last_used": "2025-12-22T20:42:32.674477",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
+  },
+  {
+    "content": "Use proper HTTP status codes for errors",
+    "id": "strat-5047ce42",
+    "section": "general_strategies",
+    "helpful_count": 1,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:40:32.170476",
+    "last_used": "2025-12-22T20:42:32.674594",
+    "source_task": null,
+    "source": "learned",
+    "utility_score": 1.0
+  },
+  {
+    "content": "When testing ACE Framework, verify the complete loop: auto_context detection \u2192 bullet loading \u2192 profile loading \u2192 task execution \u2192 complete_task feedback. Each component must integrate seamlessly.",
+    "id": "strat-a3c91316",
+    "section": "learned_strategies",
+    "helpful_count": 0,
+    "harmful_count": 0,
+    "created_at": "2025-12-22T20:42:32.733365",
+    "last_used": null,
+    "source_task": "api",
+    "source": "reflector",
+    "utility_score": 0.5
   }
 ]

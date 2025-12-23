@@ -24,8 +24,9 @@ Delia makes you **faster and better** at coding tasks:
    - Detects task type from message (coding/testing/debugging/etc)
    - Returns relevant playbook bullets automatically
    - Returns profile recommendations
+   - Returns recommended_tools (LSP, memories, CodeRAG) for your task type
    - NO need to manually pick task_type
-2. APPLY the returned bullets to your work
+2. APPLY the returned bullets AND USE the recommended tools
 ```
 
 ### RE-CALL auto_context Frequently to Stay on Track
@@ -64,9 +65,11 @@ auto_context(message="yes", prior_context="Would you like me to commit this fix 
 
 ### After Completing ANY Task
 ```
-1. Call report_feedback(bullet_id="strat-xxx", task_type="coding", helpful=True/False)
-   - Report for EACH bullet you applied
-   - This improves future recommendations
+1. Call complete_task(success=True/False, bullets_applied='["strat-xxx", "strat-yyy"]')
+   - Pass ALL bullet IDs you applied (from auto_context's bullet_ids field)
+   - Automatically records feedback for all bullets in one call
+   - Optionally add new_insight if you learned something valuable
+   - This closes the ACE learning loop
 ```
 
 ### Task Types (auto-detected by auto_context)
@@ -84,12 +87,14 @@ auto_context(message="yes", prior_context="Would you like me to commit this fix 
 ## Delia's Complete Tool Suite
 
 ### ACE Framework Tools (Automatic)
-- **auto_context(message, path?, prior_context?)** - **PRIMARY TOOL** - Auto-detects task type and returns relevant bullets. Call at start AND when task shifts. Use `prior_context` to pass your last message when user's response is short.
+- **auto_context(message, path?, prior_context?)** - **PRIMARY TOOL** - Auto-detects task type and returns relevant bullets + profiles + recommended_tools (LSP/memories/CodeRAG). Returns `bullet_ids` list for easy reference. Call at start AND when task shifts.
+- **complete_task(success, bullets_applied, task_summary?, new_insight?)** - **CALL WHEN DONE** - Records feedback for all applied bullets in one call. Closes the ACE learning loop.
 - **check_ace_status(path?)** - **CALL THIS FIRST** if unsure about project status. Returns whether playbooks exist and what's needed.
 - **read_initial_instructions()** - **CRITICAL** for MCP clients that don't show system prompts. Call immediately if you haven't read the ACE manual.
 - **get_playbook(task_type, limit?, path?)** - Manual fallback - Returns bullets for specific task type.
 - **get_project_context(path?)** - Returns project overview: tech stack, patterns, key directories
-- **report_feedback(bullet_id, task_type, helpful)** - Report whether a bullet helped. **Call AFTER completing task.**
+- **get_profile(name, path?)** - Load a specific profile by name when auto_context indicates more are available.
+- **report_feedback(bullet_id, task_type, helpful)** - Individual bullet feedback (prefer complete_task() instead).
 
 ### ACE Workflow Checkpoint Tools (call these to stay on track!)
 - **think_about_task_adherence()** - **ALWAYS call BEFORE modifying code**. Prompts you to verify alignment with project patterns.
@@ -176,9 +181,9 @@ Memories are markdown files in `.delia/memories/` for persistent project knowled
 
 ## Constraints
 
-- **ACE is MANDATORY** - always query playbook before coding
+- **ACE is MANDATORY** - always call auto_context() before coding
 - **Per-project isolation** - use set_project() to switch contexts
 - **LSP for code nav** - use LSP tools instead of grep/find for semantic navigation
 - **Memories for knowledge** - store persistent insights in memory system
 - Delegation is OPTIONAL - only when user requests or backends configured
-- Report feedback to close the learning loop
+- **Call complete_task()** to close the ACE learning loop when done

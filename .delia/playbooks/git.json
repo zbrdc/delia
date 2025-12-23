@@ -1,14 +1,22 @@
 [
   {
-    "content": "Commit messages: conventional commits format (feat/fix/refactor/docs).",
-    "section": "general_strategies"
+    "content": "Commit messages should be descriptive of the change",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "Run tests before committing: uv run pytest.",
-    "section": "general_strategies"
+    "content": "Use conventional commits format when possible",
+    "section": "general_strategies",
+    "source": "learned"
   },
   {
-    "content": "Keep commits atomic - one logical change per commit.",
-    "section": "general_strategies"
+    "content": "Don't commit .delia/data/ or session files",
+    "section": "general_strategies",
+    "source": "learned"
+  },
+  {
+    "content": "Playbooks and profiles are project-specific and should be committed",
+    "section": "general_strategies",
+    "source": "learned"
   }
 ]

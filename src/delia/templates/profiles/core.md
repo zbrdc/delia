@@ -1,78 +1,45 @@
-# Core Profile (Always Loaded)
+# ACE Framework: Core Profile (v1.1)
 
-Universal rules that apply to ALL tasks in this project.
+## 1. Library-First Principle (The 50-Line Rule)
 
-## Library-First Principle (CRITICAL)
+**Constraint:** Do not write custom logic for problems solved by industry-standard libraries.
 
-**BEFORE implementing any feature, ALWAYS evaluate existing solutions:**
+- **Trigger:** If the estimated implementation exceeds 50 lines or involves complex domains (Date/Time, Auth, Parsing, State Management), a library search is MANDATORY.
 
-```
-1. SEARCH for libraries/tools that solve the problem
-2. EVALUATE top 2-3 options (maturity, maintenance, fit)
-3. RECOMMEND the best option to user with rationale
-4. ONLY implement from scratch if no good solution exists
+- **Evaluation Protocol:**
+  1. **Search:** Check `pyproject.toml` or `package.json` for existing dependencies.
+  2. **External Audit:** Identify top 2 options based on Active Maintenance (update < 6 months ago) and Maturity (>1k stars/high DLs).
+  3. **Rationale:** Present a brief Pro/Con table to the user.
 
-Questions to ask:
-- Is there a well-maintained library for this?
-- Does the project already have a dependency that handles this?
-- Would a library save significant effort vs custom code?
-```
+- **Scratch Implementation:** Only permitted if the dependency overhead (size/security) outweighs the logic complexity.
 
-This prevents reinventing wheels and ensures we leverage community solutions.
+## 2. Technical Standards & Patterns
 
-## Code Standards
+All code must adhere to these strict mechanical requirements:
 
-- Use type hints on all function signatures
-- Prefer async/await for I/O operations
-- Use structured logging: `log.info("event_name", key=value)`
-- Validate inputs early, fail fast with clear errors
+- **Signatures:** Strict Type Hinting is non-negotiable (e.g., Python `typing`, TypeScript `strict`).
+- **Asynchrony:** Use `async/await` for all I/O, Network, or File System operations. Synchronous blocking calls in these contexts are considered bugs.
+- **Nesting:** Maximum of 3 levels of indentation. If logic requires more, refactor into sub-functions.
+- **Logging:** Use structured context.
+  - Bad: `log.info("Saved user")`
+  - Good: `log.info("user_persistence_success", user_id=user.id, latency_ms=20)`
 
-## Before Writing Code
+## 3. Pre-Flight Checklist (Mandatory)
 
-```
-CHECKLIST (Cannot skip):
-[] Search codebase for similar patterns (DRY)
-[] Check existing utilities before creating new ones
-[] Verify function signatures match project style
-[] Run tests before committing
-```
+Before a single line of code is finalized, verify against the codebase:
 
-## Anti-Patterns (NEVER DO)
+1. **Pattern Match:** `grep` or search the `/core` or `/utils` directories. If a similar utility exists, import it; do not recreate it.
+2. **Validation:** Inputs must be validated at the entry point (e.g., Pydantic models, Zod schemas). Fail fast with specific exceptions.
+3. **Clean-up:** When refactoring, the old implementation must be deleted. No "ghost code" or commented-out blocks.
 
-- Placeholder implementations that defer to original code
-- Duplicate state across old and new modules
-- Hardcoded values that should be configuration
-- Skip tests before pushing
+## 4. Anti-Patterns (Zero Tolerance)
 
-## Documentation
+- **The Placeholder:** Never output `// TODO: Implement logic here`. Provide a functional skeleton or the full logic.
+- **State Duplication:** Never store the same data in two different modules. Define a single source of truth.
+- **Magic Values:** No hardcoded strings or integers. All configuration must reside in `.env` or `config.py`.
+- **Bypassing Integration:** New modules must be wired into the main application. Isolated code that isn't called is a failure.
 
-- Add docstrings to public functions
-- Keep comments focused on "why" not "what"
-- Update README when adding major features
+## 5. Documentation Requirements
 
-## Complete Integration Rule
-
-When extracting/refactoring code:
-1. REMOVE old code from source module
-2. Verify old patterns are deleted, not bypassed
-3. Test that new integration is actually used
-
-## Best Practices
-
-```
-ALWAYS:
-- Use type hints on all function signatures
-- Prefer async/await for I/O operations
-- Use structured logging with context
-- Validate inputs early, fail fast
-- Search codebase for similar patterns before creating new ones
-- Run tests before committing
-
-AVOID:
-- Placeholder implementations that defer to original code
-- Duplicate state across old and new modules
-- Hardcoded values that should be configuration
-- Skipping tests before pushing
-- Deep nesting (max 3 levels)
-- Magic numbers without constants
-```
+- **Public API:** Every public class/function requires a docstring defining Parameters, Return Type, and Exceptions raised.
+- **"The Why":** Comments should explain *why* a specific architectural choice or edge case handling exists, not *what* the code is doing (the code should be self-documenting).
