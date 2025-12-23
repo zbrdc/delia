@@ -193,7 +193,7 @@ def register_admin_tools(mcp: FastMCP):
             call the tools listed in agent_instructions to complete initialization.
         """
         from pathlib import Path
-        from ..playbook import detect_tech_stack, playbook_manager, seed_playbooks_from_profiles
+        from ..playbook import detect_tech_stack, playbook_manager
         from ..orchestration.summarizer import get_summarizer
         from ..orchestration.graph import get_symbol_graph
         from ..llm import init_llm_module
@@ -363,11 +363,9 @@ def register_admin_tools(mcp: FastMCP):
 
                 results["starter_profiles_copied"] = starter_profiles
 
-                # Seed playbooks from profile templates (source="seed")
-                # These provide baseline strategies that can be refined through feedback
-                seed_counts = seed_playbooks_from_profiles(project_root, tech_stack, force=force)
-                results["seeded_playbooks"] = seed_counts
-                log.info("seeded_playbooks_from_profiles", counts=seed_counts)
+                # NOTE: We no longer seed generic bullets from profiles
+                # Playbooks grow from LEARNING only (Reflector/Curator)
+                # Profiles remain as reference docs, loaded via get_profile()
 
                 if has_existing_instructions:
                     # Project has existing instructions - agent should MERGE/UPDATE
@@ -433,11 +431,11 @@ def register_admin_tools(mcp: FastMCP):
             if files_written:
                 results["files_written"] = files_written
 
-            # Step 4a: Seed playbooks from profile templates (baseline strategies)
-            seed_counts = seed_playbooks_from_profiles(project_root, tech_stack, force=force)
-            results["steps"].append({"step": "seed_playbooks", "counts": seed_counts})
+            # NOTE: We no longer seed generic bullets from profiles
+            # Playbooks grow from LEARNING only (Reflector/Curator)
+            # Profiles remain as reference docs, loaded via get_profile()
 
-            # Step 4b: Generate project-specific playbook bullets (adds to seeds)
+            # Generate project-specific playbook bullets (tech stack, structure)
             from ..playbook import generate_project_playbook
             playbook_count = await generate_project_playbook(summarizer if not skip_index else get_summarizer())
             results["steps"].append({"step": "playbook", "bullets": playbook_count})

@@ -1131,15 +1131,12 @@ def init_project(
             print_info(f"Generating project summaries (parallel={parallel})...")
             await summarizer.sync_project(force=force, summarize=True, parallel=parallel)
 
-            # Seed playbooks from profile templates (baseline strategies)
-            print_info("Seeding playbooks from profile templates...")
-            from .playbook import seed_playbooks_from_profiles, generate_project_playbook
-            tech_stack_for_seeds = _detect_project_tech_stack(project_root)
-            seed_counts = seed_playbooks_from_profiles(project_root, tech_stack_for_seeds, force=force)
-            if seed_counts:
-                print_success(f"Seeded {sum(seed_counts.values())} baseline bullets from profiles")
+            # Generate project-specific playbook bullets (from codebase analysis)
+            # NOTE: We no longer seed generic bullets from profiles - playbooks grow from LEARNING only
+            # Profiles remain as reference docs, loaded via get_profile()
+            from .playbook import generate_project_playbook
 
-            # Generate project-specific playbook bullets (adds to seeds)
+            # Generate project-specific playbook bullets (tech stack, structure)
             print_info("Generating project-specific playbook bullets...")
             await generate_project_playbook(summarizer)
 
