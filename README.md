@@ -1,103 +1,144 @@
-# Delia: Autonomous Cognitive Entity (ACE) & Local LLM Orchestrator
+# Delia: ACE Framework for AI Coding Assistants
 
-Delia is a high-performance executive agent and orchestration system for local Large Language Models (LLMs). Designed as a "Tactical ACE" (Autonomous Cognitive Entity), it bridges the gap between simple chatbots and fully autonomous agents by providing a robust operational layer for tool use, strategic planning, and self-correction.
+Delia enhances AI coding assistants (Claude Code, Cursor, Windsurf) with **persistent learning** and **semantic code intelligence**. It remembers what works across sessions and applies proven patterns to every task.
 
-It functions as a unified CLI workspace that integrates local inference (Ollama, llama.cpp) with an advanced routing and execution engine.
+## Quick Start (MCP Server)
 
-## Core Capabilities
-
--   **Unified Orchestration:** Seamlessly routes tasks between specialized model tiers ("Quick", "Coder", "MoE", "Thinking") based on complexity and intent.
--   **ACE Architecture:** Implements a persistent self-improvement loop:
-    -   **Global Strategy:** Learns from execution failures via a `Reflector` -> `Curator` -> `Playbook` cycle.
-    -   **Cognitive Control:** Uses tiered NLP (Regex -> Semantic -> LLM) for precise intent detection.
-    -   **Task Prosecution:** Robust tool suite for file I/O, shell execution, and web search.
--   **Native Agentic Loop:** A continuous, stateful Read-Eval-Print Loop (REPL) that maintains conversation history while executing multi-step autonomous plans.
--   **Mathematical Reliability:** Implements K-voting consensus algorithms (verified via Wolfram Alpha) to guarantee response accuracy for critical tasks.
--   **Melon Economy:** A performance-based routing weight system that dynamically prioritizes models with a proven track record of quality.
-
-## Installation
-
-Delia is a Python package managed via `uv` or `pip`.
-
+### 1. Install
 ```bash
-# Install via uv (recommended for speed)
-uv pip install -e .
-
-# Or standard pip
-pip install -e .
+# Clone and install
+git clone https://github.com/zbrdc/delia.git
+cd delia
+uv sync  # or: pip install -e .
 ```
 
+### 2. Configure MCP Client
 
-## Backend Support & Model Requirements
+Add to your MCP configuration:
 
-Delia is designed for high-performance local execution. We support the following inference backends:
-- **Ollama** (Recommended for simplicity)
-- **llama.cpp** (Recommended for maximum hardware performance)
-- **LM Studio** / **vLLM** (OpenAI-compatible endpoints)
-
-### Recommended Model Stack
-
-For the best experience, we recommend the following models (optimized for Delia’s internal logic):
-
-- **Semantic Indexing (Embeddings):** `mxbai-embed-large` 
-  - *Requirement:* Must be available on your backend for codebase indexing and GraphRAG capabilities. 
-  - *Hardware:* Runs on CPU/RAM (669MB).
-- **Logical Orchestration (Quick Tier):** `ministral-3-14b` or `qwen3:0.6b`
-  - Used for intent detection and file summarization.
-- **Agentic reasoning (Coder/Thinking):** `openthinker:7b` or `deepcoder:14b`
-  - Used for complex refactoring and strategic planning.
-
-To automatically detect and configure your local models, run:
-```bash
-delia init
+**Claude Code** (`~/.claude/claude_code_config.json`):
+```json
+{
+  "mcpServers": {
+    "delia": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/delia", "run", "delia", "serve"]
+    }
+  }
+}
 ```
 
-## Usage
+**Cursor** (`.cursor/mcp.json` in project root):
+```json
+{
+  "mcpServers": {
+    "delia": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/delia", "run", "delia", "serve"]
+    }
+  }
+}
+```
 
-### Interactive Chat (Default)
+### 3. Initialize Your Project
+```bash
+cd your-project
+delia init .
+```
 
-Launch the native TUI (Text User Interface) for an interactive session. This mode supports full agent capabilities, including planning, tool use, and file system access.
+This creates `.delia/` with playbooks tailored to your tech stack.
+
+### 4. Use It
+
+The AI assistant now has access to Delia's tools. Key workflow:
+
+```
+auto_context("implement user auth")  → Get relevant patterns
+[do the work, applying patterns]
+complete_task(success=True, bullets_applied=["strat-xxx"])  → Learn from it
+```
+
+## What Delia Provides
+
+| Feature | What It Does |
+|---------|--------------|
+| **Playbooks** | Per-project patterns learned over time. Coding, testing, debugging, git, security, etc. |
+| **Memories** | Persistent knowledge in `.delia/memories/`. Architecture decisions, integration details. |
+| **LSP Tools** | Semantic code navigation. Find references, go to definition, rename symbols. |
+| **Profiles** | Framework-specific guidance (FastAPI, React, etc.) loaded automatically. |
+| **ACE Loop** | Reflector → Curator pipeline that extracts insights from completed tasks. |
+
+## CLI Usage
+
+Beyond MCP, Delia has a standalone CLI:
 
 ```bash
-delia
-# or
+# Interactive chat with local LLMs
 delia chat
-```
 
-**Key Features in Chat:**
--   **Standard Chat:** "How do I reverse a list in Python?"
--   **Agentic Tasks:** "Refactor `src/main.py` to use async/await." (Triggers planning & tools)
--   **Interruption:** Press `Ctrl+\` to pause the agent mid-execution and inject new instructions.
--   **Termination:** Press `Ctrl+C` to exit.
+# Single-shot agent task
+delia agent "Scan for security vulnerabilities"
 
-### Single-Shot Agent
-
-Execute a specific task non-interactively and exit. Useful for scripting or CI/CD integration.
-
-```bash
-delia agent "Scan the current directory for security vulnerabilities"
-```
-
-### Configuration
-
-Initialize the configuration wizard to detect local backends (Ollama, etc.) and set up model tiers.
-
-```bash
+# Initialize config (detect Ollama, etc.)
 delia init
+
+# Health check
+delia doctor
 ```
 
-Configuration is stored in `~/.delia/settings.json` and supports hot-reloading.
+## Backend Support
 
-## Architecture
+Delia works with local LLM backends:
 
-Delia operates on a 6-layer ACE framework:
+- **Ollama** (recommended) - `ollama serve`
+- **llama.cpp** - OpenAI-compatible server
+- **LM Studio** / **vLLM** - Any OpenAI-compatible endpoint
 
-1.  **Aspirational:** Defined via `data/constitution.md` (Mission & Values).
-2.  **Global Strategy:** Strategic playbooks (`data/playbooks/*.json`) accumulated from past interactions.
-3.  **Agent Model:** Dynamic awareness of available backends and tool capabilities.
-4.  **Executive Function:** The `OrchestrationExecutor` manages resource allocation and task routing.
-5.  **Cognitive Control:** The `IntentDetector` filters and directs input.
-6.  **Task Prosecution:** The `AgentLoop` executes actions via the `ToolRegistry`.
+### Recommended Models
+
+| Purpose | Models |
+|---------|--------|
+| Embeddings | `mxbai-embed-large` (required for semantic search) |
+| Quick tasks | `qwen3:4b`, `ministral-3b` |
+| Coding | `deepcoder:14b`, `qwen-coder:14b` |
+| Thinking | `qwen3:14b`, `openthinker:7b` |
+
+## Project Structure
+
+```
+your-project/
+├── .delia/
+│   ├── playbooks/      # Learned patterns (coding.json, testing.json, ...)
+│   ├── memories/       # Persistent knowledge (architecture.md, ...)
+│   └── profiles/       # Framework guides (fastapi.md, react.md, ...)
+└── CLAUDE.md           # Auto-generated instructions for AI assistants
+```
+
+## Troubleshooting
+
+**MCP server not connecting:**
+```bash
+# Test the server directly
+uv run delia serve
+
+# Check health
+uv run delia doctor
+```
+
+**Playbooks empty:**
+```bash
+# Re-initialize project
+delia init --force .
+```
+
+**Ollama not detected:**
+```bash
+# Ensure Ollama is running
+ollama serve
+
+# Check available models
+ollama list
+```
 
 ## License
 
