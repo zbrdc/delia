@@ -61,6 +61,37 @@ CHECKPOINT_REQUIRED_TOOLS = {
     "lsp_rename_symbol",
 }
 
+# Project root markers (in priority order)
+PROJECT_MARKERS = [".delia", ".git", "pyproject.toml", "package.json", "Cargo.toml"]
+
+
+def resolve_project_path(path: str | None) -> str:
+    """Resolve a file or directory path to its project root.
+
+    Args:
+        path: File or directory path. If None, uses cwd.
+
+    Returns:
+        Project root directory path (string)
+    """
+    if path is None:
+        return str(Path.cwd())
+
+    p = Path(path).resolve()
+
+    # If path is a file, start from its parent directory
+    if p.is_file():
+        p = p.parent
+
+    # Walk up looking for project markers
+    for parent in [p, *p.parents]:
+        for marker in PROJECT_MARKERS:
+            if (parent / marker).exists():
+                return str(parent)
+
+    # No marker found - return the resolved directory
+    return str(p)
+
 
 class ACEEnforcementTracker:
     """Track ACE compliance dynamically across tool calls.
@@ -363,9 +394,9 @@ def check_ace_gate(tool_name: str, path: str | None = None) -> str | None:
 
     Args:
         tool_name: Name of the tool being called
-        path: Project path (uses cwd if not provided)
+        path: File or project path (resolves to project root)
     """
-    project_path = str(Path(path).resolve()) if path else str(Path.cwd())
+    project_path = resolve_project_path(path)
     tracker = get_ace_tracker(project_path)
     error = tracker.require_ace_started(project_path, tool_name)
 
@@ -382,9 +413,9 @@ def check_checkpoint_gate(tool_name: str, path: str | None = None) -> str | None
 
     Args:
         tool_name: Name of the tool being called
-        path: Project path (uses cwd if not provided)
+        path: File or project path (resolves to project root)
     """
-    project_path = str(Path(path).resolve()) if path else str(Path.cwd())
+    project_path = resolve_project_path(path)
     tracker = get_ace_tracker(project_path)
     error = tracker.require_checkpoint(project_path, tool_name)
 
@@ -398,7 +429,7 @@ def record_checkpoint(path: str | None = None) -> None:
 
     Call this from the think_about_task_adherence tool handler.
     """
-    project_path = str(Path(path).resolve()) if path else str(Path.cwd())
+    project_path = resolve_project_path(path)
     tracker = get_ace_tracker(project_path)
     tracker.record_checkpoint_called(project_path)
 
@@ -408,7 +439,7 @@ def record_search(path: str | None = None) -> None:
 
     Call this from search tools (grep, glob, read_file, etc.)
     """
-    project_path = str(Path(path).resolve()) if path else str(Path.cwd())
+    project_path = resolve_project_path(path)
     tracker = get_ace_tracker(project_path)
     tracker.record_search_operation(project_path)
 
@@ -418,7 +449,7 @@ def get_phase_injection(tool_name: str, path: str | None = None) -> str | None:
 
     Returns warning text or None.
     """
-    project_path = str(Path(path).resolve()) if path else str(Path.cwd())
+    project_path = resolve_project_path(path)
     tracker = get_ace_tracker(project_path)
     return tracker.get_phase_warning(project_path, tool_name)
 
