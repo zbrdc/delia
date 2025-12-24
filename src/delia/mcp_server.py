@@ -258,19 +258,37 @@ def _save_http_server_port(port: int) -> None:
 # ============================================================
 
 def run_server(
-    transport: str = "http",
+    transport: str = "stdio",
     port: int = _DEFAULT_HTTP_PORT,
     host: str = "0.0.0.0",
 ) -> None:
-    """Run the Delia MCP server.
-
-    For stdio transport: Use the CLI which auto-routes through proxy.
-    This function is primarily for HTTP/SSE backends.
-    """
+    """Run the Delia MCP server."""
     global log
     transport = transport.lower().strip()
 
-    if transport in ("http", "streamable-http"):
+    if transport == "stdio":
+        # For stdio, redirect logs to stderr to keep stdout clean for JSON-RPC
+        import contextlib
+
+        with contextlib.redirect_stdout(sys.stderr):
+            _configure_structlog(use_stderr=True)
+            log = structlog.get_logger()
+            log.info("stdio_logging_configured", destination="stderr")
+
+            asyncio.run(startup_handler())
+            atexit.register(lambda: asyncio.run(shutdown_handler()))
+            start_prewarm_task()
+
+            log.info("server_starting", transport="stdio")
+
+        # Restore stdout for MCP protocol
+        os.dup2(_original_stdout_fd, 1)
+        sys.stdout = _original_stdout
+
+        # Run with stdio transport (show_banner=False keeps stdout clean)
+        mcp.run(show_banner=False)
+
+    elif transport in ("http", "streamable-http"):
         # For HTTP, we can leave stdout redirected to stderr (logs)
         _configure_structlog(use_stderr=True)
         log = structlog.get_logger()
@@ -303,15 +321,13 @@ def run_server(
         mcp.run(transport="sse", host=host, port=port)
 
     else:
-        raise ValueError(f"Unknown transport: {transport}")
+        raise ValueError(f"Unknown transport: {transport}. Use stdio, http, or sse.")
 
 
 if __name__ == "__main__":
-    # Minimal entry point for direct execution
-    # Note: For stdio transport, use `delia serve` which auto-routes through proxy
     import argparse
     parser = argparse.ArgumentParser(description="Delia MCP Server")
-    parser.add_argument("--transport", "-t", default="http", help="Transport: http, sse")
+    parser.add_argument("--transport", "-t", default="stdio", help="Transport: stdio, http, sse")
     parser.add_argument("--port", "-p", type=int, default=_DEFAULT_HTTP_PORT, help="Port for HTTP/SSE")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
     args = parser.parse_args()

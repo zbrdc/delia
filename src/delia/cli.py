@@ -804,15 +804,21 @@ def run(
     """
     transport = transport.lower().strip()
 
+    # Import server module
+    from .mcp_server import run_server
+
     if transport == "stdio":
-        # ALWAYS use proxy mode for stdio - this auto-starts HTTP backend if needed
+        # Check if we can use lightweight proxy (returns True if handled)
         from .proxy import run_stdio_via_proxy
-        if not run_stdio_via_proxy():
-            raise typer.Exit(1)
+        if run_stdio_via_proxy():
+            return  # Proxy handled it
+
+        # No proxy - run full server with stdio transport
+        # (lazy loading in container keeps memory reasonable)
+        run_server(transport="stdio", port=port, host=host)
         return
 
     # For HTTP/SSE, run the full server directly
-    from .mcp_server import run_server
     run_server(transport=transport, port=port, host=host)
 
 
