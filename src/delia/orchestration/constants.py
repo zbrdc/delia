@@ -7,8 +7,9 @@ Common constants for Orchestration.
 
 # File extensions to index
 CODE_EXTENSIONS = {
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".go", ".c", ".cpp", ".h", 
-    ".java", ".kt", ".swift", ".rb", ".php", ".sh", ".json", ".toml", ".yaml", ".yml"
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".go", ".c", ".cpp", ".h",
+    ".java", ".kt", ".swift", ".rb", ".php", ".sh", ".json", ".toml", ".yaml", ".yml",
+    ".md", ".txt",  # Documentation files
 }
 
 # Directories to ignore
