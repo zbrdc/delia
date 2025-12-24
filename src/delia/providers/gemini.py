@@ -170,6 +170,7 @@ class GeminiProvider:
         tool_choice: str | None = None,
         temperature: float | None = None,
         grammar: str | None = None,
+        num_gpu: int | None = None,
     ) -> LLMResponse:
         """Call Google Gemini API with stats tracking and circuit breaker.
 
@@ -349,6 +350,7 @@ class GeminiProvider:
         tool_choice: str | None = None,
         messages: list[dict[str, Any]] | None = None,
         grammar: str | None = None,
+        num_gpu: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from Gemini API.
 

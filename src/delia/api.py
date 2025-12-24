@@ -1217,7 +1217,7 @@ You are Delia. You have personality. Use it. """
             # Use quality score from validation for more nuanced affinity learning
             affinity_tracker.update(backend_id, detected_task, quality=quality_result.overall)
             
-            # Award melons based on quality! 🍈
+            # Award melons based on quality
             from .melons import award_melons_for_quality
             melons_awarded = award_melons_for_quality(
                 model_id=selected_model,
@@ -2135,8 +2135,8 @@ async def agent_confirm_handler(request: Request) -> JSONResponse:
     })
 
 
-async def ace_metrics_handler(request: Request) -> JSONResponse:
-    """Handle GET /api/ace/metrics - Get ACE Framework metrics.
+async def framework_metrics_handler(request: Request) -> JSONResponse:
+    """Handle GET /api/framework/metrics - Get Delia Framework metrics.
 
     Returns:
         - playbook_stats: Bullet counts, utility scores, top bullets
@@ -2210,9 +2210,9 @@ async def ace_metrics_handler(request: Request) -> JSONResponse:
             "project_path": str(project_path),
         })
     except Exception as e:
-        log.error("ace_metrics_error", error=str(e))
+        log.error("framework_metrics_error", error=str(e))
         return JSONResponse(
-            {"error": f"Failed to retrieve ACE metrics: {str(e)}"},
+            {"error": f"Failed to retrieve framework metrics: {str(e)}"},
             status_code=500
         )
 
@@ -2224,7 +2224,7 @@ routes = [
     Route("/api/chat", chat_handler, methods=["POST"]),
     Route("/api/health", health_handler, methods=["GET"]),
     Route("/api/status", status_handler, methods=["GET"]),
-    Route("/api/ace/metrics", ace_metrics_handler, methods=["GET"]),
+    Route("/api/framework/metrics", framework_metrics_handler, methods=["GET"]),
     Route("/api/models", models_handler, methods=["GET"]),
     Route("/api/backends", backends_handler, methods=["GET"]),
     Route("/api/sessions", sessions_list_handler, methods=["GET"]),

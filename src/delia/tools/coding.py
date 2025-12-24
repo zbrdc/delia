@@ -345,7 +345,7 @@ def _parse_go_output(stdout: str, stderr: str, returncode: int) -> TestResult:
 
 def _format_test_result(result: TestResult, framework: str) -> str:
     """Format test result for display."""
-    status = "✅ PASSED" if result.success else "❌ FAILED"
+    status = "PASSED" if result.success else "FAILED"
     
     lines = [
         f"# Test Results ({framework})",
@@ -430,9 +430,9 @@ async def apply_diff(
         
         if result.returncode == 0:
             action = "Would apply" if dry_run else "Applied"
-            return f"✅ {action} patch successfully:\n{result.stdout}"
+            return f"{action} patch successfully:\n{result.stdout}"
         else:
-            return f"❌ Patch failed:\n{result.stderr}\n{result.stdout}"
+            return f"Patch failed:\n{result.stderr}\n{result.stdout}"
             
     except FileNotFoundError:
         # Fallback: manual application for simple diffs
@@ -497,10 +497,10 @@ async def _apply_diff_manual(
         hunks_applied += 1
     
     if dry_run:
-        return f"✅ Would apply {hunks_applied} hunk(s) to {file_path}"
+        return f"Would apply {hunks_applied} hunk(s) to {file_path}"
     
     # For safety, just show what we would do
-    return f"⚠️ Manual diff application not fully implemented. Use 'patch' command or apply changes manually.\nHunks found: {hunks_applied}"
+    return f"Manual diff application not fully implemented. Use 'patch' command or apply changes manually.\nHunks found: {hunks_applied}"
 
 
 # =============================================================================
@@ -595,7 +595,7 @@ async def git_status(
                 lines.append(f"  ? {f}")
         
         if not staged and not modified and not untracked:
-            lines.append("\n✅ Working tree clean")
+            lines.append("\nWorking tree clean")
         
         return "\n".join(lines)
         

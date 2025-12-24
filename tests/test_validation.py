@@ -23,10 +23,11 @@ from hypothesis import given, strategies as st, assume
 
 from pathlib import Path
 
-from delia.mcp_server import (
+from delia.validation import (
     validate_task, validate_content, validate_file_path, validate_model_hint,
-    VALID_TASKS, VALID_MODELS, MAX_CONTENT_LENGTH, MAX_FILE_PATH_LENGTH
+    MAX_CONTENT_LENGTH, MAX_FILE_PATH_LENGTH
 )
+from delia.types import VALID_TASKS, VALID_MODELS
 
 
 class TestValidateTask:

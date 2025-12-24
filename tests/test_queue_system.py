@@ -34,7 +34,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import queue system
-from delia.mcp_server import ModelQueue, QueuedRequest
+from delia.queue import ModelQueue, QueuedRequest
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from .handlers_ace import get_ace_tracker
+from .handlers_enforcement import get_tracker
 
 if TYPE_CHECKING:
     from typing import Any
@@ -43,8 +43,8 @@ async def get_playbook_impl(
     if path:
         playbook_manager.set_project(Path(path))
 
-    # Record playbook query for ACE enforcement
-    get_ace_tracker().record_playbook_query(project_path)
+    # Record playbook query for framework enforcement
+    get_tracker().record_playbook_query(project_path)
 
     bullets = playbook_manager.get_top_bullets(task_type, limit)
     if not bullets:

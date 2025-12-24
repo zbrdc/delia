@@ -453,7 +453,7 @@ class BackendScorer:
                     economic_boost = success_modifier * quality_modifier * cost_modifier
                     boost_multiplier *= economic_boost
 
-        # Exploration Bonus (Curiosity) 🧪
+        # Exploration Bonus (Curiosity)
         # Standardized as a multiplicative boost that decays as we gather data.
         # Starts at +25% for fresh models, decays toward 1.0.
         total_requests = metrics.total_requests if math.isfinite(metrics.total_requests) else 0

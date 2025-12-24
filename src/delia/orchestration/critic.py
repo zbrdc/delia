@@ -10,7 +10,7 @@ before it reaches the user.
 Enhanced with multi-branch evaluation for ToT meta-orchestration:
 - evaluate_branches(): Compare multiple orchestration results
 - Weighted scoring: 0.35*correctness + 0.25*completeness + 0.25*quality + 0.15*confidence
-- Returns structured BranchEvaluation with reasoning for ACE learning
+- Returns structured BranchEvaluation with reasoning for Delia learning
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ class BranchEvaluation:
     """
     Result of evaluating multiple ToT branches.
 
-    Contains the winner selection plus detailed reasoning for ACE meta-learning.
+    Contains the winner selection plus detailed reasoning for Delia meta-learning.
     """
     winner_index: int  # Index into the branches list
     winner_mode: OrchestrationMode
@@ -154,7 +154,7 @@ Respond with 'APPROVED' or provide feedback."""
         """
         Compare multiple ToT branches and select the best one.
 
-        Uses structured scoring with reasoning for ACE meta-learning.
+        Uses structured scoring with reasoning for Delia meta-learning.
         Each branch is scored on:
         - Correctness (0-10): Does it solve the problem?
         - Completeness (0-10): Are all requirements addressed?

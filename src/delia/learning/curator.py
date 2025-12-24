@@ -1,11 +1,11 @@
 # Copyright (C) 2024 Delia Contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-ACE Curator: Playbook Maintenance via Delta Updates.
+Curator: Playbook Maintenance via Delta Updates.
 
 Integrates Reflector insights into structured playbook updates.
 Uses atomic delta operations (ADD, REMOVE, MERGE) rather than
-monolithic rewrites - per ACE Framework principles.
+monolithic rewrites - per Delia Framework principles.
 
 Wraps existing PlaybookManager - no new storage layer.
 """
@@ -14,15 +14,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
 if TYPE_CHECKING:
     from delia.playbook import PlaybookManager, PlaybookBullet
 
-from delia.ace.deduplication import SemanticDeduplicator, get_deduplicator
-from delia.ace.reflector import ReflectionResult, ExtractedInsight, InsightType
+from delia.learning.deduplication import SemanticDeduplicator, get_deduplicator
+from delia.learning.reflector import ReflectionResult, ExtractedInsight, InsightType
 
 log = structlog.get_logger()
 
@@ -64,7 +64,7 @@ class CurationResult:
 
 class Curator:
     """
-    ACE Curator: Maintains playbooks through incremental delta updates.
+    Curator: Maintains playbooks through incremental delta updates.
 
     Key responsibilities:
     1. Accept insights from Reflector
@@ -73,7 +73,7 @@ class Curator:
     4. Periodic maintenance (prune, merge similar)
 
     Wraps existing PlaybookManager - no new storage.
-    Follows ACE principle: NEVER regenerate entire playbooks.
+    Follows Delia principle: NEVER regenerate entire playbooks.
     """
 
     def __init__(
@@ -156,14 +156,14 @@ class Curator:
                 ))
                 continue
 
-            added, existing_id = await self.add_bullet(
+            add_result = await self.add_bullet(
                 task_type=reflection.task_type,
                 content=self._format_insight_content(insight),
                 section=self._insight_type_to_section(insight.insight_type),
                 source="reflector",
             )
 
-            if added:
+            if add_result.get("added"):
                 result.bullets_added += 1
                 result.applied_deltas.append(CurationDelta(
                     action=CurationAction.ADD,
@@ -172,7 +172,7 @@ class Curator:
                     source="reflector",
                     reasoning=f"Insight from {reflection.task_type} task",
                 ))
-            else:
+            elif add_result.get("deduplicated"):
                 result.dedup_prevented += 1
                 result.skipped_deltas.append((
                     CurationDelta(
@@ -180,7 +180,17 @@ class Curator:
                         task_type=reflection.task_type,
                         content=insight.content,
                     ),
-                    f"Duplicate of {existing_id}",
+                    add_result.get("reason", "Duplicate detected"),
+                ))
+            elif add_result.get("quality_rejected"):
+                # Quality gate rejection - track separately
+                result.skipped_deltas.append((
+                    CurationDelta(
+                        action=CurationAction.ADD,
+                        task_type=reflection.task_type,
+                        content=insight.content,
+                    ),
+                    add_result.get("reason", "Failed quality validation"),
                 ))
 
         log.info(
@@ -222,9 +232,10 @@ class Curator:
         section: str = "general_strategies",
         source: str = "reflector",
         skip_dedup: bool = False,
-    ) -> tuple[bool, str | None]:
+        skip_validation: bool = False,
+    ) -> dict[str, Any]:
         """
-        Add a new bullet with semantic deduplication check.
+        Add a new bullet with quality validation and semantic deduplication.
 
         Args:
             task_type: Playbook type (coding, testing, etc.)
@@ -232,10 +243,24 @@ class Curator:
             section: Section within playbook
             source: Origin of bullet (reflector, manual, etc.)
             skip_dedup: Bypass deduplication check
+            skip_validation: Bypass quality validation (use sparingly)
 
         Returns:
-            (was_added, existing_bullet_id_if_duplicate)
+            Dict with keys:
+            - added: bool - whether bullet was added
+            - bullet_id: str | None - ID of added or existing bullet
+            - reason: str | None - rejection reason if not added
+            - deduplicated: bool - if rejected due to duplicate
+            - quality_rejected: bool - if rejected due to quality gate
         """
+        result: dict[str, Any] = {
+            "added": False,
+            "bullet_id": None,
+            "reason": None,
+            "deduplicated": False,
+            "quality_rejected": False,
+        }
+
         existing_bullets = self.playbook.load_playbook(task_type)
 
         if not skip_dedup and existing_bullets:
@@ -250,7 +275,10 @@ class Curator:
                     task_type=task_type,
                     similarity=dedup_result.best_match.similarity if dedup_result.best_match else 0,
                 )
-                return False, dedup_result.best_match.bullet_id if dedup_result.best_match else None
+                result["deduplicated"] = True
+                result["bullet_id"] = dedup_result.best_match.bullet_id if dedup_result.best_match else None
+                result["reason"] = f"Duplicate of {result['bullet_id']}"
+                return result
 
             if dedup_result.recommended_action == "merge" and dedup_result.best_match:
                 # Boost existing bullet instead of adding
@@ -264,19 +292,30 @@ class Curator:
                     task_type=task_type,
                     existing_id=dedup_result.best_match.bullet_id,
                 )
-                return False, dedup_result.best_match.bullet_id
+                result["deduplicated"] = True
+                result["bullet_id"] = dedup_result.best_match.bullet_id
+                result["reason"] = "Merged with existing (boosted utility)"
+                return result
 
-        # Add the bullet using existing PlaybookManager
+        # Add the bullet using existing PlaybookManager (now with quality gate)
         bullet = self.playbook.add_bullet(
             task_type=task_type,
             content=content,
             section=section,
             source=source,
+            skip_validation=skip_validation,
         )
+
+        # PlaybookManager returns None if quality gate rejects
+        if bullet is None:
+            result["quality_rejected"] = True
+            result["reason"] = "Failed quality validation (check logs for details)"
+            log.debug("bullet_quality_rejected", task_type=task_type, content=content[:50])
+            return result
 
         # Generate embedding for new bullet (if embeddings available)
         try:
-            from delia.ace.retrieval import get_retriever
+            from delia.learning.retrieval import get_retriever
             from pathlib import Path
             project_path = Path(self.playbook.playbook_dir).parent
             retriever = get_retriever()
@@ -284,8 +323,10 @@ class Curator:
         except Exception as e:
             log.debug("bullet_embedding_skipped", error=str(e))
 
+        result["added"] = True
+        result["bullet_id"] = bullet.id
         log.debug("bullet_added", task_type=task_type, bullet_id=bullet.id)
-        return True, None
+        return result
 
     def apply_feedback(
         self,
@@ -299,6 +340,58 @@ class Curator:
         Shortcut delegating to PlaybookManager.
         """
         return self.playbook.record_feedback(bullet_id, task_type, helpful)
+
+    async def add_bullets(
+        self,
+        task_type: str,
+        new_insights: list[Any],
+        existing_bullets: list[Any] | None = None,
+    ) -> dict[str, int]:
+        """
+        Add multiple insights as bullets with quality validation.
+
+        This is a convenience wrapper for batch addition of insights.
+
+        Args:
+            task_type: Playbook type (coding, testing, etc.)
+            new_insights: List of ExtractedInsight objects to add
+            existing_bullets: Existing bullets for dedup context (optional)
+
+        Returns:
+            Dict with counts: added, deduplicated, quality_rejected
+        """
+        result = {"added": 0, "deduplicated": 0, "quality_rejected": 0}
+
+        for insight in new_insights:
+            # Handle both ExtractedInsight objects and raw strings
+            if hasattr(insight, "content"):
+                content = insight.content
+                section = self._insight_type_to_section(insight.insight_type) if hasattr(insight, "insight_type") else "general_strategies"
+            else:
+                content = str(insight)
+                section = "general_strategies"
+
+            add_result = await self.add_bullet(
+                task_type=task_type,
+                content=content,
+                section=section,
+                source="reflector",
+            )
+
+            if add_result.get("added"):
+                result["added"] += 1
+            elif add_result.get("quality_rejected"):
+                result["quality_rejected"] += 1
+            elif add_result.get("deduplicated"):
+                result["deduplicated"] += 1
+
+        log.debug(
+            "bullets_batch_added",
+            task_type=task_type,
+            total=len(new_insights),
+            **result,
+        )
+        return result
 
     async def run_maintenance(
         self,

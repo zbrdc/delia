@@ -108,6 +108,7 @@ class LlamaCppProvider:
         temperature: float | None = None,
         messages: list[dict[str, Any]] | None = None,
         grammar: str | None = None,
+        num_gpu: int | None = None,
     ) -> LLMResponse:
         """Call OpenAI-compatible API with Pydantic validation, retry, and circuit breaker."""
         start_time = time.time()
@@ -357,6 +358,7 @@ class LlamaCppProvider:
         max_tokens: int | None = None,
         messages: list[dict[str, Any]] | None = None,
         grammar: str | None = None,
+        num_gpu: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from OpenAI-compatible API token by token.
 

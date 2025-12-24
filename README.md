@@ -1,4 +1,4 @@
-# Delia: ACE Framework for AI Coding Assistants
+# Delia: Framework for AI Coding Assistants
 
 Delia enhances AI coding assistants (Claude Code, Cursor, Windsurf) with **persistent learning** and **semantic code intelligence**. It remembers what works across sessions and applies proven patterns to every task.
 
@@ -66,7 +66,7 @@ complete_task(success=True, bullets_applied=["strat-xxx"])  → Learn from it
 | **Memories** | Persistent knowledge in `.delia/memories/`. Architecture decisions, integration details. |
 | **LSP Tools** | Semantic code navigation. Find references, go to definition, rename symbols. |
 | **Profiles** | Framework-specific guidance (FastAPI, React, etc.) loaded automatically. |
-| **ACE Loop** | Reflector → Curator pipeline that extracts insights from completed tasks. |
+| **Learning Loop** | Reflector → Curator pipeline that extracts insights from completed tasks. |
 
 ## CLI Usage
 

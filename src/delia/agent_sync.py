@@ -6,15 +6,19 @@ AI Coding Agent Detection and Instruction File Synchronization.
 This module provides utilities to detect which AI coding assistants are configured
 in a project and keep their instruction files synchronized.
 
+Architecture:
+- mcp_instructions.md (in src/delia/) is the CANONICAL source for Delia tool usage
+- Agent-specific files (CLAUDE.md, .gemini/instructions.md, etc.) extend the canonical
+  content with agent-specific guidance
+- Playbook bullets are embedded for subagents that lack MCP access
+
 ALL major AI coding agents now support MCP:
 - Claude Code, Gemini, GitHub Copilot, VS Code, Cursor, Windsurf
-
-Each agent gets its own instruction file with agent-specific guidance for using
-Delia's MCP tools (get_playbook, report_feedback, etc.).
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -23,33 +27,130 @@ import structlog
 log = structlog.get_logger()
 
 
-# Agent-specific metadata
+# Agent-specific metadata and customizations
 AGENT_INFO = {
     "claude_root": {
         "name": "Claude Code",
         "mcp_config": "Add to .claude/settings.json or use `claude mcp add`",
+        "specific_guidance": """
+## Claude Code Specific Features
+
+### Hooks Support
+Claude Code supports hooks that can inject context automatically:
+- Pre-tool hooks can add playbook bullets before file operations
+- Post-tool hooks can trigger feedback collection
+
+### Task Subagents
+When spawning Task subagents, they may not have MCP access. The playbook bullets
+embedded below ensure subagents still benefit from Delia guidance.
+
+### Slash Commands
+Use `/delia` commands if configured in your Claude Code setup.
+""",
     },
     "claude_dir": {
         "name": "Claude Code",
         "mcp_config": "Add to .claude/settings.json or use `claude mcp add`",
+        "specific_guidance": "",  # Same as claude_root, shares the guidance
     },
     "gemini": {
         "name": "Google Gemini",
         "mcp_config": "Configure in Gemini Code Assist settings",
+        "specific_guidance": """
+## Gemini Specific Notes
+
+### Context Window
+Gemini has a large context window. However, still prefer LSP tools over reading
+entire files to maintain efficiency and reduce noise.
+
+### MCP Integration
+Ensure the Delia MCP server is configured in your Gemini Code Assist settings.
+""",
     },
     "copilot": {
         "name": "GitHub Copilot",
         "mcp_config": "Configure in VS Code settings.json under github.copilot",
+        "specific_guidance": """
+## GitHub Copilot Specific Notes
+
+### MCP Configuration
+Add Delia to your VS Code settings:
+```json
+{
+  "github.copilot.chat.experimental.mcpServers": {
+    "delia": {
+      "command": "delia",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+### Workspace Context
+Copilot automatically includes workspace context. Use Delia's LSP tools
+for precise navigation beyond what Copilot indexes.
+""",
     },
     "cursor": {
         "name": "Cursor",
         "mcp_config": "Add to .cursor/mcp.json",
+        "specific_guidance": """
+## Cursor Specific Notes
+
+### MCP Configuration
+Add to `.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "delia": {
+      "command": "delia",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+### Composer Integration
+When using Composer for multi-file edits, call `auto_context` first to
+ensure you have the right playbook bullets for the task.
+""",
     },
     "windsurf": {
         "name": "Windsurf",
         "mcp_config": "Add to ~/.codeium/windsurf/mcp_config.json",
+        "specific_guidance": """
+## Windsurf Specific Notes
+
+### Cascade Flows
+When using Cascade for multi-step workflows, ensure each step calls
+the appropriate Delia checkpoint tools.
+
+### MCP Configuration
+Configure in `~/.codeium/windsurf/mcp_config.json`.
+""",
     },
 }
+
+
+def get_mcp_instructions_path() -> Path:
+    """Get the path to the canonical mcp_instructions.md file."""
+    # This file lives in the delia package
+    return Path(__file__).parent / "mcp_instructions.md"
+
+
+def load_mcp_instructions() -> str:
+    """
+    Load the canonical Delia MCP instructions.
+
+    This is the single source of truth for how to use Delia tools.
+    All agent instruction files should include this content.
+    """
+    path = get_mcp_instructions_path()
+    if path.exists():
+        return path.read_text()
+    else:
+        log.warning("mcp_instructions_not_found", path=str(path))
+        return ""
 
 
 def load_embedded_playbook_bullets(project_root: Path) -> str:
@@ -57,7 +158,7 @@ def load_embedded_playbook_bullets(project_root: Path) -> str:
     Load and format playbook bullets for embedding into instruction files.
 
     This enables subagents (which don't have MCP access) to still benefit
-    from ACE Framework guidance by having the bullets embedded directly.
+    from Delia Framework guidance by having the bullets embedded directly.
 
     Returns:
         Formatted markdown string with embedded bullets
@@ -71,16 +172,18 @@ def load_embedded_playbook_bullets(project_root: Path) -> str:
         return ""
 
     lines = [
-        "## PROJECT PLAYBOOK (Auto-loaded)",
         "",
-        "These are learned strategies from this project. Apply them to relevant tasks:",
+        "---",
+        "",
+        "## PROJECT PLAYBOOK (Auto-embedded)",
+        "",
+        "These are learned strategies from this project. Apply them to relevant tasks.",
+        "For the latest bullets, use `auto_context()` or read `.delia/playbooks/*.json` directly.",
         "",
     ]
 
     # Priority order for task types
     task_types = ["coding", "testing", "architecture", "debugging", "project", "git", "security", "deployment", "api", "performance"]
-
-    import json
 
     for task_type in task_types:
         playbook_path = playbooks_dir / f"{task_type}.json"
@@ -90,6 +193,11 @@ def load_embedded_playbook_bullets(project_root: Path) -> str:
         try:
             with open(playbook_path) as f:
                 data = json.load(f)
+
+            # Handle both formats: array of bullets or object with "bullets" key
+            if isinstance(data, list):
+                bullets = data
+            else:
                 bullets = data.get("bullets", [])
 
             if not bullets:
@@ -98,7 +206,7 @@ def load_embedded_playbook_bullets(project_root: Path) -> str:
             # Sort by utility score, take top 5
             sorted_bullets = sorted(
                 bullets,
-                key=lambda b: b.get("utility_score", 0.5),
+                key=lambda b: b.get("utility_score", 0.5) if isinstance(b, dict) else 0.5,
                 reverse=True
             )[:5]
 
@@ -113,7 +221,7 @@ def load_embedded_playbook_bullets(project_root: Path) -> str:
         except (json.JSONDecodeError, IOError):
             continue
 
-    if len(lines) <= 3:  # Only header lines, no bullets
+    if len(lines) <= 8:  # Only header lines, no bullets
         return ""
 
     return "\n".join(lines)
@@ -122,155 +230,67 @@ def load_embedded_playbook_bullets(project_root: Path) -> str:
 def generate_agent_instructions(
     agent_id: str,
     project_name: str,
-    project_rules: str,
-    project_overview: str = "",
+    mcp_instructions: str,
     embedded_bullets: str = "",
 ) -> str:
     """
     Generate agent-specific instruction content.
 
-    Each agent gets its own instructions, NOT a copy of CLAUDE.md.
-    All agents support MCP and can use Delia's tools.
+    Each agent gets:
+    1. The canonical mcp_instructions.md content (Delia tool usage)
+    2. Agent-specific guidance (hooks, MCP config, etc.)
+    3. Embedded playbook bullets (for subagent fallback)
 
     Args:
         agent_id: The agent identifier (e.g., 'gemini', 'copilot')
         project_name: Name of the project
-        project_rules: Project-specific rules to include
-        project_overview: Optional project overview section
+        mcp_instructions: The canonical Delia instructions content
         embedded_bullets: Pre-loaded playbook bullets for subagent access
 
     Returns:
-        Agent-specific instruction content
+        Complete agent-specific instruction content
     """
-    agent = AGENT_INFO.get(agent_id, {"name": "AI Assistant", "mcp_config": "Configure MCP server"})
+    agent = AGENT_INFO.get(agent_id, {"name": "AI Assistant", "mcp_config": "Configure MCP server", "specific_guidance": ""})
 
-    content = f"""# {project_name} Development Instructions
+    # Start with project header
+    content = f"""# {project_name} - AI Coding Instructions
 
-This file provides guidance to {agent['name']} when working with this repository.
+This file provides guidance for {agent['name']} when working with this repository.
 
----
-
-## Delia ACE Framework
-
-This project uses Delia for AI-assisted coding. Delia provides project-specific
-playbooks with learned strategies, patterns, and guidance.
-
-### MCP Configuration
-
-To enable Delia tools, configure the MCP server:
-- {agent['mcp_config']}
-- Server: `delia serve` or `uvx delia serve`
-
-### Using Playbook Guidance
-
-**Before starting a task**, query for relevant guidance:
-
-```
-mcp__delia__get_playbook(task_type="coding")
-mcp__delia__get_project_context()
-```
-
-**After completing a task**, report feedback:
-
-```
-mcp__delia__report_feedback(bullet_id="strat-xxx", task_type="coding", helpful=True)
-```
+**MCP Configuration**: {agent['mcp_config']}
 
 ---
 
 """
 
-    # Embed playbook bullets for subagent access
-    if embedded_bullets:
-        content += embedded_bullets + "\n---\n\n"
+    # Add the canonical Delia instructions
+    content += mcp_instructions
 
-    # Add subagent fallback instructions
-    content += """## Subagent Fallback (No MCP Access)
+    # Add agent-specific guidance if any
+    specific = agent.get("specific_guidance", "").strip()
+    if specific:
+        content += f"\n\n---\n\n{specific}"
+
+    # Add subagent fallback section
+    content += """
+
+---
+
+## Subagent Fallback (No MCP Access)
 
 If running as a subagent without MCP tool access, read `.delia/` files directly:
 - `.delia/playbooks/*.json` - Task-specific bullets (coding, testing, etc.)
 - `.delia/memories/*.md` - Persistent project knowledge
 - `.delia/project_summary.json` - Project overview
 
-The playbook bullets above are auto-embedded, but for the latest, read the files.
-
----
-
+The playbook bullets below are auto-embedded for convenience.
 """
 
-    content += project_rules
-
-    if project_overview:
-        content += f"\n---\n\n## Project Overview\n\n{project_overview}\n"
+    # Add embedded bullets
+    if embedded_bullets:
+        content += embedded_bullets
 
     return content
-
-
-def extract_project_rules(claude_md_content: str) -> tuple[str, str, str]:
-    """
-    Extract project-specific rules from CLAUDE.md content.
-
-    Separates:
-    - Project name (from first heading)
-    - Critical rules section
-    - Project overview section
-
-    Returns:
-        Tuple of (project_name, rules_section, overview_section)
-    """
-    lines = claude_md_content.split('\n')
-
-    # Extract project name from first heading
-    project_name = "Project"
-    for line in lines:
-        if line.startswith('# '):
-            # Extract name, removing " Development Instructions" suffix if present
-            project_name = line[2:].replace(' Development Instructions', '').strip()
-            break
-
-    # Find key sections
-    in_rules = False
-    in_overview = False
-    rules_lines = []
-    overview_lines = []
-
-    for i, line in enumerate(lines):
-        # Start of critical rules section
-        if 'CRITICAL RULES' in line.upper() or 'INLINED CRITICAL RULES' in line.upper():
-            in_rules = True
-            in_overview = False
-            continue
-
-        # Start of project overview section
-        if line.startswith('## Project Overview') or line.startswith('## Overview'):
-            in_overview = True
-            in_rules = False
-            continue
-
-        # End of section on next major heading
-        if line.startswith('## ') and (in_rules or in_overview):
-            if in_rules:
-                in_rules = False
-            if in_overview:
-                in_overview = False
-            continue
-
-        # Collect lines
-        if in_rules:
-            rules_lines.append(line)
-        if in_overview:
-            overview_lines.append(line)
-
-    rules = '\n'.join(rules_lines).strip()
-    overview = '\n'.join(overview_lines).strip()
-
-    # If no rules found, use a default
-    if not rules:
-        rules = "## Critical Rules\n\n- Follow project coding standards\n- Write tests for new functionality\n- No hardcoded secrets"
-    else:
-        rules = "## Critical Rules\n\n" + rules
-
-    return project_name, rules, overview
 
 
 def detect_ai_agents(project_root: Path) -> dict[str, dict[str, Any]]:
@@ -343,23 +363,61 @@ def detect_ai_agents(project_root: Path) -> dict[str, dict[str, Any]]:
     return detected
 
 
+def extract_project_name(project_root: Path) -> str:
+    """
+    Extract project name from the project root.
+
+    Tries:
+    1. pyproject.toml [project].name
+    2. package.json name
+    3. Directory name
+    """
+    # Try pyproject.toml
+    pyproject = project_root / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            import tomllib
+            with open(pyproject, "rb") as f:
+                data = tomllib.load(f)
+                name = data.get("project", {}).get("name")
+                if name:
+                    return name.replace("-", " ").replace("_", " ").title()
+        except Exception:
+            pass
+
+    # Try package.json
+    package_json = project_root / "package.json"
+    if package_json.exists():
+        try:
+            with open(package_json) as f:
+                data = json.load(f)
+                name = data.get("name")
+                if name:
+                    return name.replace("-", " ").replace("_", " ").title()
+        except Exception:
+            pass
+
+    # Fall back to directory name
+    return project_root.name.replace("-", " ").replace("_", " ").title()
+
+
 def sync_agent_instruction_files(
     project_root: Path,
-    content: str,
+    content: str | None = None,
     force: bool = False,
 ) -> tuple[list[str], dict[str, dict[str, Any]]]:
     """
     Sync instruction content to all detected AI coding assistant files.
 
     Strategy:
-    - CLAUDE.md at root gets the full content (primary source of truth)
-    - Other agents get agent-specific instructions with embedded playbook bullets
-    - Embedded bullets enable subagents (which lack MCP access) to benefit from ACE
+    - Load canonical content from mcp_instructions.md
+    - Generate agent-specific files with embedded playbook bullets
+    - Embedded bullets enable subagents (which lack MCP access) to benefit from Delia
     - Returns list of files written and detection info
 
     Args:
         project_root: Path to the project root directory
-        content: The CLAUDE.md content (primary source of truth)
+        content: Optional override content (if None, loads from mcp_instructions.md)
         force: If True, create all agent directories and files
 
     Returns:
@@ -370,11 +428,16 @@ def sync_agent_instruction_files(
     files_written = []
     detected_agents = detect_ai_agents(project_root)
 
-    # Extract project info from CLAUDE.md content for generating agent-specific files
-    project_name, project_rules, project_overview = extract_project_rules(content)
+    # Load canonical instructions
+    mcp_instructions = content if content else load_mcp_instructions()
+    if not mcp_instructions:
+        log.warning("no_mcp_instructions", msg="Cannot sync without mcp_instructions.md")
+        return files_written, detected_agents
+
+    # Extract project name
+    project_name = extract_project_name(project_root)
 
     # Load embedded playbook bullets for subagent access
-    # This enables agents/subagents without MCP to still benefit from ACE guidance
     embedded_bullets = load_embedded_playbook_bullets(project_root)
 
     # Agents to sync
@@ -393,7 +456,7 @@ def sync_agent_instruction_files(
 
         file_path = agent["path"]
 
-        # Decision logic - all agents treated equally:
+        # Decision logic:
         # Write if file exists (update) OR if dir/indicator exists (agent is configured)
         should_write = False
         if agent_id == "claude_root":
@@ -416,25 +479,13 @@ def sync_agent_instruction_files(
             if not agent["dir"].exists():
                 agent["dir"].mkdir(parents=True, exist_ok=True)
 
-            # Per-agent content generation:
-            # - Claude agents: Full content + embedded bullets for file-reading fallback
-            #   (Claude Code also has ace-task-hook.py for dynamic Task injection)
-            # - Other agents: Agent-specific instructions with embedded bullets
-            #   (No hook mechanism, so embedding is their ONLY way to get ACE context)
-            if agent_id in ("claude_root", "claude_dir"):
-                # Claude: Keep full content, append embedded bullets section
-                agent_content = content
-                if embedded_bullets:
-                    agent_content += f"\n\n---\n\n{embedded_bullets}"
-            else:
-                # Other agents: Generate agent-specific instructions with embedded bullets
-                agent_content = generate_agent_instructions(
-                    agent_id=agent_id,
-                    project_name=project_name,
-                    project_rules=project_rules,
-                    project_overview=project_overview,
-                    embedded_bullets=embedded_bullets,
-                )
+            # Generate agent-specific content
+            agent_content = generate_agent_instructions(
+                agent_id=agent_id,
+                project_name=project_name,
+                mcp_instructions=mcp_instructions,
+                embedded_bullets=embedded_bullets,
+            )
 
             file_path.write_text(agent_content)
             files_written.append(str(file_path.relative_to(project_root)))

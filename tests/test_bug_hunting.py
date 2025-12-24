@@ -111,7 +111,7 @@ class TestValidationSecurityBugs:
 
     def test_path_traversal_variants(self):
         """Test various path traversal bypass attempts."""
-        from delia.mcp_server import validate_file_path
+        from delia.validation import validate_file_path
 
         traversal_attempts = [
             "../../../etc/passwd",
@@ -136,7 +136,7 @@ class TestValidationSecurityBugs:
 
     def test_content_size_boundary(self):
         """Test content size exactly at boundaries."""
-        from delia.mcp_server import validate_content, MAX_CONTENT_LENGTH
+        from delia.validation import validate_content, MAX_CONTENT_LENGTH
 
         # Exactly at limit
         content = "x" * MAX_CONTENT_LENGTH
@@ -150,7 +150,7 @@ class TestValidationSecurityBugs:
 
     def test_unicode_byte_counting_bug(self):
         """Unicode should be counted as bytes, not characters."""
-        from delia.mcp_server import validate_content, MAX_CONTENT_LENGTH
+        from delia.validation import validate_content, MAX_CONTENT_LENGTH
 
         # 4-byte emoji repeated
         emoji = "🍉"  # 4 bytes in UTF-8
@@ -340,7 +340,7 @@ class TestTokenCountingBugs:
 
     def test_empty_and_whitespace(self):
         """Edge cases in token counting."""
-        from delia.mcp_server import count_tokens, estimate_tokens
+        from delia.tokens import count_tokens, estimate_tokens
 
         # Empty
         assert count_tokens("") == 0
@@ -355,7 +355,7 @@ class TestTokenCountingBugs:
 
     def test_very_long_content(self):
         """Very long content shouldn't cause memory issues."""
-        from delia.mcp_server import count_tokens, estimate_tokens
+        from delia.tokens import count_tokens, estimate_tokens
 
         # 1MB of text
         content = "word " * 200000
@@ -365,7 +365,7 @@ class TestTokenCountingBugs:
 
     def test_binary_content(self):
         """Binary-like content shouldn't crash."""
-        from delia.mcp_server import count_tokens
+        from delia.tokens import count_tokens
 
         # Random bytes as string
         content = "".join(chr(i % 256) for i in range(1000))
@@ -382,7 +382,7 @@ class TestCodeDetectionBugs:
 
     def test_polyglot_content(self):
         """Content that looks like multiple languages."""
-        from delia.mcp_server import detect_code_content
+        from delia.routing import detect_code_content
 
         # HTML with embedded JS and CSS
         polyglot = """
@@ -407,7 +407,7 @@ function init() {
 
     def test_minified_code(self):
         """Minified code detection."""
-        from delia.mcp_server import detect_code_content
+        from delia.routing import detect_code_content
 
         minified = 'function a(b){return b+1}var c=a(5);console.log(c);'
         is_code, confidence, reason = detect_code_content(minified)
@@ -416,7 +416,7 @@ function init() {
 
     def test_markdown_with_code_blocks(self):
         """Markdown with code blocks."""
-        from delia.mcp_server import detect_code_content
+        from delia.routing import detect_code_content
 
         markdown = """
 # README
@@ -473,7 +473,7 @@ class TestRaceConditions:
     async def test_stats_concurrent_updates(self):
         """Concurrent stats updates shouldn't lose data."""
         # This tests the thread safety of stats tracking via StatsService
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
 
         model_usage, task_stats, _, _ = stats_service.get_snapshot()
         initial_count = task_stats.get("review", 0)

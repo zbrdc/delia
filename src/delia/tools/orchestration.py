@@ -330,14 +330,14 @@ async def _compare_handler(
         output_parts = ["# Model Comparison\n"]
         
         for r in results:
-            status = "✓" if r["success"] else "✗"
+            status = "[OK]" if r["success"] else "[FAIL]"
             output_parts.append(f"## {status} {r['model']} ({r['elapsed_ms']}ms)\n")
             output_parts.append(f"{r['response']}\n")
         
         # Add synthesis if requested and we have multiple successful responses
         successful = [r for r in results if r["success"]]
         if include_synthesis and len(successful) >= 2:
-            output_parts.append("\n## 📊 Comparison Summary\n")
+            output_parts.append("\n## Comparison Summary\n")
             output_parts.append(f"Models compared: {', '.join(r['model'] for r in successful)}\n")
             output_parts.append(f"Total time: {sum(r['elapsed_ms'] for r in results)}ms\n")
         
@@ -478,7 +478,7 @@ async def _vote_handler(
                 elapsed_ms = int((time.time() - start_time) * 1000)
                 prob = VotingConsensus.voting_probability(k, 0.95)
                 
-                return f"""# ✓ K-Voting Consensus Reached
+                return f"""# K-Voting Consensus Reached
 
 {vote_result.winning_response}
 
@@ -505,7 +505,7 @@ async def _vote_handler(
         elapsed_ms = int((time.time() - start_time) * 1000)
         
         if best_response:
-            return f"""# ⚠ K-Voting (No Full Consensus)
+            return f"""# K-Voting (No Full Consensus)
 
 {best_response}
 

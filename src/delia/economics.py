@@ -407,7 +407,7 @@ class EconomicTracker:
 
         # Build display
         lines = []
-        medals = ["🥇", "🥈", "🥉"]
+        medals = ["1st", "2nd", "3rd"]
 
         for i, (model_id, totals) in enumerate(sorted_models[:10]):
             medal = medals[i] if i < 3 else f"{i+1:>2}."
@@ -423,13 +423,13 @@ class EconomicTracker:
         if len(sorted_models) > 10:
             lines.append(f"    ...and {len(sorted_models) - 10} more models")
 
-        return f"""💰 SAVINGS DASHBOARD
+        return f"""SAVINGS DASHBOARD
 ══════════════════════════════════════════════════
 Total Saved: ${total_savings:.2f}  |  Total Spent: ${total_cost:.2f}  |  Calls: {total_calls:,}
 
 {chr(10).join(lines) if lines else "No data yet - make some LLM calls!"}
 
-💡 Savings calculated vs {DEFAULT_BASELINE} (${CLOUD_BASELINE_COSTS[DEFAULT_BASELINE]}/1K tokens)
+Savings calculated vs {DEFAULT_BASELINE} (${CLOUD_BASELINE_COSTS[DEFAULT_BASELINE]}/1K tokens)
 """
 
     def _load(self) -> None:

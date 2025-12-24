@@ -10,26 +10,192 @@ without relying on the calling agent's file tools.
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import os
 import re
-import subprocess
 from pathlib import Path
-from typing import Optional
 
 import structlog
+from fastmcp import FastMCP
 
 from ..types import Workspace
+from .handlers import check_context_gate, check_checkpoint_gate
 
 log = structlog.get_logger()
 
 
-def _get_project_root() -> Path:
-    """Get the base directory for file operations.
+def register_file_tools(mcp: FastMCP):
+    """Register file operation tools with FastMCP."""
 
-    Uses current working directory only - no walking up directories
-    for security and predictability.
-    """
+    @mcp.tool()
+    async def read_file(
+        path: str,
+        start_line: int = 1,
+        end_line: int | None = None,
+    ) -> str:
+        """
+        Read file contents with optional line range.
+
+        Args:
+            path: Path to the file (relative to project root or absolute)
+            start_line: Starting line number (1-indexed, default 1)
+            end_line: Ending line number (inclusive, default None for all)
+
+        Returns:
+            File contents with line numbers
+        """
+        return await read_file_impl(path, start_line, end_line)
+
+    @mcp.tool()
+    async def write_file(
+        path: str,
+        content: str,
+        create_dirs: bool = True,
+    ) -> str:
+        """
+        Write content to a file.
+
+        Args:
+            path: Path to the file (relative to project root or absolute)
+            content: Content to write
+            create_dirs: Create parent directories if needed (default True)
+
+        Returns:
+            Success message or error
+        """
+        # Context Gating
+        gate_error = check_context_gate("write_file", path)
+        if gate_error:
+            return gate_error
+
+        # Checkpoint Gating
+        checkpoint_error = check_checkpoint_gate("write_file", path)
+        if checkpoint_error:
+            return checkpoint_error
+
+        return await write_file_impl(path, content, create_dirs)
+
+    @mcp.tool()
+    async def edit_file(
+        path: str,
+        old_text: str,
+        new_text: str,
+    ) -> str:
+        """
+        Edit a file by replacing text.
+
+        Args:
+            path: Path to the file
+            old_text: Text to find and replace
+            new_text: Replacement text
+
+        Returns:
+            Success message with number of replacements or error
+        """
+        # Context Gating
+        gate_error = check_context_gate("edit_file", path)
+        if gate_error:
+            return gate_error
+
+        # Checkpoint Gating
+        checkpoint_error = check_checkpoint_gate("edit_file", path)
+        if checkpoint_error:
+            return checkpoint_error
+
+        return await edit_file_impl(path, old_text, new_text)
+
+    @mcp.tool()
+    async def list_dir(
+        path: str = ".",
+        recursive: bool = False,
+        pattern: str | None = None,
+    ) -> str:
+        """
+        List directory contents.
+
+        Args:
+            path: Directory path (default current directory)
+            recursive: List recursively (default False)
+            pattern: Glob pattern to filter files (e.g., "*.py")
+
+        Returns:
+            List of files and directories
+        """
+        return await list_dir_impl(path, recursive, pattern)
+
+    @mcp.tool()
+    async def find_file(
+        pattern: str,
+        path: str = ".",
+    ) -> str:
+        """
+        Find files matching a glob pattern.
+
+        Args:
+            pattern: Glob pattern (e.g., "**/*.py", "src/**/test_*.py")
+            path: Base directory to search from
+
+        Returns:
+            List of matching file paths
+        """
+        return await find_file_impl(pattern, path)
+
+    @mcp.tool()
+    async def search_for_pattern(
+        pattern: str,
+        path: str = ".",
+        file_pattern: str | None = None,
+        context_lines: int = 0,
+    ) -> str:
+        """
+        Search for a regex pattern in files (grep-like).
+
+        Args:
+            pattern: Regex pattern to search for
+            path: Directory or file to search in
+            file_pattern: Glob pattern to filter files (e.g., "*.py")
+            context_lines: Number of context lines to show (default 0)
+
+        Returns:
+            Matching lines with file paths and line numbers
+        """
+        return await search_for_pattern_impl(pattern, path, file_pattern, context_lines)
+
+    @mcp.tool()
+    async def delete_file(path: str) -> str:
+        """
+        Delete a file.
+
+        Args:
+            path: Path to the file to delete
+
+        Returns:
+            Success message or error
+        """
+        # Checkpoint Gating
+        checkpoint_error = check_checkpoint_gate("delete_file", path)
+        if checkpoint_error:
+            return checkpoint_error
+
+        return await delete_file_impl(path)
+
+    @mcp.tool()
+    async def create_directory(path: str) -> str:
+        """
+        Create a directory.
+
+        Args:
+            path: Path to the directory to create
+
+        Returns:
+            Success message or error
+        """
+        return await create_directory_impl(path)
+
+
+def _get_project_root() -> Path:
+    """Get the base directory for file operations."""
     return Path.cwd()
 
 
@@ -69,24 +235,24 @@ def _is_safe_path(path: Path, workspace: Workspace | None = None) -> tuple[bool,
     return True, ""
 
 
-async def read_file(
+# Implementations
+
+async def read_file_impl(
     path: str,
     start_line: int = 1,
     end_line: int | None = None,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Read file contents with optional line range.
+    return await asyncio.to_thread(_read_file_sync, path, start_line, end_line, workspace=workspace)
 
-    Args:
-        path: Path to the file (relative to workspace or absolute)
-        start_line: Starting line number (1-indexed, default 1)
-        end_line: Ending line number (inclusive, default None for all)
-        workspace: Workspace context
-
-    Returns:
-        File contents with line numbers
-    """
+def _read_file_sync(
+    path: str,
+    start_line: int = 1,
+    end_line: int | None = None,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
     try:
         resolved = _resolve_path(path, workspace)
         safe, error = _is_safe_path(resolved, workspace)
@@ -121,24 +287,22 @@ async def read_file(
         return f"Error reading file: {e}"
 
 
-async def write_file(
+async def write_file_impl(
     path: str,
     content: str,
     create_dirs: bool = True,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Write content to a file.
+    return await asyncio.to_thread(_write_file_sync, path, content, create_dirs, workspace=workspace)
 
-    Args:
-        path: Path to the file (relative to workspace or absolute)
-        content: Content to write
-        create_dirs: Create parent directories if needed (default True)
-        workspace: Workspace context
-
-    Returns:
-        Success message or error
-    """
+def _write_file_sync(
+    path: str,
+    content: str,
+    create_dirs: bool = True,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
     try:
         resolved = _resolve_path(path, workspace)
         safe, error = _is_safe_path(resolved, workspace)
@@ -150,31 +314,29 @@ async def write_file(
 
         resolved.write_text(content, encoding="utf-8")
         log.info("file_written", path=str(resolved), bytes=len(content))
-        return f"✓ Wrote {len(content)} bytes to {path}"
+        return f"Wrote {len(content)} bytes to {path}"
 
     except Exception as e:
         log.error("write_file_failed", path=path, error=str(e))
         return f"Error writing file: {e}"
 
 
-async def edit_file(
+async def edit_file_impl(
     path: str,
     old_text: str,
     new_text: str,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Edit a file by replacing text.
+    return await asyncio.to_thread(_edit_file_sync, path, old_text, new_text, workspace=workspace)
 
-    Args:
-        path: Path to the file
-        old_text: Text to find and replace
-        new_text: Replacement text
-        workspace: Workspace context
-
-    Returns:
-        Success message with number of replacements or error
-    """
+def _edit_file_sync(
+    path: str,
+    old_text: str,
+    new_text: str,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
     try:
         resolved = _resolve_path(path, workspace)
         safe, error = _is_safe_path(resolved, workspace)
@@ -196,31 +358,29 @@ async def edit_file(
         resolved.write_text(new_content, encoding="utf-8")
 
         log.info("file_edited", path=str(resolved), replacements=count)
-        return f"✓ Replaced {count} occurrence(s) in {path}"
+        return f"Replaced {count} occurrence(s) in {path}"
 
     except Exception as e:
         log.error("edit_file_failed", path=path, error=str(e))
         return f"Error editing file: {e}"
 
 
-async def list_dir(
+async def list_dir_impl(
     path: str = ".",
     recursive: bool = False,
     pattern: str | None = None,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """List directory contents.
+    return await asyncio.to_thread(_list_dir_sync, path, recursive, pattern, workspace=workspace)
 
-    Args:
-        path: Directory path (default current directory)
-        recursive: List recursively (default False)
-        pattern: Glob pattern to filter files (e.g., "*.py")
-        workspace: Workspace context
-
-    Returns:
-        List of files and directories
-    """
+def _list_dir_sync(
+    path: str = ".",
+    recursive: bool = False,
+    pattern: str | None = None,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
     try:
         resolved = _resolve_path(path, workspace)
         safe, error = _is_safe_path(resolved, workspace)
@@ -267,22 +427,20 @@ async def list_dir(
         return f"Error listing directory: {e}"
 
 
-async def find_file(
+async def find_file_impl(
     pattern: str,
     path: str = ".",
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Find files matching a glob pattern.
+    return await asyncio.to_thread(_find_file_sync, pattern, path, workspace=workspace)
 
-    Args:
-        pattern: Glob pattern (e.g., "**/*.py", "src/**/test_*.py")
-        path: Base directory to search from
-        workspace: Workspace context
-
-    Returns:
-        List of matching file paths
-    """
+def _find_file_sync(
+    pattern: str,
+    path: str = ".",
+    *,
+    workspace: Workspace | None = None,
+) -> str:
     try:
         resolved = _resolve_path(path, workspace)
         safe, error = _is_safe_path(resolved, workspace)
@@ -314,7 +472,7 @@ async def find_file(
         return f"Error finding files: {e}"
 
 
-async def search_for_pattern(
+async def search_for_pattern_impl(
     pattern: str,
     path: str = ".",
     file_pattern: str | None = None,
@@ -322,18 +480,16 @@ async def search_for_pattern(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Search for a regex pattern in files (grep-like).
+    return await asyncio.to_thread(_search_for_pattern_sync, pattern, path, file_pattern, context_lines, workspace=workspace)
 
-    Args:
-        pattern: Regex pattern to search for
-        path: Directory or file to search in
-        file_pattern: Glob pattern to filter files (e.g., "*.py")
-        context_lines: Number of context lines to show (default 0)
-        workspace: Workspace context
-
-    Returns:
-        Matching lines with file paths and line numbers
-    """
+def _search_for_pattern_sync(
+    pattern: str,
+    path: str = ".",
+    file_pattern: str | None = None,
+    context_lines: int = 0,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
     try:
         resolved = _resolve_path(path, workspace)
         safe, error = _is_safe_path(resolved, workspace)
@@ -419,20 +575,18 @@ async def search_for_pattern(
         return f"Error searching: {e}"
 
 
-async def delete_file(
+async def delete_file_impl(
     path: str,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Delete a file.
+    return await asyncio.to_thread(_delete_file_sync, path, workspace=workspace)
 
-    Args:
-        path: Path to the file to delete
-        workspace: Workspace context
-
-    Returns:
-        Success message or error
-    """
+def _delete_file_sync(
+    path: str,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
     try:
         resolved = _resolve_path(path, workspace)
         safe, error = _is_safe_path(resolved, workspace)
@@ -447,27 +601,25 @@ async def delete_file(
 
         resolved.unlink()
         log.info("file_deleted", path=str(resolved))
-        return f"✓ Deleted {path}"
+        return f"Deleted {path}"
 
     except Exception as e:
         log.error("delete_file_failed", path=path, error=str(e))
         return f"Error deleting file: {e}"
 
 
-async def create_directory(
+async def create_directory_impl(
     path: str,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Create a directory.
+    return await asyncio.to_thread(_create_directory_sync, path, workspace=workspace)
 
-    Args:
-        path: Path to the directory to create
-        workspace: Workspace context
-
-    Returns:
-        Success message or error
-    """
+def _create_directory_sync(
+    path: str,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
     try:
         resolved = _resolve_path(path, workspace)
         safe, error = _is_safe_path(resolved, workspace)
@@ -476,29 +628,27 @@ async def create_directory(
 
         resolved.mkdir(parents=True, exist_ok=True)
         log.info("directory_created", path=str(resolved))
-        return f"✓ Created directory {path}"
+        return f"Created directory {path}"
 
     except Exception as e:
         log.error("create_directory_failed", path=path, error=str(e))
         return f"Error creating directory: {e}"
 
 
+# Bulk operations
 async def read_files(
     paths: list[str],
     *,
     workspace: Workspace | None = None,
 ) -> dict[str, str]:
-    """Read multiple files in one call.
+    """Read multiple files in one call."""
+    return await asyncio.to_thread(_read_files_sync, paths, workspace=workspace)
 
-    More efficient than calling read_file N times.
-
-    Args:
-        paths: List of file paths to read
-        workspace: Workspace context
-
-    Returns:
-        Dict mapping path to content (or error message)
-    """
+def _read_files_sync(
+    paths: list[str],
+    *,
+    workspace: Workspace | None = None,
+) -> dict[str, str]:
     results = {}
     for path in paths:
         try:
@@ -509,11 +659,11 @@ async def read_files(
                 continue
 
             if not resolved.exists():
-                results[path] = f"Error: File not found"
+                results[path] = "Error: File not found"
                 continue
 
             if not resolved.is_file():
-                results[path] = f"Error: Not a file"
+                results[path] = "Error: Not a file"
                 continue
 
             content = resolved.read_text(encoding="utf-8", errors="replace")
@@ -534,21 +684,14 @@ async def edit_files(
     *,
     workspace: Workspace | None = None,
 ) -> dict[str, str]:
-    """Apply multiple edits across files atomically.
+    """Apply multiple edits across files atomically."""
+    return await asyncio.to_thread(_edit_files_sync, edits, workspace=workspace)
 
-    Each edit is a dict with: path, old_text, new_text
-    All edits are validated before any are applied.
-
-    Args:
-        edits: List of edit dicts, each with:
-            - path: File path
-            - old_text: Text to find
-            - new_text: Text to replace with
-        workspace: Workspace context
-
-    Returns:
-        Dict mapping path to result message
-    """
+def _edit_files_sync(
+    edits: list[dict],
+    *,
+    workspace: Workspace | None = None,
+) -> dict[str, str]:
     # Phase 1: Validate all edits
     validated = []
     results = {}
@@ -597,9 +740,19 @@ async def edit_files(
         try:
             new_content = edit["content"].replace(edit["old_text"], edit["new_text"])
             edit["resolved"].write_text(new_content, encoding="utf-8")
-            results[edit["path"]] = f"✓ Replaced {edit['count']} occurrence(s)"
+            results[edit["path"]] = f"Replaced {edit['count']} occurrence(s)"
             log.info("file_edited", path=edit["path"], replacements=edit["count"])
         except Exception as e:
             results[edit["path"]] = f"Error applying: {e}"
 
     return results
+
+# Expose implementations as public functions for internal usage
+read_file = read_file_impl
+write_file = write_file_impl
+edit_file = edit_file_impl
+list_dir = list_dir_impl
+find_file = find_file_impl
+search_for_pattern = search_for_pattern_impl
+delete_file = delete_file_impl
+create_directory = create_directory_impl

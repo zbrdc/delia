@@ -73,7 +73,22 @@ class SystemPromptGenerator:
         if orch_mode == OrchestrationMode.VOTING and getattr(intent, 'k_votes', None):
             prompt += f"\n\nNote: Your response will be validated for consistency. Target consensus: {intent.k_votes} matching responses needed."
 
+        # Add Strategic Tool Guidance (Modular Injection)
+        guidance = self._get_strategic_guidance(intent.model_role)
+        if guidance:
+            prompt += f"\n\n### STRATEGIC TOOL GUIDANCE\n{guidance}"
+
         return prompt
+
+    def _get_strategic_guidance(self, role: ModelRole) -> str | None:
+        """Get role-specific tool usage strategies (Professional Agent patterns)."""
+        guidance = {
+            ModelRole.ARCHITECT: "- Use `lsp_get_symbols` on entry points to map out the system architecture.\n- Use `find_file` to locate configuration and manifest files before planning migrations.",
+            ModelRole.DEBUGGER: "- Use `lsp_find_references` to track how an error-producing variable propagates through the system.\n- Use `search_for_pattern` to find similar error-handling blocks in other modules.",
+            ModelRole.CODE_REVIEWER: "- Use `lsp_get_symbols` to ensure the new code follows the structural patterns of the existing file.\n- Use `lsp_hover` to verify type safety and documentation completeness.",
+            ModelRole.EXECUTOR: "- ALWAYS use `lsp_find_references` before renaming or deleting symbols.\n- Use `think_about_task_adherence()` before committing code changes.",
+        }
+        return guidance.get(role)
     
     def _map_orchestration_mode(self, mode) -> OrchestrationMode:
         """Map from result.OrchestrationMode to prompts.OrchestrationMode."""

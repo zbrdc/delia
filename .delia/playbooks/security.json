@@ -1,22 +1,55 @@
-[
-  {
-    "content": "Never log or expose API keys",
-    "section": "general_strategies",
-    "source": "learned"
-  },
-  {
-    "content": "Validate all file paths to prevent traversal",
-    "section": "general_strategies",
-    "source": "learned"
-  },
-  {
-    "content": "MCP tools run with user permissions - be cautious with file ops",
-    "section": "general_strategies",
-    "source": "learned"
-  },
-  {
-    "content": "Settings files may contain sensitive backend URLs",
-    "section": "general_strategies",
-    "source": "learned"
-  }
-]
+{
+  "schema_version": 2,
+  "task_type": "security",
+  "updated_at": "2025-12-23T21:59:58.426160",
+  "bullets": [
+    {
+      "content": "Never log or expose API keys",
+      "id": "strat-59236063",
+      "section": "general_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-23T21:59:58.426139",
+      "last_used": null,
+      "source_task": null,
+      "source": "learned",
+      "utility_score": 0.5
+    },
+    {
+      "content": "Validate all file paths to prevent traversal",
+      "id": "strat-e00a848f",
+      "section": "general_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-23T21:59:58.426146",
+      "last_used": null,
+      "source_task": null,
+      "source": "learned",
+      "utility_score": 0.5
+    },
+    {
+      "content": "MCP tools run with user permissions - be cautious with file ops",
+      "id": "strat-b46714d9",
+      "section": "general_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-23T21:59:58.426149",
+      "last_used": null,
+      "source_task": null,
+      "source": "learned",
+      "utility_score": 0.5
+    },
+    {
+      "content": "Settings files may contain sensitive backend URLs",
+      "id": "strat-99c669cf",
+      "section": "general_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-23T21:59:58.426153",
+      "last_used": null,
+      "source_task": null,
+      "source": "learned",
+      "utility_score": 0.5
+    }
+  ]
+}

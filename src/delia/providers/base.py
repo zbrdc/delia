@@ -171,6 +171,7 @@ class LLMProvider(Protocol):
         tool_choice: str | None = None,
         temperature: float | None = None,
         grammar: str | None = None,
+        num_gpu: int | None = None,
     ) -> LLMResponse:
         """Call the LLM provider with the given parameters.
 
@@ -215,6 +216,7 @@ class LLMProvider(Protocol):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
         grammar: str | None = None,
+        num_gpu: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream response from the LLM provider token by token.
 

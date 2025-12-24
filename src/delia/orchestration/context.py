@@ -188,7 +188,7 @@ class ContextEngine:
             session_context: Previous conversation history
             include_project_overview: Include hierarchical code summary
             include_project_instructions: Auto-load DELIA.md project instructions
-            include_playbook_bullets: Auto-inject ACE playbook bullets (ENFORCED by default)
+            include_playbook_bullets: Auto-inject Delia playbook bullets (ENFORCED by default)
             include_smart_symbols: Auto-inject symbol outlines for mentioned files (default True)
         """
         parts = []
@@ -200,7 +200,7 @@ class ContextEngine:
                 parts.append(project_context)
                 log.debug("project_instructions_injected")
 
-        # 0.1 ACE PLAYBOOK BULLETS (Strategic Guidance - ENFORCED)
+        # 0.1 DELIA PLAYBOOK BULLETS (Strategic Guidance - ENFORCED)
         # This ensures playbook guidance is ALWAYS injected, not relying on agents to remember
         if include_playbook_bullets:
             try:
@@ -209,7 +209,7 @@ class ContextEngine:
                 playbook_content = pm.get_auto_injection_bullets(content)
                 if playbook_content:
                     parts.append(playbook_content)
-                    log.info("ace_playbook_bullets_injected", task_type=pm.detect_task_type(content))
+                    log.info("playbook_bullets_injected", task_type=pm.detect_task_type(content))
             except Exception as e:
                 log.debug("playbook_injection_failed", error=str(e))
 
@@ -237,7 +237,7 @@ class ContextEngine:
                     parts.append(f"### File: `{path}`\n```{lang_hint}\n{file_content}\n```")
                 log.info("context_files_loaded", count=len(file_contents))
 
-        # 2.5 Dynamic Windowing & Graph Neighbors (GraphRAG Dependency Mapping) 🌐
+        # 2.5 Dynamic Windowing & Graph Neighbors (GraphRAG Dependency Mapping)
         # Objective: Prioritize "Graph Neighbors" over "Recent History" for better structural awareness.
         if explicit_files:
             try:

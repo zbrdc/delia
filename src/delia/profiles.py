@@ -14,7 +14,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-ACE-inspired Model Profile Management.
+Delia Model Profile Management (inspired by Stanford ACE research).
 
 This module implements specialized model profiles for task-specific routing.
 Instead of always using large general-purpose models, profiles allow routing

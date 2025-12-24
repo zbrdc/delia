@@ -42,10 +42,10 @@ from ..delegation import (
     _delegate_impl,
 )
 
-from .handlers_ace import (
-    get_ace_tracker,
-    check_ace_gate,
-    inject_ace_reminder,
+from .handlers_enforcement import (
+    get_tracker,
+    check_context_gate,
+    inject_reminder,
     auto_trigger_reflection,
 )
 
@@ -67,10 +67,10 @@ async def think_impl(
     session_id: str | None = None,
 ) -> str:
     """Implementation of the think tool."""
-    # ACE Framework Enforcement
+    # Framework Enforcement
     project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "think")
+    tracker = get_tracker()
+    tracker.record_task_start(project_path, "think")
 
     container = get_container()
     if depth == "quick":
@@ -111,7 +111,7 @@ async def think_impl(
         project_path=project_path,
     )
 
-    return inject_ace_reminder(response_text, project_path)
+    return inject_reminder(response_text, project_path)
 
 
 async def batch_impl(
@@ -121,10 +121,10 @@ async def batch_impl(
     session_id: str | None = None,
 ) -> str:
     """Implementation of the batch tool."""
-    # ACE Framework Enforcement
+    # Framework Enforcement
     project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "batch")
+    tracker = get_tracker()
+    tracker.record_task_start(project_path, "batch")
 
     container = get_container()
     start_time = time.time()
@@ -191,7 +191,7 @@ async def batch_impl(
         project_path=project_path,
     )
 
-    return inject_ace_reminder(result, project_path)
+    return inject_reminder(result, project_path)
 
 
 async def delegate_tool_impl(
@@ -219,17 +219,17 @@ async def delegate_tool_impl(
     from ..orchestration.result import ModelRole
     from ..prompts import build_system_prompt
 
-    # ACE Gating: Require auto_context before delegation
+    # Context Gating: Require auto_context before delegation
     project_path = str(Path(file).parent) if file else str(Path.cwd())
-    gate_error = check_ace_gate("delegate", project_path)
+    gate_error = check_context_gate("delegate", project_path)
     if gate_error:
         return gate_error
 
     start_prewarm_task()
 
-    # ACE Framework Enforcement: Record task start
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, task)
+    # Framework Enforcement: Record task start
+    tracker = get_tracker()
+    tracker.record_task_start(project_path, task)
 
     if reliable:
         return await _delegate_with_voting(
@@ -359,8 +359,8 @@ async def delegate_tool_impl(
                 f"{full_response}\n\n---\n"
                 f"_[OK] {task} (streamed) | {tier} tier | {elapsed_ms}ms | {selected_model}_"
             )
-            return inject_ace_reminder(result, project_path)
-        return inject_ace_reminder(full_response, project_path)
+            return inject_reminder(result, project_path)
+        return inject_reminder(full_response, project_path)
 
     result = await _delegate_impl(
         task,
@@ -392,7 +392,7 @@ async def delegate_tool_impl(
         project_path=project_path,
     )
 
-    return inject_ace_reminder(result, project_path)
+    return inject_reminder(result, project_path)
 
 
 # =============================================================================
@@ -447,10 +447,10 @@ async def chain_impl(
     steps: str, session_id: str | None = None, continue_on_error: bool = False
 ) -> str:
     """Implementation of the chain tool."""
-    # ACE Framework Enforcement
+    # Framework Enforcement
     project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "chain")
+    tracker = get_tracker()
+    tracker.record_task_start(project_path, "chain")
 
     from ..task_chain import parse_chain_steps, execute_chain
     from ..delegation import _get_delegate_context
@@ -458,17 +458,17 @@ async def chain_impl(
     steps_list = parse_chain_steps(steps)
     ctx = _get_delegate_context()
     result = await execute_chain(steps_list, ctx, session_id, continue_on_error)
-    return inject_ace_reminder(json.dumps(result.to_dict(), indent=2), project_path)
+    return inject_reminder(json.dumps(result.to_dict(), indent=2), project_path)
 
 
 async def workflow_impl(
     definition: str, session_id: str | None = None, max_retries: int = 1
 ) -> str:
     """Implementation of the workflow tool."""
-    # ACE Framework Enforcement
+    # Framework Enforcement
     project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "workflow")
+    tracker = get_tracker()
+    tracker.record_task_start(project_path, "workflow")
 
     from ..task_workflow import parse_workflow_definition, execute_workflow
     from ..delegation import _get_delegate_context
@@ -476,7 +476,7 @@ async def workflow_impl(
     wf = parse_workflow_definition(definition)
     ctx = _get_delegate_context()
     result = await execute_workflow(wf, ctx, session_id, max_retries)
-    return inject_ace_reminder(json.dumps(result.to_dict(), indent=2), project_path)
+    return inject_reminder(json.dumps(result.to_dict(), indent=2), project_path)
 
 
 async def agent_impl(
@@ -489,10 +489,10 @@ async def agent_impl(
     workspace: str | None = None,
 ) -> str:
     """Implementation of the agent tool."""
-    # ACE Framework Enforcement
+    # Framework Enforcement
     project_path = str(Path.cwd())
-    ace_tracker = get_ace_tracker()
-    ace_tracker.record_task_start(project_path, "agent")
+    tracker = get_tracker()
+    tracker.record_task_start(project_path, "agent")
 
     from .agent import run_agent_loop, AgentConfig
     from .builtins import get_default_tools
@@ -516,4 +516,4 @@ async def agent_impl(
         config=config,
     )
 
-    return inject_ace_reminder(result.response, project_path)
+    return inject_reminder(result.response, project_path)

@@ -1,12 +1,12 @@
 # Copyright (C) 2024 Delia Contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-ACE Reflector: Task Outcome Analysis.
+Reflector: Task Outcome Analysis.
 
 Analyzes task execution outcomes to extract structured insights.
 Uses existing LLM infrastructure via delegation module.
 
-Based on ACE Framework research - separates evaluation/insight extraction
+Based on Stanford ACE research - separates evaluation/insight extraction
 from curation (handled by Curator).
 """
 
@@ -57,7 +57,7 @@ class ReflectionResult:
     raw_reasoning: str
 
 
-# Reflector prompt template (adapted from ACE paper Figure 10)
+# Reflector prompt template (adapted from Stanford ACE paper Figure 10)
 REFLECTOR_PROMPT = """You are an expert diagnostician analyzing a completed AI task.
 
 ## Task Context
@@ -105,7 +105,7 @@ Output ONLY valid JSON, no additional text."""
 
 class Reflector:
     """
-    ACE Reflector: Distills concrete insights from task executions.
+    Reflector: Distills concrete insights from task executions.
 
     The Reflector analyzes:
     1. Task outcome (success/failure)
