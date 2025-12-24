@@ -1,19 +1,19 @@
 {
   "schema_version": 2,
   "task_type": "api",
-  "updated_at": "2025-12-23T22:00:28.070273",
+  "updated_at": "2025-12-24T11:44:21.253994",
   "bullets": [
     {
       "content": "MCP tools follow Model Context Protocol specification",
       "id": "strat-766d14c4",
       "section": "general_strategies",
-      "helpful_count": 0,
+      "helpful_count": 1,
       "harmful_count": 0,
       "created_at": "2025-12-22T20:40:32.170455",
-      "last_used": null,
+      "last_used": "2025-12-24T11:44:21.253986",
       "source_task": null,
       "source": "learned",
-      "utility_score": 0.5
+      "utility_score": 1.0
     },
     {
       "content": "REST API uses FastAPI with automatic OpenAPI docs",
