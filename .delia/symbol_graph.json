@@ -21,14 +21,139 @@
     "symbols": [],
     "edge_summaries": {}
   },
-  "pyproject.toml": {
-    "mtime": 1766409006.1678283,
+  ".mcp.json": {
+    "mtime": 1766465036.6356366,
     "imports": [],
     "symbols": [],
     "edge_summaries": {}
   },
-  ".mcp.json": {
-    "mtime": 1766465036.6356366,
+  "smoke_test_internal.py": {
+    "mtime": 1766539460.2136266,
+    "imports": [
+      "sys",
+      "delia.tools.admin",
+      "asyncio",
+      "delia.container",
+      "os"
+    ],
+    "symbols": [
+      {
+        "name": "main",
+        "kind": "async_function",
+        "line": 12,
+        "file_path": "smoke_test_internal.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "check_logs.py": {
+    "mtime": 1766539501.5665414,
+    "imports": [
+      "sys",
+      "asyncio",
+      "pathlib",
+      "delia.paths",
+      "os"
+    ],
+    "symbols": [
+      {
+        "name": "main",
+        "kind": "function",
+        "line": 12,
+        "file_path": "check_logs.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "test_leakage.py": {
+    "mtime": 1766539900.6737807,
+    "imports": [
+      "sys",
+      "io",
+      "os",
+      "pathlib"
+    ],
+    "symbols": [
+      {
+        "name": "test_imports",
+        "kind": "function",
+        "line": 10,
+        "file_path": "test_leakage.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "testing.json": {
+    "mtime": 1766545158.6270783,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "api.json": {
+    "mtime": 1766550728.2426178,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "architecture.json": {
+    "mtime": 1766550728.2426493,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "coding.json": {
+    "mtime": 1766550728.2426493,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "debugging.json": {
+    "mtime": 1766550728.2427042,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "deployment.json": {
+    "mtime": 1766550728.2427323,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "git.json": {
+    "mtime": 1766550728.2427597,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "orchestration.json": {
+    "mtime": 1766550728.2427597,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "performance.json": {
+    "mtime": 1766550728.2428179,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "project.json": {
+    "mtime": 1766550728.2428458,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "security.json": {
+    "mtime": 1766550728.2428753,
+    "imports": [],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "pyproject.toml": {
+    "mtime": 1766583595.2446191,
     "imports": [],
     "symbols": [],
     "edge_summaries": {}
@@ -75,9 +200,9 @@
   "dashboard/visualize_index.py": {
     "mtime": 1766284688.9613836,
     "imports": [
+      "sys",
       "pathlib",
-      "json",
-      "sys"
+      "json"
     ],
     "symbols": [
       {
@@ -93,8 +218,8 @@
   "dashboard/test_architectural_awareness.py": {
     "mtime": 1766286744.2437594,
     "imports": [
-      "pathlib",
       "sys",
+      "pathlib",
       "asyncio"
     ],
     "symbols": [
@@ -121,7 +246,7 @@
     "edge_summaries": {}
   },
   ".claude/settings.local.json": {
-    "mtime": 1766536695.9338899,
+    "mtime": 1766587235.0271003,
     "imports": [],
     "symbols": [],
     "edge_summaries": {}
@@ -135,18 +260,18 @@
   "benchmarks/hf_runner.py": {
     "mtime": 1766257247.0478415,
     "imports": [
-      "random",
-      "asyncio",
-      "pathlib",
-      "typing",
-      "time",
-      "yaml",
-      "argparse",
-      "__future__",
-      "dataclasses",
       "sys",
+      "typing",
+      "asyncio",
       "json",
-      "re"
+      "pathlib",
+      "yaml",
+      "random",
+      "__future__",
+      "re",
+      "dataclasses",
+      "time",
+      "argparse"
     ],
     "symbols": [
       {
@@ -232,15 +357,15 @@
   "benchmarks/runner.py": {
     "mtime": 1766282176.9999418,
     "imports": [
-      "asyncio",
-      "pathlib",
+      "sys",
       "typing",
-      "time",
-      "argparse",
+      "asyncio",
+      "json",
+      "pathlib",
       "__future__",
       "dataclasses",
-      "sys",
-      "json",
+      "argparse",
+      "time",
       "re"
     ],
     "symbols": [
@@ -320,14 +445,14 @@
   "benchmarks/swe_bench_runner.py": {
     "mtime": 1766291764.9658618,
     "imports": [
+      "sys",
       "asyncio",
+      "json",
       "pathlib",
-      "time",
-      "argparse",
       "__future__",
       "dataclasses",
-      "sys",
-      "json"
+      "time",
+      "argparse"
     ],
     "symbols": [
       {
@@ -403,10 +528,10 @@
   "scripts/ace-task-hook.py": {
     "mtime": 1766462297.0198205,
     "imports": [
-      "pathlib",
-      "json",
+      "sys",
       "os",
-      "sys"
+      "pathlib",
+      "json"
     ],
     "symbols": [
       {
@@ -463,11 +588,11 @@
   "scripts/ace-enforce-hook.py": {
     "mtime": 1766462801.0148792,
     "imports": [
-      "os",
+      "sys",
+      "json",
       "pathlib",
       "__future__",
-      "sys",
-      "json"
+      "os"
     ],
     "symbols": [
       {
@@ -518,10 +643,10 @@
   "tui/src/cli.tsx": {
     "mtime": 1766330042.7906568,
     "imports": [
-      "meow",
       "./App.js",
+      "ink",
       "react",
-      "ink"
+      "meow"
     ],
     "symbols": [],
     "edge_summaries": {}
@@ -529,11 +654,11 @@
   "tui/src/App.tsx": {
     "mtime": 1766330136.5475032,
     "imports": [
-      "ink-text-input",
-      "ink",
       "ink-spinner",
       "react",
-      "./api.js"
+      "ink",
+      "./api.js",
+      "ink-text-input"
     ],
     "symbols": [
       {
@@ -632,22 +757,22 @@
   "src/delia/auth.py": {
     "mtime": 1766035775.496664,
     "imports": [
-      "sqlalchemy",
-      "fastapi_users.db",
-      "fastapi_users.authentication",
-      "os",
+      "REL:1:",
+      "fastapi_users",
       "typing",
       "fastapi_users.router",
-      "httpx_oauth.clients.microsoft",
-      "fastapi_users",
-      "REL:1:",
-      "contextlib",
-      "sqlalchemy.ext.asyncio",
-      "structlog",
+      "sqlalchemy.orm",
       "uuid",
-      "fastapi",
+      "fastapi_users.db",
+      "fastapi_users.authentication",
+      "httpx_oauth.clients.microsoft",
       "collections.abc",
-      "sqlalchemy.orm"
+      "structlog",
+      "fastapi",
+      "sqlalchemy",
+      "os",
+      "sqlalchemy.ext.asyncio",
+      "contextlib"
     ],
     "symbols": [
       {
@@ -782,14 +907,14 @@
   "src/delia/auth_routes.py": {
     "mtime": 1766035775.496664,
     "imports": [
-      "starlette.requests",
       "typing",
-      "starlette.responses",
-      "__future__",
-      "secrets",
-      "structlog",
       "uuid",
-      "pydantic"
+      "secrets",
+      "pydantic",
+      "__future__",
+      "starlette.responses",
+      "starlette.requests",
+      "structlog"
     ],
     "symbols": [
       {
@@ -877,8 +1002,8 @@
   "src/delia/messages.py": {
     "mtime": 1766035775.4979765,
     "imports": [
-      "random",
-      "enum"
+      "enum",
+      "random"
     ],
     "symbols": [
       {
@@ -943,17 +1068,17 @@
   "src/delia/multi_user_tracking.py": {
     "mtime": 1766035775.4979765,
     "imports": [
-      "asyncio",
-      "pathlib",
-      "typing",
-      "time",
       "REL:1:",
-      "dataclasses",
-      "contextlib",
-      "structlog",
+      "typing",
+      "asyncio",
       "json",
+      "pathlib",
+      "dataclasses",
+      "hashlib",
       "limits",
-      "hashlib"
+      "structlog",
+      "time",
+      "contextlib"
     ],
     "symbols": [
       {
@@ -1065,9 +1190,9 @@
   "src/delia/setup_auth.py": {
     "mtime": 1766035775.4999764,
     "imports": [
-      "pathlib",
+      "os",
       "secrets",
-      "os"
+      "pathlib"
     ],
     "symbols": [
       {
@@ -1104,13 +1229,13 @@
   "src/delia/task_chain.py": {
     "mtime": 1766035775.4999764,
     "imports": [
-      "REL:1:delegation",
       "typing",
-      "time",
+      "json",
       "__future__",
       "dataclasses",
+      "REL:1:delegation",
       "structlog",
-      "json",
+      "time",
       "re"
     ],
     "symbols": [
@@ -1162,14 +1287,14 @@
   "src/delia/task_workflow.py": {
     "mtime": 1766035775.4999764,
     "imports": [
-      "REL:1:delegation",
-      "asyncio",
       "typing",
-      "time",
+      "asyncio",
+      "json",
       "__future__",
       "dataclasses",
+      "REL:1:delegation",
       "structlog",
-      "json",
+      "time",
       "re"
     ],
     "symbols": [
@@ -1289,13 +1414,13 @@
     "imports": [
       "contextvars",
       "typing",
-      "time",
+      "datetime",
+      "uuid",
       "__future__",
       "dataclasses",
-      "contextlib",
       "structlog",
-      "uuid",
-      "datetime"
+      "time",
+      "contextlib"
     ],
     "symbols": [
       {
@@ -1382,9 +1507,9 @@
     "mtime": 1766035775.5009766,
     "imports": [
       "dataclasses",
-      "__future__",
+      "enum",
       "pathlib",
-      "enum"
+      "__future__"
     ],
     "symbols": [
       {
@@ -1465,17 +1590,17 @@
   "src/delia/voting_stats.py": {
     "mtime": 1766035775.5009766,
     "imports": [
-      "collections",
-      "pathlib",
-      "typing",
-      "time",
       "math",
+      "typing",
+      "json",
+      "pathlib",
       "REL:1:paths",
       "__future__",
       "dataclasses",
-      "threading",
       "structlog",
-      "json"
+      "threading",
+      "time",
+      "collections"
     ],
     "symbols": [
       {
@@ -1533,13 +1658,13 @@
   "src/delia/discovery.py": {
     "mtime": 1766127666.1580546,
     "imports": [
-      "REL:1:backend_manager",
-      "asyncio",
       "typing",
-      "__future__",
       "zeroconf",
+      "asyncio",
+      "__future__",
+      "structlog",
       "socket",
-      "structlog"
+      "REL:1:backend_manager"
     ],
     "symbols": [
       {
@@ -1561,121 +1686,6 @@
         "kind": "function",
         "line": 170,
         "file_path": "src/delia/discovery.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/economics.py": {
-    "mtime": 1766539355.943968,
-    "imports": [
-      "pathlib",
-      "typing",
-      "math",
-      "REL:1:",
-      "dataclasses",
-      "__future__",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "ModelEconomics",
-        "kind": "class",
-        "line": 66,
-        "file_path": "src/delia/economics.py",
-        "summary": null
-      },
-      {
-        "name": "EconomicTracker",
-        "kind": "class",
-        "line": 199,
-        "file_path": "src/delia/economics.py",
-        "summary": null
-      },
-      {
-        "name": "get_economic_tracker",
-        "kind": "function",
-        "line": 466,
-        "file_path": "src/delia/economics.py",
-        "summary": null
-      },
-      {
-        "name": "reset_economic_tracker",
-        "kind": "function",
-        "line": 474,
-        "file_path": "src/delia/economics.py",
-        "summary": null
-      },
-      {
-        "name": "record_call",
-        "kind": "function",
-        "line": 480,
-        "file_path": "src/delia/economics.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/melons.py": {
-    "mtime": 1766539314.1500905,
-    "imports": [
-      "pathlib",
-      "typing",
-      "REL:1:",
-      "dataclasses",
-      "__future__",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "MelonStats",
-        "kind": "class",
-        "line": 48,
-        "file_path": "src/delia/melons.py",
-        "summary": null
-      },
-      {
-        "name": "MelonTracker",
-        "kind": "class",
-        "line": 126,
-        "file_path": "src/delia/melons.py",
-        "summary": null
-      },
-      {
-        "name": "get_melon_tracker",
-        "kind": "function",
-        "line": 313,
-        "file_path": "src/delia/melons.py",
-        "summary": null
-      },
-      {
-        "name": "reset_melon_tracker",
-        "kind": "function",
-        "line": 321,
-        "file_path": "src/delia/melons.py",
-        "summary": null
-      },
-      {
-        "name": "RewardCollector",
-        "kind": "class",
-        "line": 327,
-        "file_path": "src/delia/melons.py",
-        "summary": null
-      },
-      {
-        "name": "get_reward_collector",
-        "kind": "function",
-        "line": 375,
-        "file_path": "src/delia/melons.py",
-        "summary": null
-      },
-      {
-        "name": "award_melons_for_quality",
-        "kind": "function",
-        "line": 383,
-        "file_path": "src/delia/melons.py",
         "summary": null
       }
     ],
@@ -1712,18 +1722,18 @@
   "src/delia/llm.py": {
     "mtime": 1766259615.574799,
     "imports": [
-      "REL:1:backend_manager",
-      "REL:1:providers.ollama",
+      "typing",
+      "REL:1:providers.llamacpp",
       "asyncio",
       "REL:1:providers.base",
-      "typing",
       "__future__",
-      "REL:1:config",
-      "REL:1:providers.llamacpp",
-      "REL:1:providers.gemini",
-      "structlog",
       "REL:1:errors",
-      "collections.abc"
+      "REL:1:providers.gemini",
+      "REL:1:config",
+      "REL:1:providers.ollama",
+      "collections.abc",
+      "structlog",
+      "REL:1:backend_manager"
     ],
     "symbols": [
       {
@@ -1760,17 +1770,17 @@
   "src/delia/embeddings.py": {
     "mtime": 1766283731.6436415,
     "imports": [
-      "numpy",
       "functools",
-      "os",
-      "asyncio",
-      "pathlib",
       "typing",
+      "asyncio",
+      "json",
+      "numpy",
+      "pathlib",
       "REL:1:paths",
       "dataclasses",
       "httpx",
       "structlog",
-      "json"
+      "os"
     ],
     "symbols": [
       {
@@ -1860,61 +1870,17 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/profiles.py": {
-    "mtime": 1766533951.6407382,
-    "imports": [
-      "structlog",
-      "pathlib",
-      "typing",
-      "REL:1:",
-      "dataclasses",
-      "uuid",
-      "datetime",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "ModelProfile",
-        "kind": "class",
-        "line": 44,
-        "file_path": "src/delia/profiles.py",
-        "summary": null
-      },
-      {
-        "name": "ProfileManager",
-        "kind": "class",
-        "line": 162,
-        "file_path": "src/delia/profiles.py",
-        "summary": null
-      },
-      {
-        "name": "get_profile_manager",
-        "kind": "function",
-        "line": 327,
-        "file_path": "src/delia/profiles.py",
-        "summary": null
-      },
-      {
-        "name": "register_common_profiles",
-        "kind": "function",
-        "line": 376,
-        "file_path": "src/delia/profiles.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/queue.py": {
     "mtime": 1766340007.2350729,
     "imports": [
-      "asyncio",
       "typing",
+      "asyncio",
       "REL:1:messages",
-      "heapq",
+      "datetime",
       "__future__",
       "dataclasses",
       "structlog",
-      "datetime"
+      "heapq"
     ],
     "symbols": [
       {
@@ -1934,154 +1900,16 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/delegation.py": {
-    "mtime": 1766537836.105146,
-    "imports": [
-      "REL:1:quality",
-      "REL:1:backend_manager",
-      "REL:1:language",
-      "asyncio",
-      "pathlib",
-      "typing",
-      "time",
-      "REL:1:routing",
-      "REL:1:tokens",
-      "REL:1:text_utils",
-      "__future__",
-      "dataclasses",
-      "REL:1:config",
-      "REL:1:file_helpers",
-      "structlog",
-      "json",
-      "re",
-      "REL:1:validation"
-    ],
-    "symbols": [
-      {
-        "name": "DelegateContext",
-        "kind": "class",
-        "line": 38,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "_schedule_background_task",
-        "kind": "function",
-        "line": 45,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "_prewarm_check_loop",
-        "kind": "async_function",
-        "line": 53,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "start_prewarm_task",
-        "kind": "function",
-        "line": 77,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "validate_delegate_request",
-        "kind": "async_function",
-        "line": 81,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "prepare_delegate_content",
-        "kind": "async_function",
-        "line": 88,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "determine_task_type",
-        "kind": "function",
-        "line": 91,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "select_delegate_model",
-        "kind": "async_function",
-        "line": 94,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "execute_delegate_call",
-        "kind": "async_function",
-        "line": 98,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "get_delegate_signals",
-        "kind": "async_function",
-        "line": 103,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "delegate_impl",
-        "kind": "async_function",
-        "line": 117,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "_delegate_impl",
-        "kind": "async_function",
-        "line": 139,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "_delegate_with_voting",
-        "kind": "async_function",
-        "line": 142,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "_delegate_with_tot",
-        "kind": "async_function",
-        "line": 145,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "_select_delegate_model_impl",
-        "kind": "async_function",
-        "line": 148,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      },
-      {
-        "name": "_get_delegate_context",
-        "kind": "function",
-        "line": 152,
-        "file_path": "src/delia/delegation.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/frustration.py": {
     "mtime": 1766292498.3454106,
     "imports": [
-      "enum",
       "typing",
-      "time",
       "__future__",
       "dataclasses",
-      "structlog",
       "hashlib",
+      "enum",
+      "structlog",
+      "time",
       "re"
     ],
     "symbols": [
@@ -2133,10 +1961,10 @@
   "src/delia/personas.py": {
     "mtime": 1766294200.220771,
     "imports": [
-      "enum",
       "typing",
       "__future__",
       "dataclasses",
+      "enum",
       "structlog"
     ],
     "symbols": [
@@ -2211,17 +2039,17 @@
   "src/delia/backend_manager.py": {
     "mtime": 1766299359.969811,
     "imports": [
-      "warnings",
-      "os",
-      "asyncio",
-      "pathlib",
-      "typing",
-      "time",
       "REL:1:",
+      "typing",
+      "warnings",
+      "asyncio",
+      "json",
+      "pathlib",
       "dataclasses",
       "httpx",
       "structlog",
-      "json"
+      "time",
+      "os"
     ],
     "symbols": [
       {
@@ -2263,17 +2091,17 @@
     "edge_summaries": {}
   },
   "src/delia/config.py": {
-    "mtime": 1766337404.1713166,
+    "mtime": 1766554094.0758154,
     "imports": [
-      "functools",
-      "os",
-      "collections",
-      "pathlib",
-      "typing",
-      "time",
       "REL:1:",
+      "functools",
+      "typing",
+      "pathlib",
       "dataclasses",
-      "re"
+      "re",
+      "time",
+      "os",
+      "collections"
     ],
     "symbols": [
       {
@@ -2307,255 +2135,176 @@
       {
         "name": "get_provider_cost",
         "kind": "function",
-        "line": 464,
+        "line": 483,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "BackendHealth",
         "kind": "class",
-        "line": 483,
+        "line": 502,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "BackendMetrics",
         "kind": "class",
-        "line": 604,
+        "line": 623,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "get_backend_health",
         "kind": "function",
-        "line": 770,
+        "line": 789,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "get_backend_metrics",
         "kind": "function",
-        "line": 781,
+        "line": 800,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "load_backend_metrics",
         "kind": "function",
-        "line": 796,
+        "line": 815,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "save_backend_metrics",
         "kind": "function",
-        "line": 823,
+        "line": 842,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "AffinityTracker",
         "kind": "class",
-        "line": 854,
+        "line": 873,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "get_affinity_tracker",
         "kind": "function",
-        "line": 1011,
+        "line": 1030,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "load_affinity",
         "kind": "function",
-        "line": 1016,
+        "line": 1035,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "save_affinity",
         "kind": "function",
-        "line": 1042,
+        "line": 1061,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "ModelAffinityTracker",
         "kind": "class",
-        "line": 1071,
+        "line": 1090,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "get_model_affinity_tracker",
         "kind": "function",
-        "line": 1248,
+        "line": 1267,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "load_model_affinity",
         "kind": "function",
-        "line": 1253,
+        "line": 1272,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "save_model_affinity",
         "kind": "function",
-        "line": 1273,
+        "line": 1292,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "PrewarmTracker",
         "kind": "class",
-        "line": 1299,
+        "line": 1318,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "get_prewarm_tracker",
         "kind": "function",
-        "line": 1410,
+        "line": 1429,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "load_prewarm",
         "kind": "function",
-        "line": 1415,
+        "line": 1434,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "save_prewarm",
         "kind": "function",
-        "line": 1441,
+        "line": 1460,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "ModelInfo",
         "kind": "class",
-        "line": 1549,
+        "line": 1568,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "parse_model_name",
         "kind": "function",
-        "line": 1561,
+        "line": 1580,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "_detect_model_tier_cached",
         "kind": "function",
-        "line": 1610,
+        "line": 1629,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "detect_model_tier",
         "kind": "function",
-        "line": 1641,
+        "line": 1660,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "reset_affinity",
         "kind": "function",
-        "line": 1685,
+        "line": 1704,
         "file_path": "src/delia/config.py",
         "summary": null
       },
       {
         "name": "reset_prewarm",
         "kind": "function",
-        "line": 1690,
+        "line": 1709,
         "file_path": "src/delia/config.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/routing.py": {
-    "mtime": 1766539436.4657085,
-    "imports": [
-      "random",
-      "os",
-      "typing",
-      "math",
-      "dataclasses",
-      "REL:1:config",
-      "structlog",
-      "re"
-    ],
-    "symbols": [
-      {
-        "name": "detect_code_content",
-        "kind": "function",
-        "line": 100,
-        "file_path": "src/delia/routing.py",
-        "summary": null
-      },
-      {
-        "name": "detect_chat_task_type",
-        "kind": "function",
-        "line": 161,
-        "file_path": "src/delia/routing.py",
-        "summary": null
-      },
-      {
-        "name": "parse_model_override",
-        "kind": "function",
-        "line": 234,
-        "file_path": "src/delia/routing.py",
-        "summary": null
-      },
-      {
-        "name": "ScoringWeights",
-        "kind": "class",
-        "line": 289,
-        "file_path": "src/delia/routing.py",
-        "summary": null
-      },
-      {
-        "name": "_task_to_tier",
-        "kind": "function",
-        "line": 327,
-        "file_path": "src/delia/routing.py",
-        "summary": null
-      },
-      {
-        "name": "BackendScorer",
-        "kind": "class",
-        "line": 346,
-        "file_path": "src/delia/routing.py",
-        "summary": null
-      },
-      {
-        "name": "ModelRouter",
-        "kind": "class",
-        "line": 707,
-        "file_path": "src/delia/routing.py",
-        "summary": null
-      },
-      {
-        "name": "get_router",
-        "kind": "function",
-        "line": 1038,
-        "file_path": "src/delia/routing.py",
-        "summary": null
-      },
-      {
-        "name": "select_model",
-        "kind": "async_function",
-        "line": 1048,
-        "file_path": "src/delia/routing.py",
         "summary": null
       }
     ],
@@ -2564,11 +2313,11 @@
   "src/delia/sandbox.py": {
     "mtime": 1766325296.8510451,
     "imports": [
-      "enum",
-      "asyncio",
       "typing",
+      "asyncio",
       "__future__",
       "dataclasses",
+      "enum",
       "structlog"
     ],
     "symbols": [
@@ -2641,19 +2390,19 @@
   "src/delia/security.py": {
     "mtime": 1766326425.5431,
     "imports": [
-      "enum",
-      "shutil",
-      "asyncio",
-      "pathlib",
-      "typing",
-      "time",
       "REL:1:",
-      "dataclasses",
-      "__future__",
-      "structlog",
+      "shutil",
+      "typing",
+      "asyncio",
       "json",
       "datetime",
-      "hashlib"
+      "pathlib",
+      "__future__",
+      "dataclasses",
+      "hashlib",
+      "enum",
+      "structlog",
+      "time"
     ],
     "symbols": [
       {
@@ -2725,9 +2474,9 @@
   "src/delia/voting.py": {
     "mtime": 1766331108.456428,
     "imports": [
-      "difflib",
-      "typing",
       "math",
+      "typing",
+      "difflib",
       "__future__",
       "dataclasses",
       "hashlib",
@@ -2779,77 +2528,12 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/prompts.py": {
-    "mtime": 1766537483.6735635,
-    "imports": [
-      "__future__",
-      "typing",
-      "enum"
-    ],
-    "symbols": [
-      {
-        "name": "ModelRole",
-        "kind": "class",
-        "line": 52,
-        "file_path": "src/delia/prompts.py",
-        "summary": null
-      },
-      {
-        "name": "OrchestrationMode",
-        "kind": "class",
-        "line": 67,
-        "file_path": "src/delia/prompts.py",
-        "summary": null
-      },
-      {
-        "name": "build_system_prompt",
-        "kind": "function",
-        "line": 141,
-        "file_path": "src/delia/prompts.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/logging_service.py": {
-    "mtime": 1766334457.2766917,
-    "imports": [
-      "os",
-      "structlog.types",
-      "logging",
-      "typing",
-      "pathlib",
-      "__future__",
-      "threading",
-      "structlog",
-      "json",
-      "datetime",
-      "sys"
-    ],
-    "symbols": [
-      {
-        "name": "LoggingService",
-        "kind": "class",
-        "line": 28,
-        "file_path": "src/delia/logging_service.py",
-        "summary": null
-      },
-      {
-        "name": "get_logging_service",
-        "kind": "function",
-        "line": 180,
-        "file_path": "src/delia/logging_service.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/container.py": {
     "mtime": 1766340020.2399895,
     "imports": [
-      "__future__",
+      "typing",
       "pathlib",
-      "typing"
+      "__future__"
     ],
     "symbols": [
       {
@@ -2872,14 +2556,14 @@
   "src/delia/hardware.py": {
     "mtime": 1766339986.8222039,
     "imports": [
+      "psutil",
       "shutil",
-      "asyncio",
       "typing",
+      "asyncio",
       "subprocess",
       "__future__",
       "dataclasses",
-      "structlog",
-      "psutil"
+      "structlog"
     ],
     "symbols": [
       {
@@ -2916,10 +2600,10 @@
   "src/delia/file_helpers.py": {
     "mtime": 1766348328.1508226,
     "imports": [
-      "pathlib",
-      "REL:1:config",
+      "structlog",
       "re",
-      "structlog"
+      "REL:1:config",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -2993,16 +2677,16 @@
   "src/delia/session_manager.py": {
     "mtime": 1766368379.3890927,
     "imports": [
-      "pathlib",
-      "typing",
-      "json",
-      "REL:1:tokens",
       "REL:1:",
-      "dataclasses",
-      "threading",
-      "structlog",
+      "typing",
+      "REL:1:tokens",
+      "json",
+      "datetime",
+      "pathlib",
       "uuid",
-      "datetime"
+      "dataclasses",
+      "structlog",
+      "threading"
     ],
     "symbols": [
       {
@@ -3046,9 +2730,9 @@
   "src/delia/paths.py": {
     "mtime": 1766368405.324918,
     "imports": [
-      "pathlib",
       "functools",
-      "os"
+      "os",
+      "pathlib"
     ],
     "symbols": [
       {
@@ -3085,17 +2769,17 @@
   "src/delia/session_backends.py": {
     "mtime": 1766368445.9126453,
     "imports": [
-      "pathlib",
-      "typing",
-      "sqlite3",
-      "abc",
       "REL:1:",
+      "typing",
+      "json",
+      "datetime",
+      "pathlib",
       "__future__",
       "dataclasses",
-      "threading",
       "structlog",
-      "json",
-      "datetime"
+      "threading",
+      "abc",
+      "sqlite3"
     ],
     "symbols": [
       {
@@ -3139,8 +2823,8 @@
   "src/delia/cleanup.py": {
     "mtime": 1766368830.8471053,
     "imports": [
-      "pathlib",
       "shutil",
+      "pathlib",
       "structlog"
     ],
     "symbols": [
@@ -3178,9 +2862,9 @@
   "src/delia/project_memory.py": {
     "mtime": 1766408073.8783965,
     "imports": [
-      "pathlib",
-      "typing",
       "REL:1:",
+      "typing",
+      "pathlib",
       "__future__",
       "dataclasses",
       "structlog",
@@ -3242,16 +2926,16 @@
   "src/delia/stats.py": {
     "mtime": 1766434902.5106273,
     "imports": [
-      "asyncio",
-      "collections",
-      "pathlib",
-      "typing",
-      "aiofiles",
       "REL:1:",
-      "threading",
-      "structlog",
+      "typing",
+      "asyncio",
       "json",
-      "datetime"
+      "datetime",
+      "pathlib",
+      "structlog",
+      "threading",
+      "aiofiles",
+      "collections"
     ],
     "symbols": [
       {
@@ -3269,12 +2953,12 @@
     "imports": [
       "fastmcp.server.middleware",
       "typing",
-      "time",
-      "fastmcp.server.dependencies",
-      "__future__",
-      "structlog",
+      "REL:1:container",
       "uuid",
-      "REL:1:container"
+      "__future__",
+      "fastmcp.server.dependencies",
+      "structlog",
+      "time"
     ],
     "symbols": [
       {
@@ -3287,48 +2971,17 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/lsp_client.py": {
-    "mtime": 1766445356.216357,
-    "imports": [
-      "shutil",
-      "os",
-      "asyncio",
-      "pathlib",
-      "typing",
-      "__future__",
-      "structlog",
-      "pygls.lsp.client",
-      "lsprotocol"
-    ],
-    "symbols": [
-      {
-        "name": "DeliaLSPClient",
-        "kind": "class",
-        "line": 25,
-        "file_path": "src/delia/lsp_client.py",
-        "summary": null
-      },
-      {
-        "name": "get_lsp_client",
-        "kind": "function",
-        "line": 513,
-        "file_path": "src/delia/lsp_client.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/language.py": {
     "mtime": 1766445407.852043,
     "imports": [
-      "REL:1:prompts",
-      "pygments.lexers",
-      "pygments.util",
-      "pathlib",
       "typing",
-      "__future__",
+      "pygments.util",
       "structlog",
       "datetime",
+      "pathlib",
+      "__future__",
+      "REL:1:prompts",
+      "pygments.lexers",
       "re"
     ],
     "symbols": [
@@ -3370,175 +3023,69 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/context_detector.py": {
-    "mtime": 1766533951.7097378,
-    "imports": [
-      "pathlib",
-      "typing",
-      "dataclasses",
-      "__future__",
-      "structlog",
-      "json",
-      "datetime",
-      "re"
-    ],
-    "symbols": [
-      {
-        "name": "DetectedContext",
-        "kind": "class",
-        "line": 149,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "detect_task_type",
-        "kind": "function",
-        "line": 161,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "get_relevant_profiles",
-        "kind": "function",
-        "line": 238,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "detect_from_files",
-        "kind": "function",
-        "line": 331,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "FileContext",
-        "kind": "class",
-        "line": 441,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "detect_from_files_enhanced",
-        "kind": "function",
-        "line": 449,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "detect_from_code",
-        "kind": "function",
-        "line": 632,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "EnhancedDetectedContext",
-        "kind": "class",
-        "line": 654,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "detect_task_type_enhanced",
-        "kind": "function",
-        "line": 660,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "ContextManager",
-        "kind": "class",
-        "line": 766,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "get_context_manager",
-        "kind": "function",
-        "line": 854,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "LearnedPattern",
-        "kind": "class",
-        "line": 869,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "PatternLearner",
-        "kind": "class",
-        "line": 907,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "get_pattern_learner",
-        "kind": "function",
-        "line": 1169,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      },
-      {
-        "name": "detect_with_learning",
-        "kind": "function",
-        "line": 1177,
-        "file_path": "src/delia/context_detector.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/agent_sync.py": {
-    "mtime": 1766534011.2013633,
+    "mtime": 1766550728.242976,
     "imports": [
+      "typing",
+      "json",
       "pathlib",
       "__future__",
-      "typing",
       "structlog"
     ],
     "symbols": [
       {
+        "name": "get_mcp_instructions_path",
+        "kind": "function",
+        "line": 135,
+        "file_path": "src/delia/agent_sync.py",
+        "summary": null
+      },
+      {
+        "name": "load_mcp_instructions",
+        "kind": "function",
+        "line": 141,
+        "file_path": "src/delia/agent_sync.py",
+        "summary": null
+      },
+      {
         "name": "load_embedded_playbook_bullets",
         "kind": "function",
-        "line": 55,
+        "line": 156,
         "file_path": "src/delia/agent_sync.py",
         "summary": null
       },
       {
         "name": "generate_agent_instructions",
         "kind": "function",
-        "line": 122,
-        "file_path": "src/delia/agent_sync.py",
-        "summary": null
-      },
-      {
-        "name": "extract_project_rules",
-        "kind": "function",
-        "line": 209,
+        "line": 230,
         "file_path": "src/delia/agent_sync.py",
         "summary": null
       },
       {
         "name": "detect_ai_agents",
         "kind": "function",
-        "line": 276,
+        "line": 296,
+        "file_path": "src/delia/agent_sync.py",
+        "summary": null
+      },
+      {
+        "name": "extract_project_name",
+        "kind": "function",
+        "line": 366,
         "file_path": "src/delia/agent_sync.py",
         "summary": null
       },
       {
         "name": "sync_agent_instruction_files",
         "kind": "function",
-        "line": 346,
+        "line": 404,
         "file_path": "src/delia/agent_sync.py",
         "summary": null
       },
       {
         "name": "get_agent_summary",
         "kind": "function",
-        "line": 447,
+        "line": 498,
         "file_path": "src/delia/agent_sync.py",
         "summary": null
       }
@@ -3546,33 +3093,33 @@
     "edge_summaries": {}
   },
   "src/delia/api.py": {
-    "mtime": 1766539329.4330468,
+    "mtime": 1766550728.2432497,
     "imports": [
-      "starlette.requests",
-      "asyncio",
-      "REL:1:tools.agent",
-      "REL:1:tools.builtins",
-      "uuid",
-      "REL:1:stats",
       "typing",
-      "time",
-      "starlette.middleware.cors",
-      "REL:1:tools.parser",
-      "dataclasses",
-      "structlog",
       "json",
-      "REL:1:types",
-      "REL:1:orchestration",
-      "starlette.applications",
-      "REL:1:queue",
-      "REL:1:tools.executor",
+      "dataclasses",
+      "time",
+      "REL:1:tools.parser",
+      "uuid",
       "REL:1:backend_manager",
-      "starlette.routing",
-      "starlette.responses",
-      "__future__",
       "contextlib",
+      "asyncio",
       "REL:1:routing",
-      "REL:1:llm"
+      "REL:1:queue",
+      "starlette.responses",
+      "starlette.requests",
+      "REL:1:orchestration",
+      "structlog",
+      "REL:1:stats",
+      "REL:1:types",
+      "starlette.routing",
+      "REL:1:tools.builtins",
+      "__future__",
+      "REL:1:tools.executor",
+      "REL:1:llm",
+      "REL:1:tools.agent",
+      "starlette.applications",
+      "starlette.middleware.cors"
     ],
     "symbols": [
       {
@@ -3782,24 +3329,24 @@
     "edge_summaries": {}
   },
   "src/delia/cli.py": {
-    "mtime": 1766539356.0159678,
+    "mtime": 1766550728.2435164,
     "imports": [
-      "warnings",
       "shutil",
-      "os",
-      "pathlib",
+      "warnings",
+      "sys",
       "typing",
-      "time",
-      "subprocess",
-      "REL:1:paths",
       "platform",
+      "json",
+      "subprocess",
+      "pathlib",
+      "REL:1:paths",
       "__future__",
       "dataclasses",
+      "REL:1:model_detection",
       "httpx",
       "typer",
-      "sys",
-      "json",
-      "REL:1:model_detection"
+      "time",
+      "os"
     ],
     "symbols": [
       {
@@ -4008,752 +3555,1136 @@
       {
         "name": "config",
         "kind": "function",
-        "line": 1502,
+        "line": 1335,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "compact",
         "kind": "function",
-        "line": 1541,
+        "line": 1374,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "memory",
         "kind": "function",
-        "line": 1570,
+        "line": 1403,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "melons",
         "kind": "function",
-        "line": 1600,
+        "line": 1433,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "setup",
         "kind": "function",
-        "line": 1661,
+        "line": 1494,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "uninstall",
         "kind": "function",
-        "line": 1717,
+        "line": 1550,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "audit",
         "kind": "function",
-        "line": 1820,
+        "line": 1653,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "undo",
         "kind": "function",
-        "line": 1902,
+        "line": 1735,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "prewarm",
         "kind": "function",
-        "line": 1980,
+        "line": 1813,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "validate",
         "kind": "function",
-        "line": 2027,
+        "line": 1860,
         "file_path": "src/delia/cli.py",
         "summary": null
       },
       {
         "name": "main",
         "kind": "function",
-        "line": 2133,
+        "line": 1995,
         "file_path": "src/delia/cli.py",
         "summary": null
       }
     ],
     "edge_summaries": {}
   },
-  "src/delia/mcp_server.py": {
-    "mtime": 1766538319.6755233,
+  "src/delia/context.py": {
+    "mtime": 1766550728.2435508,
     "imports": [
-      "REL:1:delegation",
-      "os",
-      "asyncio",
       "contextvars",
-      "collections",
-      "structlog.types",
-      "REL:1:messages",
-      "aiofiles",
-      "REL:1:tokens",
-      "REL:1:",
-      "socket",
-      "uuid",
-      "REL:1:tools",
-      "REL:1:orchestration.service",
-      "REL:1:stats",
-      "re",
-      "signal",
-      "REL:1:tools.resources",
-      "pygments.lexers",
-      "REL:1:quality",
-      "pygments.util",
-      "REL:1:voting_stats",
-      "REL:1:session_manager",
-      "logging",
-      "pathlib",
-      "typing",
-      "time",
-      "REL:1:profiles",
-      "REL:1:multi_user_tracking",
-      "REL:1:tools.handlers",
-      "httpx",
-      "REL:1:task_chain",
-      "structlog",
-      "json",
-      "REL:1:tools.consolidated",
-      "collections.abc",
-      "REL:1:types",
-      "REL:1:middleware",
-      "REL:1:language",
-      "REL:1:tools.admin",
-      "humanize",
-      "fastmcp",
-      "REL:1:queue",
-      "REL:1:file_helpers",
-      "threading",
-      "pydantic",
-      "REL:1:validation",
-      "tenacity",
-      "REL:1:backend_manager",
-      "subprocess",
-      "REL:1:text_utils",
-      "REL:1:voting",
-      "REL:1:config",
-      "REL:1:task_workflow",
-      "datetime",
-      "REL:1:providers",
-      "REL:1:routing",
-      "webbrowser",
-      "REL:1:llm",
-      "REL:1:container"
+      "typing"
     ],
     "symbols": [
       {
-        "name": "_configure_structlog",
+        "name": "set_project_context",
         "kind": "function",
-        "line": 66,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 14,
+        "file_path": "src/delia/context.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/context_detector.py": {
+    "mtime": 1766550728.2437317,
+    "imports": [
+      "typing",
+      "json",
+      "datetime",
+      "pathlib",
+      "__future__",
+      "dataclasses",
+      "structlog",
+      "re"
+    ],
+    "symbols": [
+      {
+        "name": "DetectedContext",
+        "kind": "class",
+        "line": 149,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "detect_task_type",
+        "kind": "function",
+        "line": 161,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "get_relevant_profiles",
+        "kind": "function",
+        "line": 238,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "detect_from_files",
+        "kind": "function",
+        "line": 331,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "FileContext",
+        "kind": "class",
+        "line": 441,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "detect_from_files_enhanced",
+        "kind": "function",
+        "line": 449,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "detect_from_code",
+        "kind": "function",
+        "line": 632,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "EnhancedDetectedContext",
+        "kind": "class",
+        "line": 654,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "detect_task_type_enhanced",
+        "kind": "function",
+        "line": 660,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "ContextManager",
+        "kind": "class",
+        "line": 766,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "get_context_manager",
+        "kind": "function",
+        "line": 854,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "LearnedPattern",
+        "kind": "class",
+        "line": 869,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "NegativePattern",
+        "kind": "class",
+        "line": 908,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "PatternLearner",
+        "kind": "class",
+        "line": 943,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "get_pattern_learner",
+        "kind": "function",
+        "line": 1354,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      },
+      {
+        "name": "detect_with_learning",
+        "kind": "function",
+        "line": 1362,
+        "file_path": "src/delia/context_detector.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/delegation.py": {
+    "mtime": 1766550728.2438185,
+    "imports": [
+      "typing",
+      "REL:1:tokens",
+      "asyncio",
+      "json",
+      "REL:1:routing",
+      "REL:1:file_helpers",
+      "REL:1:text_utils",
+      "pathlib",
+      "__future__",
+      "dataclasses",
+      "REL:1:language",
+      "REL:1:config",
+      "REL:1:quality",
+      "structlog",
+      "time",
+      "re",
+      "REL:1:validation",
+      "REL:1:backend_manager"
+    ],
+    "symbols": [
+      {
+        "name": "DelegateContext",
+        "kind": "class",
+        "line": 38,
+        "file_path": "src/delia/delegation.py",
         "summary": null
       },
       {
         "name": "_schedule_background_task",
         "kind": "function",
-        "line": 275,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 45,
+        "file_path": "src/delia/delegation.py",
         "summary": null
       },
       {
         "name": "_prewarm_check_loop",
         "kind": "async_function",
-        "line": 290,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 53,
+        "file_path": "src/delia/delegation.py",
         "summary": null
       },
       {
         "name": "start_prewarm_task",
         "kind": "function",
-        "line": 349,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 77,
+        "file_path": "src/delia/delegation.py",
         "summary": null
       },
       {
-        "name": "save_circuit_breaker_stats",
+        "name": "validate_delegate_request",
+        "kind": "async_function",
+        "line": 81,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "prepare_delegate_content",
+        "kind": "async_function",
+        "line": 88,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "determine_task_type",
         "kind": "function",
-        "line": 378,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 91,
+        "file_path": "src/delia/delegation.py",
         "summary": null
       },
       {
-        "name": "_update_stats_sync",
+        "name": "select_delegate_model",
+        "kind": "async_function",
+        "line": 94,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "execute_delegate_call",
+        "kind": "async_function",
+        "line": 98,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "get_delegate_signals",
+        "kind": "async_function",
+        "line": 103,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "delegate_impl",
+        "kind": "async_function",
+        "line": 117,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "_delegate_impl",
+        "kind": "async_function",
+        "line": 139,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "_delegate_with_voting",
+        "kind": "async_function",
+        "line": 142,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "_delegate_with_tot",
+        "kind": "async_function",
+        "line": 145,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "_select_delegate_model_impl",
+        "kind": "async_function",
+        "line": 148,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      },
+      {
+        "name": "_get_delegate_context",
         "kind": "function",
-        "line": 402,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 152,
+        "file_path": "src/delia/delegation.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/economics.py": {
+    "mtime": 1766550728.243909,
+    "imports": [
+      "math",
+      "REL:1:",
+      "typing",
+      "json",
+      "pathlib",
+      "__future__",
+      "dataclasses",
+      "structlog"
+    ],
+    "symbols": [
+      {
+        "name": "ModelEconomics",
+        "kind": "class",
+        "line": 66,
+        "file_path": "src/delia/economics.py",
         "summary": null
       },
       {
-        "name": "save_all_stats_async",
-        "kind": "async_function",
-        "line": 435,
-        "file_path": "src/delia/mcp_server.py",
+        "name": "EconomicTracker",
+        "kind": "class",
+        "line": 199,
+        "file_path": "src/delia/economics.py",
         "summary": null
       },
       {
-        "name": "get_active_backend",
+        "name": "get_economic_tracker",
         "kind": "function",
-        "line": 476,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 466,
+        "file_path": "src/delia/economics.py",
         "summary": null
       },
       {
-        "name": "get_active_backend_id",
+        "name": "reset_economic_tracker",
         "kind": "function",
-        "line": 481,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 474,
+        "file_path": "src/delia/economics.py",
         "summary": null
       },
       {
-        "name": "set_active_backend",
+        "name": "record_call",
         "kind": "function",
-        "line": 487,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 480,
+        "file_path": "src/delia/economics.py",
         "summary": null
-      },
-      {
-        "name": "get_loaded_models",
-        "kind": "async_function",
-        "line": 492,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "get_model_info",
-        "kind": "function",
-        "line": 529,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "_save_stats_background",
-        "kind": "function",
-        "line": 600,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "set_project_context",
-        "kind": "function",
-        "line": 630,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "_get_tool_specific_tips",
-        "kind": "function",
-        "line": 636,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "_build_dynamic_instructions",
-        "kind": "function",
-        "line": 660,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "get_model_info",
-        "kind": "function",
-        "line": 712,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_goto_definition",
-        "kind": "async_function",
-        "line": 796,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_find_references",
-        "kind": "async_function",
-        "line": 823,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_hover",
-        "kind": "async_function",
-        "line": 850,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_get_symbols",
-        "kind": "async_function",
-        "line": 877,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_find_symbol",
-        "kind": "async_function",
-        "line": 899,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_rename_symbol",
-        "kind": "async_function",
-        "line": 927,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_replace_symbol_body",
-        "kind": "async_function",
-        "line": 966,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_insert_before_symbol",
-        "kind": "async_function",
-        "line": 1004,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_insert_after_symbol",
-        "kind": "async_function",
-        "line": 1042,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "mcp_servers",
-        "kind": "async_function",
-        "line": 1085,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "read_file",
-        "kind": "async_function",
-        "line": 1263,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "write_file",
-        "kind": "async_function",
-        "line": 1288,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "edit_file",
-        "kind": "async_function",
-        "line": 1324,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "list_dir",
-        "kind": "async_function",
-        "line": 1360,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "find_file",
-        "kind": "async_function",
-        "line": 1385,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "search_for_pattern",
-        "kind": "async_function",
-        "line": 1408,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "delete_file",
-        "kind": "async_function",
-        "line": 1435,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "create_directory",
-        "kind": "async_function",
-        "line": 1460,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "resource_file",
-        "kind": "async_function",
-        "line": 1483,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "resource_stats",
-        "kind": "async_function",
-        "line": 1522,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "resource_backends",
-        "kind": "async_function",
-        "line": 1539,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "resource_config",
-        "kind": "async_function",
-        "line": 1551,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "resource_playbook",
-        "kind": "async_function",
-        "line": 1580,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
-      {
-        "name": "resource_memories",
-        "kind": "async_function",
-        "line": 1612,
-        "file_path": "src/delia/mcp_server.py",
-        "summary": null
-      },
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/lifecycle.py": {
+    "mtime": 1766550728.2444365,
+    "imports": [
+      "REL:1:",
+      "REL:1:session_manager",
+      "typing",
+      "webbrowser",
+      "asyncio",
+      "REL:1:container",
+      "REL:1:multi_user_tracking",
+      "subprocess",
+      "REL:1:auth",
+      "__future__",
+      "threading",
+      "REL:1:config",
+      "structlog",
+      "signal",
+      "socket",
+      "os",
+      "REL:1:backend_manager",
+      "time"
+    ],
+    "symbols": [
       {
         "name": "_find_free_port",
         "kind": "function",
-        "line": 1635,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 38,
+        "file_path": "src/delia/lifecycle.py",
         "summary": null
       },
       {
         "name": "_launch_dashboard",
         "kind": "function",
-        "line": 1647,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 50,
+        "file_path": "src/delia/lifecycle.py",
         "summary": null
       },
       {
         "name": "_shutdown_dashboard",
         "kind": "function",
-        "line": 1705,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 108,
+        "file_path": "src/delia/lifecycle.py",
         "summary": null
       },
       {
-        "name": "_init_database",
+        "name": "init_database",
         "kind": "async_function",
-        "line": 1725,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 128,
+        "file_path": "src/delia/lifecycle.py",
         "summary": null
       },
       {
-        "name": "_startup_handler",
+        "name": "startup_handler",
         "kind": "async_function",
-        "line": 1734,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 138,
+        "file_path": "src/delia/lifecycle.py",
         "summary": null
       },
       {
-        "name": "_shutdown_handler",
+        "name": "shutdown_handler",
         "kind": "async_function",
-        "line": 1770,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 174,
+        "file_path": "src/delia/lifecycle.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/logging_service.py": {
+    "mtime": 1766550728.2445202,
+    "imports": [
+      "structlog.types",
+      "sys",
+      "typing",
+      "json",
+      "datetime",
+      "logging",
+      "pathlib",
+      "__future__",
+      "structlog",
+      "threading",
+      "os"
+    ],
+    "symbols": [
+      {
+        "name": "LoggingService",
+        "kind": "class",
+        "line": 28,
+        "file_path": "src/delia/logging_service.py",
         "summary": null
       },
       {
-        "name": "run_server",
+        "name": "get_logging_service",
         "kind": "function",
-        "line": 1791,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 194,
+        "file_path": "src/delia/logging_service.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/melons.py": {
+    "mtime": 1766550728.2447693,
+    "imports": [
+      "REL:1:",
+      "typing",
+      "json",
+      "pathlib",
+      "__future__",
+      "dataclasses",
+      "structlog"
+    ],
+    "symbols": [
+      {
+        "name": "MelonStats",
+        "kind": "class",
+        "line": 48,
+        "file_path": "src/delia/melons.py",
         "summary": null
       },
       {
-        "name": "main",
+        "name": "MelonTracker",
+        "kind": "class",
+        "line": 126,
+        "file_path": "src/delia/melons.py",
+        "summary": null
+      },
+      {
+        "name": "get_melon_tracker",
         "kind": "function",
-        "line": 1888,
-        "file_path": "src/delia/mcp_server.py",
+        "line": 313,
+        "file_path": "src/delia/melons.py",
+        "summary": null
+      },
+      {
+        "name": "reset_melon_tracker",
+        "kind": "function",
+        "line": 321,
+        "file_path": "src/delia/melons.py",
+        "summary": null
+      },
+      {
+        "name": "RewardCollector",
+        "kind": "class",
+        "line": 327,
+        "file_path": "src/delia/melons.py",
+        "summary": null
+      },
+      {
+        "name": "get_reward_collector",
+        "kind": "function",
+        "line": 375,
+        "file_path": "src/delia/melons.py",
+        "summary": null
+      },
+      {
+        "name": "award_melons_for_quality",
+        "kind": "function",
+        "line": 383,
+        "file_path": "src/delia/melons.py",
         "summary": null
       }
     ],
     "edge_summaries": {}
   },
   "src/delia/playbook.py": {
-    "mtime": 1766537374.7132316,
+    "mtime": 1766550728.2459517,
     "imports": [
-      "structlog",
-      "pathlib",
-      "typing",
       "REL:1:",
-      "dataclasses",
-      "uuid",
-      "datetime",
+      "typing",
       "json",
+      "datetime",
+      "pathlib",
+      "uuid",
       "pydantic",
+      "dataclasses",
+      "structlog",
       "re"
     ],
     "symbols": [
       {
         "name": "_generate_bullet_id",
         "kind": "function",
-        "line": 40,
+        "line": 57,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "_now_iso",
         "kind": "function",
-        "line": 44,
+        "line": 61,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "PlaybookBullet",
         "kind": "class",
-        "line": 48,
+        "line": 65,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "QualityIssue",
         "kind": "class",
-        "line": 100,
+        "line": 117,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "QualityResult",
         "kind": "class",
-        "line": 107,
+        "line": 124,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "BulletQualityValidator",
         "kind": "class",
-        "line": 117,
+        "line": 134,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "PlaybookManager",
         "kind": "class",
-        "line": 278,
+        "line": 295,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "get_playbook_manager",
         "kind": "function",
-        "line": 609,
+        "line": 657,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "detect_tech_stack",
         "kind": "function",
-        "line": 618,
+        "line": 666,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "generate_project_bullets",
         "kind": "function",
-        "line": 674,
+        "line": 722,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "generate_project_playbook",
         "kind": "async_function",
-        "line": 746,
+        "line": 794,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "ProfileRecommendation",
         "kind": "class",
-        "line": 909,
+        "line": 957,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "PatternGap",
         "kind": "class",
-        "line": 917,
+        "line": 965,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "recommend_profiles",
         "kind": "function",
-        "line": 927,
+        "line": 975,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "analyze_pattern_gaps",
         "kind": "function",
-        "line": 1007,
+        "line": 1055,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "format_recommendations",
         "kind": "function",
-        "line": 1083,
+        "line": 1131,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "EvaluationState",
         "kind": "class",
-        "line": 1137,
+        "line": 1185,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "get_evaluation_state_path",
         "kind": "function",
-        "line": 1161,
+        "line": 1209,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "load_evaluation_state",
         "kind": "function",
-        "line": 1166,
+        "line": 1214,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "save_evaluation_state",
         "kind": "function",
-        "line": 1180,
+        "line": 1228,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "count_code_lines",
         "kind": "function",
-        "line": 1192,
+        "line": 1240,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "get_current_commit",
         "kind": "function",
-        "line": 1208,
+        "line": 1256,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "count_commits_since",
         "kind": "function",
-        "line": 1226,
+        "line": 1274,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "check_reevaluation_needed",
         "kind": "function",
-        "line": 1244,
+        "line": 1292,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "run_reevaluation",
         "kind": "function",
-        "line": 1317,
+        "line": 1365,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "prune_stale_bullets",
         "kind": "function",
-        "line": 1437,
+        "line": 1485,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "ProfileCleanupResult",
         "kind": "class",
-        "line": 1524,
+        "line": 1572,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "cleanup_unnecessary_profiles",
         "kind": "function",
-        "line": 1532,
+        "line": 1580,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "_get_obsolete_reason",
         "kind": "function",
-        "line": 1629,
+        "line": 1677,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "ExtractedBullet",
         "kind": "class",
-        "line": 1673,
+        "line": 1721,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "parse_profile_to_bullets",
         "kind": "function",
-        "line": 1680,
+        "line": 1728,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "_is_actionable_bullet",
         "kind": "function",
-        "line": 1769,
+        "line": 1817,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "seed_playbooks_from_profiles",
         "kind": "function",
-        "line": 1801,
+        "line": 1849,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "_select_profiles_for_tech",
         "kind": "function",
-        "line": 1889,
+        "line": 1937,
         "file_path": "src/delia/playbook.py",
         "summary": null
       },
       {
         "name": "get_seed_stats",
         "kind": "function",
-        "line": 1947,
+        "line": 1995,
         "file_path": "src/delia/playbook.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/profiles.py": {
+    "mtime": 1766550728.2460396,
+    "imports": [
+      "REL:1:",
+      "typing",
+      "json",
+      "datetime",
+      "pathlib",
+      "uuid",
+      "dataclasses",
+      "structlog"
+    ],
+    "symbols": [
+      {
+        "name": "ModelProfile",
+        "kind": "class",
+        "line": 44,
+        "file_path": "src/delia/profiles.py",
+        "summary": null
+      },
+      {
+        "name": "ProfileManager",
+        "kind": "class",
+        "line": 162,
+        "file_path": "src/delia/profiles.py",
+        "summary": null
+      },
+      {
+        "name": "get_profile_manager",
+        "kind": "function",
+        "line": 327,
+        "file_path": "src/delia/profiles.py",
+        "summary": null
+      },
+      {
+        "name": "register_common_profiles",
+        "kind": "function",
+        "line": 376,
+        "file_path": "src/delia/profiles.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/prompts.py": {
+    "mtime": 1766550728.2461333,
+    "imports": [
+      "enum",
+      "typing",
+      "__future__"
+    ],
+    "symbols": [
+      {
+        "name": "ModelRole",
+        "kind": "class",
+        "line": 52,
+        "file_path": "src/delia/prompts.py",
+        "summary": null
+      },
+      {
+        "name": "OrchestrationMode",
+        "kind": "class",
+        "line": 67,
+        "file_path": "src/delia/prompts.py",
+        "summary": null
+      },
+      {
+        "name": "build_system_prompt",
+        "kind": "function",
+        "line": 141,
+        "file_path": "src/delia/prompts.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/routing.py": {
+    "mtime": 1766550728.2467027,
+    "imports": [
+      "math",
+      "typing",
+      "random",
+      "re",
+      "dataclasses",
+      "REL:1:config",
+      "structlog",
+      "os"
+    ],
+    "symbols": [
+      {
+        "name": "detect_code_content",
+        "kind": "function",
+        "line": 100,
+        "file_path": "src/delia/routing.py",
+        "summary": null
+      },
+      {
+        "name": "detect_chat_task_type",
+        "kind": "function",
+        "line": 161,
+        "file_path": "src/delia/routing.py",
+        "summary": null
+      },
+      {
+        "name": "parse_model_override",
+        "kind": "function",
+        "line": 234,
+        "file_path": "src/delia/routing.py",
+        "summary": null
+      },
+      {
+        "name": "ScoringWeights",
+        "kind": "class",
+        "line": 289,
+        "file_path": "src/delia/routing.py",
+        "summary": null
+      },
+      {
+        "name": "_task_to_tier",
+        "kind": "function",
+        "line": 327,
+        "file_path": "src/delia/routing.py",
+        "summary": null
+      },
+      {
+        "name": "BackendScorer",
+        "kind": "class",
+        "line": 346,
+        "file_path": "src/delia/routing.py",
+        "summary": null
+      },
+      {
+        "name": "ModelRouter",
+        "kind": "class",
+        "line": 707,
+        "file_path": "src/delia/routing.py",
+        "summary": null
+      },
+      {
+        "name": "get_router",
+        "kind": "function",
+        "line": 1038,
+        "file_path": "src/delia/routing.py",
+        "summary": null
+      },
+      {
+        "name": "select_model",
+        "kind": "async_function",
+        "line": 1048,
+        "file_path": "src/delia/routing.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/stats_handler.py": {
+    "mtime": 1766550728.2467473,
+    "imports": [
+      "REL:1:",
+      "asyncio",
+      "json",
+      "datetime",
+      "pathlib",
+      "REL:1:orchestration.background",
+      "__future__",
+      "REL:1:config",
+      "structlog",
+      "REL:1:container",
+      "REL:1:backend_manager"
+    ],
+    "symbols": [
+      {
+        "name": "save_circuit_breaker_stats",
+        "kind": "function",
+        "line": 35,
+        "file_path": "src/delia/stats_handler.py",
+        "summary": null
+      },
+      {
+        "name": "update_stats_sync",
+        "kind": "function",
+        "line": 59,
+        "file_path": "src/delia/stats_handler.py",
+        "summary": null
+      },
+      {
+        "name": "save_all_stats_async",
+        "kind": "async_function",
+        "line": 95,
+        "file_path": "src/delia/stats_handler.py",
+        "summary": null
+      },
+      {
+        "name": "save_stats_background",
+        "kind": "function",
+        "line": 120,
+        "file_path": "src/delia/stats_handler.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/mcp_server.py": {
+    "mtime": 1766554276.8847687,
+    "imports": [
+      "REL:1:",
+      "sys",
+      "contextvars",
+      "typing",
+      "REL:1:context",
+      "REL:1:stats_handler",
+      "REL:1:multi_user_tracking",
+      "REL:1:orchestration.background",
+      "REL:1:middleware",
+      "REL:1:config",
+      "fastmcp",
+      "REL:1:tools.handlers",
+      "REL:1:orchestration.service",
+      "REL:1:lifecycle",
+      "REL:1:logging_service",
+      "REL:1:tools.consolidated",
+      "REL:1:tools.handlers_orchestration",
+      "REL:1:tools.admin",
+      "REL:1:container",
+      "REL:1:backend_manager",
+      "contextlib",
+      "REL:1:tools.files",
+      "asyncio",
+      "REL:1:routing",
+      "REL:1:queue",
+      "atexit",
+      "structlog",
+      "REL:1:tools.mcp_management",
+      "REL:1:tools.resources",
+      "os",
+      "REL:1:auth_routes",
+      "REL:1:tools.lsp",
+      "pathlib",
+      "REL:1:llm"
+    ],
+    "symbols": [
+      {
+        "name": "_configure_structlog",
+        "kind": "function",
+        "line": 76,
+        "file_path": "src/delia/mcp_server.py",
+        "summary": null
+      },
+      {
+        "name": "_build_dynamic_instructions",
+        "kind": "function",
+        "line": 157,
+        "file_path": "src/delia/mcp_server.py",
+        "summary": null
+      },
+      {
+        "name": "run_server",
+        "kind": "function",
+        "line": 247,
+        "file_path": "src/delia/mcp_server.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/lsp_client.py": {
+    "mtime": 1766586708.0153859,
+    "imports": [
+      "shutil",
+      "typing",
+      "pygls.lsp.client",
+      "asyncio",
+      "pathlib",
+      "__future__",
+      "structlog",
+      "os",
+      "lsprotocol"
+    ],
+    "symbols": [
+      {
+        "name": "DeliaLSPClient",
+        "kind": "class",
+        "line": 25,
+        "file_path": "src/delia/lsp_client.py",
+        "summary": null
+      },
+      {
+        "name": "get_lsp_client",
+        "kind": "function",
+        "line": 669,
+        "file_path": "src/delia/lsp_client.py",
         "summary": null
       }
     ],
@@ -4763,14 +4694,14 @@
     "mtime": 1766121202.5948372,
     "imports": [
       "functools",
-      "REL:1:result",
       "typing",
-      "time",
-      "__future__",
-      "REL:2:prompts",
-      "structlog",
       "json",
+      "REL:2:prompts",
+      "__future__",
+      "REL:1:result",
       "hashlib",
+      "structlog",
+      "time",
       "re"
     ],
     "symbols": [
@@ -4816,10 +4747,10 @@
     "mtime": 1766246108.2304442,
     "imports": [
       "typing",
-      "__future__",
-      "dataclasses",
       "REL:2:prompts",
-      "pydantic"
+      "pydantic",
+      "__future__",
+      "dataclasses"
     ],
     "symbols": [
       {
@@ -4849,15 +4780,15 @@
   "src/delia/orchestration/planner.py": {
     "mtime": 1766116080.8081157,
     "imports": [
-      "REL:1:result",
-      "REL:2:text_utils",
       "typing",
-      "time",
-      "__future__",
-      "REL:2:prompts",
-      "structlog",
+      "REL:2:text_utils",
       "json",
-      "pydantic"
+      "REL:2:prompts",
+      "pydantic",
+      "__future__",
+      "REL:1:result",
+      "structlog",
+      "time"
     ],
     "symbols": [
       {
@@ -4884,69 +4815,14 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/orchestration/critic.py": {
-    "mtime": 1766534252.876835,
-    "imports": [
-      "REL:1:result",
-      "typing",
-      "dataclasses",
-      "__future__",
-      "REL:2:prompts",
-      "structlog",
-      "json",
-      "re"
-    ],
-    "symbols": [
-      {
-        "name": "BranchScore",
-        "kind": "class",
-        "line": 41,
-        "file_path": "src/delia/orchestration/critic.py",
-        "summary": null
-      },
-      {
-        "name": "BranchEvaluation",
-        "kind": "class",
-        "line": 70,
-        "file_path": "src/delia/orchestration/critic.py",
-        "summary": null
-      },
-      {
-        "name": "ResponseCritic",
-        "kind": "class",
-        "line": 83,
-        "file_path": "src/delia/orchestration/critic.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/orchestration/__init__.py": {
-    "mtime": 1766534324.9423778,
-    "imports": [
-      "REL:1:prompts",
-      "REL:1:outputs",
-      "REL:1:result",
-      "REL:1:intent",
-      "REL:1:llm_classifier",
-      "REL:1:exemplars",
-      "REL:1:semantic",
-      "REL:1:critic",
-      "REL:1:meta_learning",
-      "REL:1:executor",
-      "REL:1:service"
-    ],
-    "symbols": [],
-    "edge_summaries": {}
-  },
   "src/delia/orchestration/stakes.py": {
     "mtime": 1766258344.0618896,
     "imports": [
-      "numpy",
-      "enum",
-      "typing",
       "math",
+      "typing",
+      "numpy",
       "__future__",
+      "enum",
       "dataclasses",
       "structlog",
       "re"
@@ -5014,10 +4890,10 @@
   "src/delia/orchestration/tuning.py": {
     "mtime": 1766259534.57754,
     "imports": [
-      "enum",
       "typing",
       "__future__",
       "dataclasses",
+      "enum",
       "structlog",
       "re"
     ],
@@ -5084,16 +4960,16 @@
   "src/delia/orchestration/semantic.py": {
     "mtime": 1766265952.2872975,
     "imports": [
-      "numpy",
       "functools",
-      "REL:1:result",
-      "REL:1:exemplars",
-      "time",
       "typing",
-      "dataclasses",
-      "__future__",
+      "REL:1:exemplars",
+      "numpy",
       "REL:2:prompts",
-      "structlog"
+      "__future__",
+      "dataclasses",
+      "REL:1:result",
+      "structlog",
+      "time"
     ],
     "symbols": [
       {
@@ -5137,10 +5013,10 @@
   "src/delia/orchestration/dispatcher_embed.py": {
     "mtime": 1766280442.7411005,
     "imports": [
-      "__future__",
-      "numpy",
+      "structlog",
       "functools",
-      "structlog"
+      "numpy",
+      "__future__"
     ],
     "symbols": [
       {
@@ -5170,10 +5046,10 @@
   "src/delia/orchestration/dispatcher.py": {
     "mtime": 1766281160.1396363,
     "imports": [
-      "__future__",
+      "structlog",
       "typing",
       "REL:1:result",
-      "structlog"
+      "__future__"
     ],
     "symbols": [
       {
@@ -5196,10 +5072,10 @@
   "src/delia/orchestration/outputs.py": {
     "mtime": 1766289280.3854382,
     "imports": [
-      "__future__",
+      "enum",
       "typing",
       "pydantic",
-      "enum"
+      "__future__"
     ],
     "symbols": [
       {
@@ -5317,76 +5193,15 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/orchestration/context.py": {
-    "mtime": 1766539436.5537083,
-    "imports": [
-      "REL:1:graph",
-      "REL:2:language",
-      "pathlib",
-      "typing",
-      "REL:2:project_memory",
-      "__future__",
-      "REL:2:file_helpers",
-      "structlog",
-      "REL:1:summarizer",
-      "pydantic",
-      "re"
-    ],
-    "symbols": [
-      {
-        "name": "SymbolOutline",
-        "kind": "class",
-        "line": 35,
-        "file_path": "src/delia/orchestration/context.py",
-        "summary": null
-      },
-      {
-        "name": "extract_file_mentions",
-        "kind": "function",
-        "line": 68,
-        "file_path": "src/delia/orchestration/context.py",
-        "summary": null
-      },
-      {
-        "name": "extract_symbol_mentions",
-        "kind": "function",
-        "line": 83,
-        "file_path": "src/delia/orchestration/context.py",
-        "summary": null
-      },
-      {
-        "name": "format_symbol_outline",
-        "kind": "function",
-        "line": 94,
-        "file_path": "src/delia/orchestration/context.py",
-        "summary": null
-      },
-      {
-        "name": "get_symbols_for_files",
-        "kind": "async_function",
-        "line": 123,
-        "file_path": "src/delia/orchestration/context.py",
-        "summary": null
-      },
-      {
-        "name": "ContextEngine",
-        "kind": "class",
-        "line": 153,
-        "file_path": "src/delia/orchestration/context.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/orchestration/intrinsics.py": {
     "mtime": 1766292324.4635086,
     "imports": [
-      "enum",
       "typing",
+      "json",
       "__future__",
       "dataclasses",
+      "enum",
       "structlog",
-      "json",
       "re"
     ],
     "symbols": [
@@ -5442,25 +5257,534 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/orchestration/service.py": {
-    "mtime": 1766539329.5220466,
+  "src/delia/orchestration/meta_learning.py": {
+    "mtime": 1766331698.1388292,
     "imports": [
-      "REL:2:tracing",
-      "REL:1:result",
-      "REL:1:intent",
-      "asyncio",
-      "REL:2:semantic",
-      "REL:2:melons",
-      "REL:2:semantic.compression",
+      "math",
       "typing",
-      "time",
-      "REL:1:intrinsics",
-      "dataclasses",
+      "json",
+      "datetime",
+      "pathlib",
+      "uuid",
+      "random",
+      "REL:2:prompts",
       "__future__",
-      "REL:1:executor",
-      "REL:1:context",
+      "dataclasses",
       "structlog",
-      "pydantic"
+      "re",
+      "REL:2:"
+    ],
+    "symbols": [
+      {
+        "name": "OrchestrationPattern",
+        "kind": "class",
+        "line": 57,
+        "file_path": "src/delia/orchestration/meta_learning.py",
+        "summary": null
+      },
+      {
+        "name": "OrchestrationLearner",
+        "kind": "class",
+        "line": 131,
+        "file_path": "src/delia/orchestration/meta_learning.py",
+        "summary": null
+      },
+      {
+        "name": "get_orchestration_learner",
+        "kind": "function",
+        "line": 613,
+        "file_path": "src/delia/orchestration/meta_learning.py",
+        "summary": null
+      },
+      {
+        "name": "reset_orchestration_learner",
+        "kind": "function",
+        "line": 621,
+        "file_path": "src/delia/orchestration/meta_learning.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/intent.py": {
+    "mtime": 1766333044.049007,
+    "imports": [
+      "typing",
+      "__future__",
+      "dataclasses",
+      "REL:1:result",
+      "structlog",
+      "re"
+    ],
+    "symbols": [
+      {
+        "name": "IntentPattern",
+        "kind": "class",
+        "line": 22,
+        "file_path": "src/delia/orchestration/intent.py",
+        "summary": null
+      },
+      {
+        "name": "IntentDetector",
+        "kind": "class",
+        "line": 32,
+        "file_path": "src/delia/orchestration/intent.py",
+        "summary": null
+      },
+      {
+        "name": "get_intent_detector",
+        "kind": "function",
+        "line": 385,
+        "file_path": "src/delia/orchestration/intent.py",
+        "summary": null
+      },
+      {
+        "name": "detect_intent",
+        "kind": "function",
+        "line": 391,
+        "file_path": "src/delia/orchestration/intent.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/exemplars.py": {
+    "mtime": 1766333122.4956553,
+    "imports": [
+      "dataclasses",
+      "REL:2:prompts",
+      "__future__"
+    ],
+    "symbols": [
+      {
+        "name": "IntentExemplar",
+        "kind": "class",
+        "line": 27,
+        "file_path": "src/delia/orchestration/exemplars.py",
+        "summary": null
+      },
+      {
+        "name": "get_all_exemplars",
+        "kind": "function",
+        "line": 262,
+        "file_path": "src/delia/orchestration/exemplars.py",
+        "summary": null
+      },
+      {
+        "name": "get_orchestration_exemplars",
+        "kind": "function",
+        "line": 282,
+        "file_path": "src/delia/orchestration/exemplars.py",
+        "summary": null
+      },
+      {
+        "name": "get_role_exemplars",
+        "kind": "function",
+        "line": 291,
+        "file_path": "src/delia/orchestration/exemplars.py",
+        "summary": null
+      },
+      {
+        "name": "get_task_exemplars",
+        "kind": "function",
+        "line": 304,
+        "file_path": "src/delia/orchestration/exemplars.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/graph.py": {
+    "mtime": 1766590910.41425,
+    "imports": [
+      "typing",
+      "REL:2:file_helpers",
+      "asyncio",
+      "json",
+      "REL:1:constants",
+      "pathlib",
+      "ast",
+      "__future__",
+      "dataclasses",
+      "structlog",
+      "re"
+    ],
+    "symbols": [
+      {
+        "name": "Symbol",
+        "kind": "class",
+        "line": 33,
+        "file_path": "src/delia/orchestration/graph.py",
+        "summary": null
+      },
+      {
+        "name": "FileNode",
+        "kind": "class",
+        "line": 42,
+        "file_path": "src/delia/orchestration/graph.py",
+        "summary": null
+      },
+      {
+        "name": "SymbolGraph",
+        "kind": "class",
+        "line": 50,
+        "file_path": "src/delia/orchestration/graph.py",
+        "summary": null
+      },
+      {
+        "name": "get_symbol_graph",
+        "kind": "function",
+        "line": 467,
+        "file_path": "src/delia/orchestration/graph.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/constants.py": {
+    "mtime": 1766436662.607848,
+    "imports": [],
+    "symbols": [
+      {
+        "name": "should_ignore_file",
+        "kind": "function",
+        "line": 32,
+        "file_path": "src/delia/orchestration/constants.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/summarizer.py": {
+    "mtime": 1766436737.5763905,
+    "imports": [
+      "typing",
+      "REL:2:file_helpers",
+      "asyncio",
+      "json",
+      "pathlib",
+      "__future__",
+      "dataclasses",
+      "REL:2:routing",
+      "structlog",
+      "time"
+    ],
+    "symbols": [
+      {
+        "name": "FileSummary",
+        "kind": "class",
+        "line": 32,
+        "file_path": "src/delia/orchestration/summarizer.py",
+        "summary": null
+      },
+      {
+        "name": "CodeSummarizer",
+        "kind": "class",
+        "line": 41,
+        "file_path": "src/delia/orchestration/summarizer.py",
+        "summary": null
+      },
+      {
+        "name": "get_summarizer",
+        "kind": "function",
+        "line": 575,
+        "file_path": "src/delia/orchestration/summarizer.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/__init__.py": {
+    "mtime": 1766550728.244855,
+    "imports": [
+      "REL:1:exemplars",
+      "REL:1:llm_classifier",
+      "REL:1:meta_learning",
+      "REL:1:intent",
+      "REL:1:prompts",
+      "REL:1:result",
+      "REL:1:outputs",
+      "REL:1:executor",
+      "REL:1:semantic",
+      "REL:1:service",
+      "REL:1:critic"
+    ],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/background.py": {
+    "mtime": 1766550728.244855,
+    "imports": [
+      "typing",
+      "REL:2:container",
+      "asyncio",
+      "REL:2:config",
+      "__future__",
+      "structlog",
+      "REL:2:backend_manager"
+    ],
+    "symbols": [
+      {
+        "name": "schedule_background_task",
+        "kind": "function",
+        "line": 25,
+        "file_path": "src/delia/orchestration/background.py",
+        "summary": null
+      },
+      {
+        "name": "_prewarm_check_loop",
+        "kind": "async_function",
+        "line": 40,
+        "file_path": "src/delia/orchestration/background.py",
+        "summary": null
+      },
+      {
+        "name": "start_prewarm_task",
+        "kind": "function",
+        "line": 102,
+        "file_path": "src/delia/orchestration/background.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/context.py": {
+    "mtime": 1766550728.2449899,
+    "imports": [
+      "typing",
+      "REL:2:file_helpers",
+      "REL:1:summarizer",
+      "pathlib",
+      "pydantic",
+      "REL:2:language",
+      "__future__",
+      "REL:2:project_memory",
+      "structlog",
+      "re",
+      "REL:1:graph"
+    ],
+    "symbols": [
+      {
+        "name": "SymbolOutline",
+        "kind": "class",
+        "line": 35,
+        "file_path": "src/delia/orchestration/context.py",
+        "summary": null
+      },
+      {
+        "name": "extract_file_mentions",
+        "kind": "function",
+        "line": 68,
+        "file_path": "src/delia/orchestration/context.py",
+        "summary": null
+      },
+      {
+        "name": "extract_symbol_mentions",
+        "kind": "function",
+        "line": 83,
+        "file_path": "src/delia/orchestration/context.py",
+        "summary": null
+      },
+      {
+        "name": "format_symbol_outline",
+        "kind": "function",
+        "line": 94,
+        "file_path": "src/delia/orchestration/context.py",
+        "summary": null
+      },
+      {
+        "name": "get_symbols_for_files",
+        "kind": "async_function",
+        "line": 123,
+        "file_path": "src/delia/orchestration/context.py",
+        "summary": null
+      },
+      {
+        "name": "ContextEngine",
+        "kind": "class",
+        "line": 153,
+        "file_path": "src/delia/orchestration/context.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/critic.py": {
+    "mtime": 1766550728.2450905,
+    "imports": [
+      "typing",
+      "json",
+      "REL:2:prompts",
+      "__future__",
+      "dataclasses",
+      "REL:1:result",
+      "structlog",
+      "re"
+    ],
+    "symbols": [
+      {
+        "name": "BranchScore",
+        "kind": "class",
+        "line": 41,
+        "file_path": "src/delia/orchestration/critic.py",
+        "summary": null
+      },
+      {
+        "name": "BranchEvaluation",
+        "kind": "class",
+        "line": 70,
+        "file_path": "src/delia/orchestration/critic.py",
+        "summary": null
+      },
+      {
+        "name": "ResponseCritic",
+        "kind": "class",
+        "line": 83,
+        "file_path": "src/delia/orchestration/critic.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/executor.py": {
+    "mtime": 1766550728.2454076,
+    "imports": [
+      "REL:2:session_manager",
+      "typing",
+      "REL:2:text_utils",
+      "json",
+      "REL:2:prompts",
+      "REL:2:config",
+      "REL:1:outputs",
+      "time",
+      "re",
+      "REL:2:personas",
+      "REL:2:llm",
+      "REL:1:tuning",
+      "pydantic",
+      "REL:2:routing",
+      "REL:1:result",
+      "REL:2:file_helpers",
+      "asyncio",
+      "REL:1:intent",
+      "collections.abc",
+      "structlog",
+      "REL:2:playbook",
+      "__future__",
+      "REL:1:prompts"
+    ],
+    "symbols": [
+      {
+        "name": "ToTConfig",
+        "kind": "class",
+        "line": 45,
+        "file_path": "src/delia/orchestration/executor.py",
+        "summary": null
+      },
+      {
+        "name": "OrchestrationExecutor",
+        "kind": "class",
+        "line": 62,
+        "file_path": "src/delia/orchestration/executor.py",
+        "summary": null
+      },
+      {
+        "name": "get_orchestration_executor",
+        "kind": "function",
+        "line": 1034,
+        "file_path": "src/delia/orchestration/executor.py",
+        "summary": null
+      },
+      {
+        "name": "execute_orchestration",
+        "kind": "async_function",
+        "line": 1039,
+        "file_path": "src/delia/orchestration/executor.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/learning_coordinator.py": {
+    "mtime": 1766550728.2454076,
+    "imports": [
+      "typing",
+      "REL:2:learning.reflector",
+      "REL:2:playbook",
+      "__future__",
+      "structlog",
+      "REL:2:learning.curator"
+    ],
+    "symbols": [
+      {
+        "name": "LearningCoordinator",
+        "kind": "class",
+        "line": 23,
+        "file_path": "src/delia/orchestration/learning_coordinator.py",
+        "summary": null
+      },
+      {
+        "name": "get_learning_coordinator",
+        "kind": "function",
+        "line": 207,
+        "file_path": "src/delia/orchestration/learning_coordinator.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/prompts.py": {
+    "mtime": 1766550728.2454076,
+    "imports": [
+      "REL:1:result",
+      "REL:2:prompts",
+      "REL:2:language",
+      "__future__"
+    ],
+    "symbols": [
+      {
+        "name": "SystemPromptGenerator",
+        "kind": "class",
+        "line": 23,
+        "file_path": "src/delia/orchestration/prompts.py",
+        "summary": null
+      },
+      {
+        "name": "get_prompt_generator",
+        "kind": "function",
+        "line": 126,
+        "file_path": "src/delia/orchestration/prompts.py",
+        "summary": null
+      },
+      {
+        "name": "generate_system_prompt",
+        "kind": "function",
+        "line": 134,
+        "file_path": "src/delia/orchestration/prompts.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/orchestration/service.py": {
+    "mtime": 1766550728.2456927,
+    "imports": [
+      "REL:1:context",
+      "typing",
+      "REL:1:intrinsics",
+      "REL:2:tracing",
+      "asyncio",
+      "REL:1:intent",
+      "pydantic",
+      "REL:2:semantic.compression",
+      "__future__",
+      "dataclasses",
+      "REL:1:result",
+      "REL:2:semantic",
+      "structlog",
+      "REL:1:executor",
+      "time",
+      "REL:2:melons"
     ],
     "symbols": [
       {
@@ -5508,372 +5832,15 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/orchestration/meta_learning.py": {
-    "mtime": 1766331698.1388292,
-    "imports": [
-      "random",
-      "pathlib",
-      "typing",
-      "REL:2:",
-      "math",
-      "__future__",
-      "dataclasses",
-      "uuid",
-      "REL:2:prompts",
-      "structlog",
-      "json",
-      "datetime",
-      "re"
-    ],
-    "symbols": [
-      {
-        "name": "OrchestrationPattern",
-        "kind": "class",
-        "line": 57,
-        "file_path": "src/delia/orchestration/meta_learning.py",
-        "summary": null
-      },
-      {
-        "name": "OrchestrationLearner",
-        "kind": "class",
-        "line": 131,
-        "file_path": "src/delia/orchestration/meta_learning.py",
-        "summary": null
-      },
-      {
-        "name": "get_orchestration_learner",
-        "kind": "function",
-        "line": 613,
-        "file_path": "src/delia/orchestration/meta_learning.py",
-        "summary": null
-      },
-      {
-        "name": "reset_orchestration_learner",
-        "kind": "function",
-        "line": 621,
-        "file_path": "src/delia/orchestration/meta_learning.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/orchestration/intent.py": {
-    "mtime": 1766333044.049007,
-    "imports": [
-      "REL:1:result",
-      "typing",
-      "__future__",
-      "dataclasses",
-      "structlog",
-      "re"
-    ],
-    "symbols": [
-      {
-        "name": "IntentPattern",
-        "kind": "class",
-        "line": 22,
-        "file_path": "src/delia/orchestration/intent.py",
-        "summary": null
-      },
-      {
-        "name": "IntentDetector",
-        "kind": "class",
-        "line": 32,
-        "file_path": "src/delia/orchestration/intent.py",
-        "summary": null
-      },
-      {
-        "name": "get_intent_detector",
-        "kind": "function",
-        "line": 385,
-        "file_path": "src/delia/orchestration/intent.py",
-        "summary": null
-      },
-      {
-        "name": "detect_intent",
-        "kind": "function",
-        "line": 391,
-        "file_path": "src/delia/orchestration/intent.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/orchestration/exemplars.py": {
-    "mtime": 1766333122.4956553,
-    "imports": [
-      "dataclasses",
-      "__future__",
-      "REL:2:prompts"
-    ],
-    "symbols": [
-      {
-        "name": "IntentExemplar",
-        "kind": "class",
-        "line": 27,
-        "file_path": "src/delia/orchestration/exemplars.py",
-        "summary": null
-      },
-      {
-        "name": "get_all_exemplars",
-        "kind": "function",
-        "line": 262,
-        "file_path": "src/delia/orchestration/exemplars.py",
-        "summary": null
-      },
-      {
-        "name": "get_orchestration_exemplars",
-        "kind": "function",
-        "line": 282,
-        "file_path": "src/delia/orchestration/exemplars.py",
-        "summary": null
-      },
-      {
-        "name": "get_role_exemplars",
-        "kind": "function",
-        "line": 291,
-        "file_path": "src/delia/orchestration/exemplars.py",
-        "summary": null
-      },
-      {
-        "name": "get_task_exemplars",
-        "kind": "function",
-        "line": 304,
-        "file_path": "src/delia/orchestration/exemplars.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/orchestration/prompts.py": {
-    "mtime": 1766538305.2996047,
-    "imports": [
-      "__future__",
-      "REL:1:result",
-      "REL:2:language",
-      "REL:2:prompts"
-    ],
-    "symbols": [
-      {
-        "name": "SystemPromptGenerator",
-        "kind": "class",
-        "line": 23,
-        "file_path": "src/delia/orchestration/prompts.py",
-        "summary": null
-      },
-      {
-        "name": "get_prompt_generator",
-        "kind": "function",
-        "line": 126,
-        "file_path": "src/delia/orchestration/prompts.py",
-        "summary": null
-      },
-      {
-        "name": "generate_system_prompt",
-        "kind": "function",
-        "line": 134,
-        "file_path": "src/delia/orchestration/prompts.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/orchestration/graph.py": {
-    "mtime": 1766348344.3877566,
-    "imports": [
-      "ast",
-      "REL:1:constants",
-      "asyncio",
-      "pathlib",
-      "typing",
-      "dataclasses",
-      "__future__",
-      "REL:2:file_helpers",
-      "structlog",
-      "json",
-      "re"
-    ],
-    "symbols": [
-      {
-        "name": "Symbol",
-        "kind": "class",
-        "line": 33,
-        "file_path": "src/delia/orchestration/graph.py",
-        "summary": null
-      },
-      {
-        "name": "FileNode",
-        "kind": "class",
-        "line": 42,
-        "file_path": "src/delia/orchestration/graph.py",
-        "summary": null
-      },
-      {
-        "name": "SymbolGraph",
-        "kind": "class",
-        "line": 50,
-        "file_path": "src/delia/orchestration/graph.py",
-        "summary": null
-      },
-      {
-        "name": "get_symbol_graph",
-        "kind": "function",
-        "line": 422,
-        "file_path": "src/delia/orchestration/graph.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/orchestration/constants.py": {
-    "mtime": 1766436662.607848,
-    "imports": [],
-    "symbols": [
-      {
-        "name": "should_ignore_file",
-        "kind": "function",
-        "line": 32,
-        "file_path": "src/delia/orchestration/constants.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/orchestration/summarizer.py": {
-    "mtime": 1766436737.5763905,
-    "imports": [
-      "asyncio",
-      "pathlib",
-      "typing",
-      "time",
-      "REL:2:routing",
-      "dataclasses",
-      "__future__",
-      "REL:2:file_helpers",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "FileSummary",
-        "kind": "class",
-        "line": 32,
-        "file_path": "src/delia/orchestration/summarizer.py",
-        "summary": null
-      },
-      {
-        "name": "CodeSummarizer",
-        "kind": "class",
-        "line": 41,
-        "file_path": "src/delia/orchestration/summarizer.py",
-        "summary": null
-      },
-      {
-        "name": "get_summarizer",
-        "kind": "function",
-        "line": 575,
-        "file_path": "src/delia/orchestration/summarizer.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/orchestration/learning_coordinator.py": {
-    "mtime": 1766534252.716836,
-    "imports": [
-      "typing",
-      "REL:2:learning.curator",
-      "__future__",
-      "REL:2:playbook",
-      "REL:2:learning.reflector",
-      "structlog"
-    ],
-    "symbols": [
-      {
-        "name": "LearningCoordinator",
-        "kind": "class",
-        "line": 23,
-        "file_path": "src/delia/orchestration/learning_coordinator.py",
-        "summary": null
-      },
-      {
-        "name": "get_learning_coordinator",
-        "kind": "function",
-        "line": 207,
-        "file_path": "src/delia/orchestration/learning_coordinator.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/orchestration/executor.py": {
-    "mtime": 1766539329.6250463,
-    "imports": [
-      "REL:1:outputs",
-      "REL:1:result",
-      "asyncio",
-      "re",
-      "REL:1:intent",
-      "typing",
-      "time",
-      "structlog",
-      "json",
-      "REL:2:session_manager",
-      "collections.abc",
-      "REL:1:prompts",
-      "REL:2:text_utils",
-      "REL:1:tuning",
-      "REL:2:personas",
-      "REL:2:playbook",
-      "REL:2:prompts",
-      "pydantic",
-      "REL:2:routing",
-      "__future__",
-      "REL:2:file_helpers",
-      "REL:2:config",
-      "REL:2:llm"
-    ],
-    "symbols": [
-      {
-        "name": "ToTConfig",
-        "kind": "class",
-        "line": 45,
-        "file_path": "src/delia/orchestration/executor.py",
-        "summary": null
-      },
-      {
-        "name": "OrchestrationExecutor",
-        "kind": "class",
-        "line": 62,
-        "file_path": "src/delia/orchestration/executor.py",
-        "summary": null
-      },
-      {
-        "name": "get_orchestration_executor",
-        "kind": "function",
-        "line": 1034,
-        "file_path": "src/delia/orchestration/executor.py",
-        "summary": null
-      },
-      {
-        "name": "execute_orchestration",
-        "kind": "async_function",
-        "line": 1039,
-        "file_path": "src/delia/orchestration/executor.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/providers/__init__.py": {
     "mtime": 1766035775.4989765,
     "imports": [
+      "REL:1:ollama",
       "REL:1:models",
-      "REL:1:gemini",
-      "REL:1:llamacpp",
       "REL:1:registry",
-      "REL:1:base",
-      "REL:1:ollama"
+      "REL:1:llamacpp",
+      "REL:1:gemini",
+      "REL:1:base"
     ],
     "symbols": [],
     "edge_summaries": {}
@@ -5939,8 +5906,8 @@
   "src/delia/providers/registry.py": {
     "mtime": 1766035775.4995599,
     "imports": [
-      "typing",
       "REL:1:base",
+      "typing",
       "REL:2:backend_manager"
     ],
     "symbols": [
@@ -5968,13 +5935,57 @@
     ],
     "edge_summaries": {}
   },
+  "src/delia/providers/ollama.py": {
+    "mtime": 1766267618.6089957,
+    "imports": [
+      "typing",
+      "humanize",
+      "REL:1:models",
+      "json",
+      "REL:2:messages",
+      "tenacity",
+      "pydantic",
+      "REL:2:config",
+      "REL:1:base",
+      "httpx",
+      "collections.abc",
+      "structlog",
+      "time",
+      "re",
+      "REL:2:backend_manager"
+    ],
+    "symbols": [
+      {
+        "name": "extract_thinking_content",
+        "kind": "function",
+        "line": 53,
+        "file_path": "src/delia/providers/ollama.py",
+        "summary": null
+      },
+      {
+        "name": "log_thinking_and_response",
+        "kind": "function",
+        "line": 63,
+        "file_path": "src/delia/providers/ollama.py",
+        "summary": null
+      },
+      {
+        "name": "OllamaProvider",
+        "kind": "class",
+        "line": 86,
+        "file_path": "src/delia/providers/ollama.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
   "src/delia/providers/base.py": {
-    "mtime": 1766537671.2199588,
+    "mtime": 1766550728.246257,
     "imports": [
       "dataclasses",
       "typing",
-      "collections.abc",
-      "REL:2:backend_manager"
+      "REL:2:backend_manager",
+      "collections.abc"
     ],
     "symbols": [
       {
@@ -6022,95 +6033,20 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/providers/llamacpp.py": {
-    "mtime": 1766537657.3230245,
-    "imports": [
-      "REL:2:messages",
-      "REL:1:models",
-      "tenacity",
-      "REL:1:base",
-      "typing",
-      "time",
-      "humanize",
-      "REL:2:tokens",
-      "httpx",
-      "REL:2:config",
-      "structlog",
-      "json",
-      "pydantic",
-      "collections.abc",
-      "REL:1:ollama",
-      "REL:2:backend_manager"
-    ],
-    "symbols": [
-      {
-        "name": "LlamaCppProvider",
-        "kind": "class",
-        "line": 65,
-        "file_path": "src/delia/providers/llamacpp.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/providers/ollama.py": {
-    "mtime": 1766267618.6089957,
-    "imports": [
-      "REL:2:messages",
-      "REL:1:models",
-      "tenacity",
-      "REL:1:base",
-      "typing",
-      "time",
-      "humanize",
-      "httpx",
-      "REL:2:config",
-      "structlog",
-      "json",
-      "pydantic",
-      "collections.abc",
-      "re",
-      "REL:2:backend_manager"
-    ],
-    "symbols": [
-      {
-        "name": "extract_thinking_content",
-        "kind": "function",
-        "line": 53,
-        "file_path": "src/delia/providers/ollama.py",
-        "summary": null
-      },
-      {
-        "name": "log_thinking_and_response",
-        "kind": "function",
-        "line": 63,
-        "file_path": "src/delia/providers/ollama.py",
-        "summary": null
-      },
-      {
-        "name": "OllamaProvider",
-        "kind": "class",
-        "line": 86,
-        "file_path": "src/delia/providers/ollama.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/providers/gemini.py": {
-    "mtime": 1766537664.3759913,
+    "mtime": 1766550728.2463703,
     "imports": [
-      "REL:2:messages",
-      "os",
-      "asyncio",
       "typing",
-      "time",
       "humanize",
+      "asyncio",
+      "REL:2:messages",
       "REL:2:tokens",
       "REL:2:config",
-      "structlog",
       "REL:1:base",
       "collections.abc",
+      "structlog",
+      "time",
+      "os",
       "REL:2:backend_manager"
     ],
     "symbols": [
@@ -6138,17 +6074,48 @@
     ],
     "edge_summaries": {}
   },
+  "src/delia/providers/llamacpp.py": {
+    "mtime": 1766550728.2465222,
+    "imports": [
+      "typing",
+      "humanize",
+      "REL:1:models",
+      "REL:1:ollama",
+      "json",
+      "REL:2:messages",
+      "tenacity",
+      "REL:2:tokens",
+      "pydantic",
+      "REL:2:config",
+      "REL:1:base",
+      "httpx",
+      "collections.abc",
+      "structlog",
+      "time",
+      "REL:2:backend_manager"
+    ],
+    "symbols": [
+      {
+        "name": "LlamaCppProvider",
+        "kind": "class",
+        "line": 65,
+        "file_path": "src/delia/providers/llamacpp.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
   "src/delia/tools/mcp_client.py": {
     "mtime": 1766035775.5007021,
     "imports": [
-      "os",
-      "asyncio",
       "typing",
-      "dataclasses",
-      "__future__",
+      "asyncio",
+      "json",
       "uuid",
+      "__future__",
+      "dataclasses",
       "structlog",
-      "json"
+      "os"
     ],
     "symbols": [
       {
@@ -6194,10 +6161,10 @@
     "imports": [
       "typing",
       "json",
+      "uuid",
       "__future__",
       "dataclasses",
       "structlog",
-      "uuid",
       "re"
     ],
     "symbols": [
@@ -6267,53 +6234,11 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/tools/registry.py": {
-    "mtime": 1766537466.264885,
-    "imports": [
-      "functools",
-      "enum",
-      "typing",
-      "dataclasses",
-      "__future__",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "TrustLevel",
-        "kind": "class",
-        "line": 34,
-        "file_path": "src/delia/tools/registry.py",
-        "summary": null
-      },
-      {
-        "name": "sanitize_tool_schema",
-        "kind": "function",
-        "line": 55,
-        "file_path": "src/delia/tools/registry.py",
-        "summary": null
-      },
-      {
-        "name": "ToolDefinition",
-        "kind": "class",
-        "line": 132,
-        "file_path": "src/delia/tools/registry.py",
-        "summary": null
-      },
-      {
-        "name": "ToolRegistry",
-        "kind": "class",
-        "line": 163,
-        "file_path": "src/delia/tools/registry.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/tools/web_search.py": {
     "mtime": 1766035775.5009766,
     "imports": [
-      "asyncio",
       "typing",
+      "asyncio",
       "__future__",
       "dataclasses",
       "structlog",
@@ -6368,10 +6293,10 @@
   "src/delia/tools/interaction.py": {
     "mtime": 1766239482.5625384,
     "imports": [
-      "__future__",
       "prompt_toolkit",
       "prompt_toolkit.formatted_text",
-      "asyncio"
+      "asyncio",
+      "__future__"
     ],
     "symbols": [
       {
@@ -6387,21 +6312,21 @@
   "src/delia/tools/builtins.py": {
     "mtime": 1766340179.5409467,
     "imports": [
-      "fnmatch",
       "shutil",
-      "os",
-      "asyncio",
-      "REL:1:editing",
-      "pathlib",
       "typing",
       "REL:1:registry",
+      "asyncio",
+      "json",
       "subprocess",
+      "pathlib",
+      "__future__",
       "REL:2:types",
       "httpx",
-      "__future__",
-      "REL:1:executor",
+      "REL:1:editing",
       "structlog",
-      "json"
+      "REL:1:executor",
+      "fnmatch",
+      "os"
     ],
     "symbols": [
       {
@@ -6503,8 +6428,8 @@
     "imports": [
       "pathlib",
       "__future__",
-      "REL:1:executor",
       "structlog",
+      "REL:1:executor",
       "REL:2:types"
     ],
     "symbols": [
@@ -6528,16 +6453,16 @@
   "src/delia/tools/agent.py": {
     "mtime": 1766340164.9230475,
     "imports": [
-      "inspect",
-      "asyncio",
       "typing",
-      "time",
       "REL:1:registry",
-      "dataclasses",
+      "asyncio",
       "__future__",
+      "dataclasses",
       "REL:1:executor",
-      "REL:1:parser",
-      "structlog"
+      "structlog",
+      "inspect",
+      "time",
+      "REL:1:parser"
     ],
     "symbols": [
       {
@@ -6571,131 +6496,20 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/tools/orchestration.py": {
-    "mtime": 1766539436.3967087,
-    "imports": [
-      "typing",
-      "REL:1:registry",
-      "__future__",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "_delegate_handler",
-        "kind": "async_function",
-        "line": 40,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_batch_handler",
-        "kind": "async_function",
-        "line": 104,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_batch_vote_handler",
-        "kind": "async_function",
-        "line": 131,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_think_handler",
-        "kind": "async_function",
-        "line": 164,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_health_handler",
-        "kind": "async_function",
-        "line": 198,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_models_handler",
-        "kind": "async_function",
-        "line": 214,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_switch_backend_handler",
-        "kind": "async_function",
-        "line": 230,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_compare_handler",
-        "kind": "async_function",
-        "line": 246,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_vote_handler",
-        "kind": "async_function",
-        "line": 351,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_compute_handler",
-        "kind": "async_function",
-        "line": 528,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_session_compact_handler",
-        "kind": "async_function",
-        "line": 583,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_session_stats_handler",
-        "kind": "async_function",
-        "line": 599,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "_project_memories_handler",
-        "kind": "async_function",
-        "line": 616,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "get_orchestration_tools",
-        "kind": "function",
-        "line": 637,
-        "file_path": "src/delia/tools/orchestration.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/tools/executor.py": {
     "mtime": 1766298477.5005636,
     "imports": [
+      "typing",
+      "REL:1:registry",
       "asyncio",
       "pathlib",
-      "typing",
-      "time",
-      "REL:1:registry",
       "__future__",
       "dataclasses",
-      "REL:1:parser",
-      "structlog",
       "REL:2:types",
-      "REL:2:security"
+      "REL:2:security",
+      "structlog",
+      "time",
+      "REL:1:parser"
     ],
     "symbols": [
       {
@@ -6743,22 +6557,166 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/tools/coding.py": {
-    "mtime": 1766539217.1453362,
+  "src/delia/tools/sandbox_tools.py": {
+    "mtime": 1766325307.879019,
     "imports": [
-      "pathlib",
+      "structlog",
+      "REL:2:sandbox",
+      "__future__"
+    ],
+    "symbols": [
+      {
+        "name": "_format_sandbox_result",
+        "kind": "function",
+        "line": 25,
+        "file_path": "src/delia/tools/sandbox_tools.py",
+        "summary": null
+      },
+      {
+        "name": "shell_exec_sandboxed",
+        "kind": "async_function",
+        "line": 63,
+        "file_path": "src/delia/tools/sandbox_tools.py",
+        "summary": null
+      },
+      {
+        "name": "code_execute",
+        "kind": "async_function",
+        "line": 90,
+        "file_path": "src/delia/tools/sandbox_tools.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/models.py": {
+    "mtime": 1766361781.6629763,
+    "imports": [
+      "REL:2:playbook",
       "typing",
-      "subprocess",
+      "pydantic",
+      "__future__"
+    ],
+    "symbols": [
+      {
+        "name": "DirectoryInfo",
+        "kind": "class",
+        "line": 22,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "FilePreview",
+        "kind": "class",
+        "line": 28,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "ScanStructure",
+        "kind": "class",
+        "line": 36,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "ScanOverviewResponse",
+        "kind": "class",
+        "line": 42,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "ScanManifestsResponse",
+        "kind": "class",
+        "line": 57,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "ScanEntryPointsResponse",
+        "kind": "class",
+        "line": 66,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "ScanSamplesResponse",
+        "kind": "class",
+        "line": 75,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "BackendHealth",
+        "kind": "class",
+        "line": 89,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "HealthResponse",
+        "kind": "class",
+        "line": 102,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "TechStack",
+        "kind": "class",
+        "line": 114,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "ProfileRecommendationOutput",
+        "kind": "class",
+        "line": 120,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      },
+      {
+        "name": "InitProjectResponse",
+        "kind": "class",
+        "line": 126,
+        "file_path": "src/delia/tools/models.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/__init__.py": {
+    "mtime": 1766409753.9826875,
+    "imports": [
+      "REL:1:mcp_client",
       "REL:1:registry",
-      "REL:2:types",
+      "REL:1:builtins",
+      "REL:1:lsp",
+      "REL:1:agent",
+      "REL:1:files",
+      "REL:1:executor",
+      "REL:1:coding",
+      "REL:1:parser"
+    ],
+    "symbols": [],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/coding.py": {
+    "mtime": 1766550728.2471304,
+    "imports": [
+      "typing",
+      "REL:1:registry",
+      "REL:1:builtins",
+      "json",
+      "subprocess",
+      "pathlib",
       "__future__",
       "dataclasses",
-      "REL:1:executor",
-      "structlog",
-      "json",
       "tempfile",
-      "re",
-      "REL:1:builtins"
+      "structlog",
+      "REL:1:executor",
+      "REL:2:types",
+      "re"
     ],
     "symbols": [
       {
@@ -6897,378 +6855,703 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/tools/sandbox_tools.py": {
-    "mtime": 1766325307.879019,
+  "src/delia/tools/consolidated.py": {
+    "mtime": 1766587973.5458777,
     "imports": [
-      "REL:2:sandbox",
-      "__future__",
-      "structlog"
+      "structlog",
+      "typing",
+      "json",
+      "__future__"
     ],
     "symbols": [
       {
-        "name": "_format_sandbox_result",
-        "kind": "function",
+        "name": "playbook_tool",
+        "kind": "async_function",
         "line": 25,
-        "file_path": "src/delia/tools/sandbox_tools.py",
+        "file_path": "src/delia/tools/consolidated.py",
         "summary": null
       },
       {
-        "name": "shell_exec_sandboxed",
+        "name": "memory_tool",
         "kind": "async_function",
-        "line": 63,
-        "file_path": "src/delia/tools/sandbox_tools.py",
+        "line": 223,
+        "file_path": "src/delia/tools/consolidated.py",
         "summary": null
       },
       {
-        "name": "code_execute",
+        "name": "session_tool",
         "kind": "async_function",
-        "line": 90,
-        "file_path": "src/delia/tools/sandbox_tools.py",
+        "line": 329,
+        "file_path": "src/delia/tools/consolidated.py",
         "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/tools/resources.py": {
-    "mtime": 1766497199.8398242,
-    "imports": [
-      "REL:2:container",
-      "typing",
-      "fastmcp",
-      "__future__",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
+      },
       {
-        "name": "register_resource_tools",
+        "name": "profiles_tool",
+        "kind": "async_function",
+        "line": 405,
+        "file_path": "src/delia/tools/consolidated.py",
+        "summary": null
+      },
+      {
+        "name": "project_tool",
+        "kind": "async_function",
+        "line": 538,
+        "file_path": "src/delia/tools/consolidated.py",
+        "summary": null
+      },
+      {
+        "name": "admin_tool",
+        "kind": "async_function",
+        "line": 642,
+        "file_path": "src/delia/tools/consolidated.py",
+        "summary": null
+      },
+      {
+        "name": "register_consolidated_tools",
         "kind": "function",
-        "line": 21,
-        "file_path": "src/delia/tools/resources.py",
+        "line": 723,
+        "file_path": "src/delia/tools/consolidated.py",
         "summary": null
       }
     ],
-    "edge_summaries": {}
-  },
-  "src/delia/tools/models.py": {
-    "mtime": 1766361781.6629763,
-    "imports": [
-      "__future__",
-      "typing",
-      "pydantic",
-      "REL:2:playbook"
-    ],
-    "symbols": [
-      {
-        "name": "DirectoryInfo",
-        "kind": "class",
-        "line": 22,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "FilePreview",
-        "kind": "class",
-        "line": 28,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "ScanStructure",
-        "kind": "class",
-        "line": 36,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "ScanOverviewResponse",
-        "kind": "class",
-        "line": 42,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "ScanManifestsResponse",
-        "kind": "class",
-        "line": 57,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "ScanEntryPointsResponse",
-        "kind": "class",
-        "line": 66,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "ScanSamplesResponse",
-        "kind": "class",
-        "line": 75,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "BackendHealth",
-        "kind": "class",
-        "line": 89,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "HealthResponse",
-        "kind": "class",
-        "line": 102,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "TechStack",
-        "kind": "class",
-        "line": 114,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "ProfileRecommendationOutput",
-        "kind": "class",
-        "line": 120,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      },
-      {
-        "name": "InitProjectResponse",
-        "kind": "class",
-        "line": 126,
-        "file_path": "src/delia/tools/models.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/tools/lsp.py": {
-    "mtime": 1766539424.2807498,
-    "imports": [
-      "pathlib",
-      "typing",
-      "REL:2:",
-      "REL:1:registry",
-      "__future__",
-      "structlog",
-      "REL:2:types"
-    ],
-    "symbols": [
-      {
-        "name": "get_lsp_tools",
-        "kind": "function",
-        "line": 24,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_goto_definition",
-        "kind": "async_function",
-        "line": 96,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_find_references",
-        "kind": "async_function",
-        "line": 127,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_hover",
-        "kind": "async_function",
-        "line": 157,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_get_symbols",
-        "kind": "async_function",
-        "line": 185,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_rename_symbol",
-        "kind": "async_function",
-        "line": 232,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_find_symbol",
-        "kind": "async_function",
-        "line": 315,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_replace_symbol_body",
-        "kind": "async_function",
-        "line": 397,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_insert_before_symbol",
-        "kind": "async_function",
-        "line": 460,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      },
-      {
-        "name": "lsp_insert_after_symbol",
-        "kind": "async_function",
-        "line": 515,
-        "file_path": "src/delia/tools/lsp.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/tools/__init__.py": {
-    "mtime": 1766409753.9826875,
-    "imports": [
-      "REL:1:mcp_client",
-      "REL:1:lsp",
-      "REL:1:files",
-      "REL:1:registry",
-      "REL:1:agent",
-      "REL:1:coding",
-      "REL:1:parser",
-      "REL:1:executor",
-      "REL:1:builtins"
-    ],
-    "symbols": [],
     "edge_summaries": {}
   },
   "src/delia/tools/files.py": {
-    "mtime": 1766539406.7988076,
+    "mtime": 1766550728.2473605,
     "imports": [
-      "structlog",
-      "os",
+      "asyncio",
       "pathlib",
-      "typing",
-      "subprocess",
       "__future__",
-      "fnmatch",
+      "os",
       "REL:2:types",
+      "REL:1:handlers",
+      "fastmcp",
+      "structlog",
+      "fnmatch",
       "re"
     ],
     "symbols": [
       {
+        "name": "register_file_tools",
+        "kind": "function",
+        "line": 28,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
         "name": "_get_project_root",
         "kind": "function",
-        "line": 27,
+        "line": 197,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
         "name": "_resolve_path",
         "kind": "function",
-        "line": 36,
+        "line": 202,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
         "name": "_is_safe_path",
         "kind": "function",
-        "line": 50,
+        "line": 216,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
-        "name": "read_file",
+        "name": "read_file_impl",
         "kind": "async_function",
-        "line": 72,
+        "line": 240,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
-        "name": "write_file",
-        "kind": "async_function",
-        "line": 124,
+        "name": "_read_file_sync",
+        "kind": "function",
+        "line": 249,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
-        "name": "edit_file",
+        "name": "write_file_impl",
         "kind": "async_function",
-        "line": 160,
+        "line": 290,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
-        "name": "list_dir",
-        "kind": "async_function",
-        "line": 206,
+        "name": "_write_file_sync",
+        "kind": "function",
+        "line": 299,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
-        "name": "find_file",
+        "name": "edit_file_impl",
         "kind": "async_function",
-        "line": 270,
+        "line": 324,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
-        "name": "search_for_pattern",
-        "kind": "async_function",
-        "line": 317,
+        "name": "_edit_file_sync",
+        "kind": "function",
+        "line": 333,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
-        "name": "delete_file",
+        "name": "list_dir_impl",
         "kind": "async_function",
-        "line": 422,
+        "line": 368,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
-        "name": "create_directory",
+        "name": "_list_dir_sync",
+        "kind": "function",
+        "line": 377,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "find_file_impl",
         "kind": "async_function",
-        "line": 457,
+        "line": 430,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "_find_file_sync",
+        "kind": "function",
+        "line": 438,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "search_for_pattern_impl",
+        "kind": "async_function",
+        "line": 475,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "_search_for_pattern_sync",
+        "kind": "function",
+        "line": 485,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "delete_file_impl",
+        "kind": "async_function",
+        "line": 578,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "_delete_file_sync",
+        "kind": "function",
+        "line": 585,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "create_directory_impl",
+        "kind": "async_function",
+        "line": 611,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "_create_directory_sync",
+        "kind": "function",
+        "line": 618,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
         "name": "read_files",
         "kind": "async_function",
-        "line": 486,
+        "line": 639,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "_read_files_sync",
+        "kind": "function",
+        "line": 647,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       },
       {
         "name": "edit_files",
         "kind": "async_function",
-        "line": 532,
+        "line": 682,
+        "file_path": "src/delia/tools/files.py",
+        "summary": null
+      },
+      {
+        "name": "_edit_files_sync",
+        "kind": "function",
+        "line": 690,
         "file_path": "src/delia/tools/files.py",
         "summary": null
       }
     ],
     "edge_summaries": {}
   },
-  "src/delia/tools/admin.py": {
-    "mtime": 1766539356.2119672,
+  "src/delia/tools/handlers_enforcement.py": {
+    "mtime": 1766553183.4779274,
     "imports": [
-      "REL:2:container",
-      "REL:2:agent_sync",
-      "pathlib",
       "typing",
-      "REL:2:routing",
-      "humanize",
-      "fastmcp",
-      "__future__",
+      "json",
+      "pathlib",
       "REL:2:config",
+      "__future__",
       "structlog",
-      "json"
+      "threading",
+      "time"
+    ],
+    "symbols": [
+      {
+        "name": "resolve_project_path",
+        "kind": "function",
+        "line": 68,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "EnforcementTracker",
+        "kind": "class",
+        "line": 98,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "EnforcementManager",
+        "kind": "class",
+        "line": 353,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "get_tracker",
+        "kind": "function",
+        "line": 422,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "get_manager",
+        "kind": "function",
+        "line": 435,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "check_context_gate",
+        "kind": "function",
+        "line": 440,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "check_checkpoint_gate",
+        "kind": "function",
+        "line": 459,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "record_checkpoint",
+        "kind": "function",
+        "line": 478,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "record_search",
+        "kind": "function",
+        "line": 488,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "get_phase_injection",
+        "kind": "function",
+        "line": 498,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "inject_reminder",
+        "kind": "function",
+        "line": 508,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      },
+      {
+        "name": "auto_trigger_reflection",
+        "kind": "async_function",
+        "line": 520,
+        "file_path": "src/delia/tools/handlers_enforcement.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/handlers_orchestration.py": {
+    "mtime": 1766550728.2477973,
+    "imports": [
+      "typing",
+      "REL:2:container",
+      "asyncio",
+      "json",
+      "REL:2:text_utils",
+      "REL:2:delegation",
+      "pathlib",
+      "REL:2:language",
+      "__future__",
+      "REL:2:routing",
+      "REL:2:orchestration.service",
+      "REL:1:handlers_enforcement",
+      "structlog",
+      "time",
+      "REL:2:"
+    ],
+    "symbols": [
+      {
+        "name": "think_impl",
+        "kind": "async_function",
+        "line": 63,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "batch_impl",
+        "kind": "async_function",
+        "line": 117,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "delegate_tool_impl",
+        "kind": "async_function",
+        "line": 197,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "session_compact_impl",
+        "kind": "async_function",
+        "line": 403,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "session_stats_impl",
+        "kind": "async_function",
+        "line": 412,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "session_list_impl",
+        "kind": "async_function",
+        "line": 423,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "session_delete_impl",
+        "kind": "async_function",
+        "line": 432,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "chain_impl",
+        "kind": "async_function",
+        "line": 446,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "workflow_impl",
+        "kind": "async_function",
+        "line": 464,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "agent_impl",
+        "kind": "async_function",
+        "line": 482,
+        "file_path": "src/delia/tools/handlers_orchestration.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/handlers_playbook.py": {
+    "mtime": 1766550728.2477973,
+    "imports": [
+      "typing",
+      "json",
+      "pathlib",
+      "__future__",
+      "REL:1:handlers_enforcement",
+      "structlog"
+    ],
+    "symbols": [
+      {
+        "name": "get_playbook_impl",
+        "kind": "async_function",
+        "line": 35,
+        "file_path": "src/delia/tools/handlers_playbook.py",
+        "summary": null
+      },
+      {
+        "name": "report_feedback_impl",
+        "kind": "async_function",
+        "line": 81,
+        "file_path": "src/delia/tools/handlers_playbook.py",
+        "summary": null
+      },
+      {
+        "name": "get_project_context_impl",
+        "kind": "async_function",
+        "line": 118,
+        "file_path": "src/delia/tools/handlers_playbook.py",
+        "summary": null
+      },
+      {
+        "name": "playbook_stats_impl",
+        "kind": "async_function",
+        "line": 150,
+        "file_path": "src/delia/tools/handlers_playbook.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/mcp_management.py": {
+    "mtime": 1766555321.3917384,
+    "imports": [
+      "typing",
+      "REL:2:container",
+      "json",
+      "uuid",
+      "__future__",
+      "fastmcp",
+      "REL:2:backend_manager"
+    ],
+    "symbols": [
+      {
+        "name": "register_mcp_management_tools",
+        "kind": "function",
+        "line": 26,
+        "file_path": "src/delia/tools/mcp_management.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/orchestration.py": {
+    "mtime": 1766550728.248155,
+    "imports": [
+      "typing",
+      "REL:1:registry",
+      "json",
+      "__future__",
+      "structlog"
+    ],
+    "symbols": [
+      {
+        "name": "_delegate_handler",
+        "kind": "async_function",
+        "line": 40,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_batch_handler",
+        "kind": "async_function",
+        "line": 104,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_batch_vote_handler",
+        "kind": "async_function",
+        "line": 131,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_think_handler",
+        "kind": "async_function",
+        "line": 164,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_health_handler",
+        "kind": "async_function",
+        "line": 198,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_models_handler",
+        "kind": "async_function",
+        "line": 214,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_switch_backend_handler",
+        "kind": "async_function",
+        "line": 230,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_compare_handler",
+        "kind": "async_function",
+        "line": 246,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_vote_handler",
+        "kind": "async_function",
+        "line": 351,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_compute_handler",
+        "kind": "async_function",
+        "line": 528,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_session_compact_handler",
+        "kind": "async_function",
+        "line": 583,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_session_stats_handler",
+        "kind": "async_function",
+        "line": 599,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "_project_memories_handler",
+        "kind": "async_function",
+        "line": 616,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      },
+      {
+        "name": "get_orchestration_tools",
+        "kind": "function",
+        "line": 637,
+        "file_path": "src/delia/tools/orchestration.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/registry.py": {
+    "mtime": 1766550728.2482524,
+    "imports": [
+      "functools",
+      "typing",
+      "json",
+      "__future__",
+      "dataclasses",
+      "enum"
+    ],
+    "symbols": [
+      {
+        "name": "TrustLevel",
+        "kind": "class",
+        "line": 34,
+        "file_path": "src/delia/tools/registry.py",
+        "summary": null
+      },
+      {
+        "name": "sanitize_tool_schema",
+        "kind": "function",
+        "line": 55,
+        "file_path": "src/delia/tools/registry.py",
+        "summary": null
+      },
+      {
+        "name": "ToolDefinition",
+        "kind": "class",
+        "line": 132,
+        "file_path": "src/delia/tools/registry.py",
+        "summary": null
+      },
+      {
+        "name": "ToolRegistry",
+        "kind": "class",
+        "line": 163,
+        "file_path": "src/delia/tools/registry.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/resources.py": {
+    "mtime": 1766550728.2483363,
+    "imports": [
+      "typing",
+      "REL:2:file_helpers",
+      "REL:2:container",
+      "json",
+      "REL:2:context",
+      "pathlib",
+      "REL:2:config",
+      "__future__",
+      "fastmcp",
+      "structlog",
+      "REL:2:backend_manager"
+    ],
+    "symbols": [
+      {
+        "name": "register_resource_tools",
+        "kind": "function",
+        "line": 26,
+        "file_path": "src/delia/tools/resources.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/tools/admin.py": {
+    "mtime": 1766555036.4569228,
+    "imports": [
+      "typing",
+      "humanize",
+      "REL:2:container",
+      "json",
+      "pathlib",
+      "REL:2:config",
+      "__future__",
+      "REL:2:routing",
+      "REL:2:agent_sync",
+      "fastmcp",
+      "structlog"
     ],
     "symbols": [
       {
@@ -7286,152 +7569,112 @@
         "summary": null
       },
       {
+        "name": "generate_onboarding_memories",
+        "kind": "function",
+        "line": 72,
+        "file_path": "src/delia/tools/admin.py",
+        "summary": null
+      },
+      {
+        "name": "_build_quickstart",
+        "kind": "function",
+        "line": 132,
+        "file_path": "src/delia/tools/admin.py",
+        "summary": null
+      },
+      {
+        "name": "_build_conventions",
+        "kind": "function",
+        "line": 225,
+        "file_path": "src/delia/tools/admin.py",
+        "summary": null
+      },
+      {
         "name": "health_impl",
         "kind": "async_function",
-        "line": 72,
+        "line": 341,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       },
       {
         "name": "dashboard_url_impl",
         "kind": "async_function",
-        "line": 140,
+        "line": 410,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       },
       {
         "name": "models_impl",
         "kind": "async_function",
-        "line": 163,
+        "line": 433,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       },
       {
         "name": "switch_backend_impl",
         "kind": "async_function",
-        "line": 190,
+        "line": 460,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       },
       {
         "name": "get_model_info_impl",
         "kind": "async_function",
-        "line": 198,
+        "line": 468,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       },
       {
         "name": "init_project",
         "kind": "async_function",
-        "line": 205,
+        "line": 484,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       },
       {
         "name": "scan_codebase",
         "kind": "async_function",
-        "line": 455,
+        "line": 748,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       },
       {
         "name": "analyze_and_index",
         "kind": "async_function",
-        "line": 620,
+        "line": 913,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       },
       {
         "name": "cleanup_profiles_impl",
         "kind": "async_function",
-        "line": 746,
+        "line": 1039,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       },
       {
         "name": "register_admin_tools",
         "kind": "function",
-        "line": 782,
+        "line": 1075,
         "file_path": "src/delia/tools/admin.py",
         "summary": null
       }
     ],
     "edge_summaries": {}
   },
-  "src/delia/tools/consolidated.py": {
-    "mtime": 1766537235.0257068,
-    "imports": [
-      "__future__",
-      "typing",
-      "json",
-      "structlog"
-    ],
-    "symbols": [
-      {
-        "name": "playbook_tool",
-        "kind": "async_function",
-        "line": 25,
-        "file_path": "src/delia/tools/consolidated.py",
-        "summary": null
-      },
-      {
-        "name": "memory_tool",
-        "kind": "async_function",
-        "line": 218,
-        "file_path": "src/delia/tools/consolidated.py",
-        "summary": null
-      },
-      {
-        "name": "session_tool",
-        "kind": "async_function",
-        "line": 324,
-        "file_path": "src/delia/tools/consolidated.py",
-        "summary": null
-      },
-      {
-        "name": "profiles_tool",
-        "kind": "async_function",
-        "line": 400,
-        "file_path": "src/delia/tools/consolidated.py",
-        "summary": null
-      },
-      {
-        "name": "project_tool",
-        "kind": "async_function",
-        "line": 533,
-        "file_path": "src/delia/tools/consolidated.py",
-        "summary": null
-      },
-      {
-        "name": "admin_tool",
-        "kind": "async_function",
-        "line": 637,
-        "file_path": "src/delia/tools/consolidated.py",
-        "summary": null
-      },
-      {
-        "name": "register_consolidated_tools",
-        "kind": "function",
-        "line": 718,
-        "file_path": "src/delia/tools/consolidated.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
   "src/delia/tools/handlers.py": {
-    "mtime": 1766538581.5540202,
+    "mtime": 1766555575.3796234,
     "imports": [
-      "REL:2:container",
-      "REL:2:language",
-      "pathlib",
       "typing",
-      "REL:1:handlers_enforcement",
-      "fastmcp",
+      "REL:2:container",
+      "json",
+      "pathlib",
+      "REL:2:language",
       "__future__",
       "REL:1:handlers_orchestration",
+      "fastmcp",
       "structlog",
-      "json",
+      "REL:1:handlers_enforcement",
       "REL:1:handlers_playbook"
     ],
     "symbols": [
@@ -7445,13 +7688,156 @@
     ],
     "edge_summaries": {}
   },
+  "src/delia/tools/lsp.py": {
+    "mtime": 1766590978.6790009,
+    "imports": [
+      "typing",
+      "REL:1:registry",
+      "pathlib",
+      "__future__",
+      "REL:1:handlers",
+      "fastmcp",
+      "structlog",
+      "REL:2:types",
+      "REL:2:"
+    ],
+    "symbols": [
+      {
+        "name": "parse_name_path",
+        "kind": "function",
+        "line": 26,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "find_symbol_end",
+        "kind": "function",
+        "line": 55,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "read_symbol_body",
+        "kind": "function",
+        "line": 96,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "matches_container_path",
+        "kind": "function",
+        "line": 135,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "register_lsp_tools",
+        "kind": "function",
+        "line": 175,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "get_lsp_tools",
+        "kind": "function",
+        "line": 302,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_goto_definition",
+        "kind": "async_function",
+        "line": 375,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_find_references",
+        "kind": "async_function",
+        "line": 413,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_hover",
+        "kind": "async_function",
+        "line": 450,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_get_symbols",
+        "kind": "async_function",
+        "line": 485,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_rename_symbol_impl",
+        "kind": "async_function",
+        "line": 542,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_find_symbol_impl",
+        "kind": "async_function",
+        "line": 613,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_find_referencing_symbols_impl",
+        "kind": "async_function",
+        "line": 769,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_find_symbol_semantic_impl",
+        "kind": "async_function",
+        "line": 948,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_get_hot_files_impl",
+        "kind": "async_function",
+        "line": 1085,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_replace_symbol_body_impl",
+        "kind": "async_function",
+        "line": 1134,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_insert_before_symbol_impl",
+        "kind": "async_function",
+        "line": 1190,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      },
+      {
+        "name": "lsp_insert_after_symbol_impl",
+        "kind": "async_function",
+        "line": 1238,
+        "file_path": "src/delia/tools/lsp.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
   "src/delia/semantic/__init__.py": {
     "mtime": 1766258859.753729,
     "imports": [
-      "REL:1:coherence",
+      "REL:1:cache",
       "REL:1:compression",
       "REL:1:playbook_search",
-      "REL:1:cache"
+      "REL:1:coherence"
     ],
     "symbols": [],
     "edge_summaries": {}
@@ -7459,15 +7845,15 @@
   "src/delia/semantic/compression.py": {
     "mtime": 1766343498.0367322,
     "imports": [
-      "asyncio",
       "typing",
-      "REL:2:tokens",
-      "__future__",
-      "dataclasses",
-      "REL:2:config",
-      "structlog",
+      "asyncio",
       "json",
       "datetime",
+      "REL:2:config",
+      "__future__",
+      "dataclasses",
+      "structlog",
+      "REL:2:tokens",
       "re"
     ],
     "symbols": [
@@ -7512,9 +7898,9 @@
   "src/delia/semantic/coherence.py": {
     "mtime": 1766343189.4264526,
     "imports": [
+      "typing",
       "numpy",
       "asyncio",
-      "typing",
       "__future__",
       "structlog",
       "REL:2:embeddings"
@@ -7540,11 +7926,11 @@
   "src/delia/semantic/playbook_search.py": {
     "mtime": 1766343193.8788803,
     "imports": [
+      "typing",
       "numpy",
       "asyncio",
-      "typing",
-      "__future__",
       "REL:2:playbook",
+      "__future__",
       "structlog",
       "REL:2:embeddings"
     ],
@@ -7569,13 +7955,13 @@
   "src/delia/semantic/cache.py": {
     "mtime": 1766348360.4997008,
     "imports": [
-      "numpy",
-      "asyncio",
-      "pathlib",
       "typing",
+      "asyncio",
+      "json",
+      "numpy",
+      "pathlib",
       "__future__",
       "structlog",
-      "json",
       "REL:2:embeddings"
     ],
     "symbols": [
@@ -7596,212 +7982,212 @@
     ],
     "edge_summaries": {}
   },
-  "src/delia/ace/__init__.py": {
-    "mtime": 1766447429.2083623,
+  "src/delia/learning/__init__.py": {
+    "mtime": 1766550728.243909,
     "imports": [
-      "delia.ace.reflector",
-      "delia.ace.retrieval",
-      "delia.ace.deduplication",
-      "delia.ace.curator"
+      "delia.learning.curator",
+      "delia.learning.deduplication",
+      "delia.learning.reflector",
+      "delia.learning.retrieval"
     ],
     "symbols": [],
     "edge_summaries": {}
   },
-  "src/delia/ace/retrieval.py": {
-    "mtime": 1766449280.3604872,
+  "src/delia/learning/curator.py": {
+    "mtime": 1766550728.2440202,
     "imports": [
-      "numpy",
-      "pathlib",
-      "typing",
-      "math",
-      "__future__",
-      "dataclasses",
-      "structlog",
-      "json",
-      "datetime"
-    ],
-    "symbols": [
-      {
-        "name": "cosine_similarity",
-        "kind": "function",
-        "line": 30,
-        "file_path": "src/delia/ace/retrieval.py",
-        "summary": null
-      },
-      {
-        "name": "ScoredBullet",
-        "kind": "class",
-        "line": 40,
-        "file_path": "src/delia/ace/retrieval.py",
-        "summary": null
-      },
-      {
-        "name": "HybridRetriever",
-        "kind": "class",
-        "line": 50,
-        "file_path": "src/delia/ace/retrieval.py",
-        "summary": null
-      },
-      {
-        "name": "get_retriever",
-        "kind": "function",
-        "line": 330,
-        "file_path": "src/delia/ace/retrieval.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/ace/deduplication.py": {
-    "mtime": 1766449330.594168,
-    "imports": [
-      "numpy",
-      "difflib",
       "typing",
       "__future__",
       "dataclasses",
-      "structlog"
-    ],
-    "symbols": [
-      {
-        "name": "cosine_similarity",
-        "kind": "function",
-        "line": 25,
-        "file_path": "src/delia/ace/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "SimilarityMatch",
-        "kind": "class",
-        "line": 35,
-        "file_path": "src/delia/ace/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "DeduplicationResult",
-        "kind": "class",
-        "line": 44,
-        "file_path": "src/delia/ace/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "Cluster",
-        "kind": "class",
-        "line": 54,
-        "file_path": "src/delia/ace/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "SemanticDeduplicator",
-        "kind": "class",
-        "line": 61,
-        "file_path": "src/delia/ace/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "get_deduplicator",
-        "kind": "function",
-        "line": 329,
-        "file_path": "src/delia/ace/deduplication.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/ace/curator.py": {
-    "mtime": 1766450707.5376873,
-    "imports": [
       "enum",
-      "delia.ace.reflector",
-      "typing",
-      "__future__",
-      "dataclasses",
-      "delia.ace.deduplication",
-      "structlog"
+      "delia.learning.reflector",
+      "structlog",
+      "delia.learning.deduplication"
     ],
     "symbols": [
       {
         "name": "CurationAction",
         "kind": "class",
         "line": 30,
-        "file_path": "src/delia/ace/curator.py",
+        "file_path": "src/delia/learning/curator.py",
         "summary": null
       },
       {
         "name": "CurationDelta",
         "kind": "class",
         "line": 41,
-        "file_path": "src/delia/ace/curator.py",
+        "file_path": "src/delia/learning/curator.py",
         "summary": null
       },
       {
         "name": "CurationResult",
         "kind": "class",
         "line": 54,
-        "file_path": "src/delia/ace/curator.py",
+        "file_path": "src/delia/learning/curator.py",
         "summary": null
       },
       {
         "name": "Curator",
         "kind": "class",
         "line": 65,
-        "file_path": "src/delia/ace/curator.py",
+        "file_path": "src/delia/learning/curator.py",
         "summary": null
       },
       {
         "name": "get_curator",
         "kind": "function",
-        "line": 439,
-        "file_path": "src/delia/ace/curator.py",
+        "line": 532,
+        "file_path": "src/delia/learning/curator.py",
         "summary": null
       }
     ],
     "edge_summaries": {}
   },
-  "src/delia/ace/reflector.py": {
-    "mtime": 1766499732.1735399,
+  "src/delia/learning/deduplication.py": {
+    "mtime": 1766550728.244092,
     "imports": [
-      "enum",
       "typing",
+      "numpy",
+      "difflib",
       "__future__",
       "dataclasses",
-      "structlog",
-      "json"
+      "structlog"
+    ],
+    "symbols": [
+      {
+        "name": "cosine_similarity",
+        "kind": "function",
+        "line": 25,
+        "file_path": "src/delia/learning/deduplication.py",
+        "summary": null
+      },
+      {
+        "name": "SimilarityMatch",
+        "kind": "class",
+        "line": 35,
+        "file_path": "src/delia/learning/deduplication.py",
+        "summary": null
+      },
+      {
+        "name": "DeduplicationResult",
+        "kind": "class",
+        "line": 44,
+        "file_path": "src/delia/learning/deduplication.py",
+        "summary": null
+      },
+      {
+        "name": "Cluster",
+        "kind": "class",
+        "line": 54,
+        "file_path": "src/delia/learning/deduplication.py",
+        "summary": null
+      },
+      {
+        "name": "SemanticDeduplicator",
+        "kind": "class",
+        "line": 61,
+        "file_path": "src/delia/learning/deduplication.py",
+        "summary": null
+      },
+      {
+        "name": "get_deduplicator",
+        "kind": "function",
+        "line": 329,
+        "file_path": "src/delia/learning/deduplication.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/learning/reflector.py": {
+    "mtime": 1766550728.2443173,
+    "imports": [
+      "typing",
+      "json",
+      "__future__",
+      "dataclasses",
+      "enum",
+      "structlog"
     ],
     "symbols": [
       {
         "name": "InsightType",
         "kind": "class",
         "line": 25,
-        "file_path": "src/delia/ace/reflector.py",
+        "file_path": "src/delia/learning/reflector.py",
         "summary": null
       },
       {
         "name": "ExtractedInsight",
         "kind": "class",
         "line": 35,
-        "file_path": "src/delia/ace/reflector.py",
+        "file_path": "src/delia/learning/reflector.py",
         "summary": null
       },
       {
         "name": "ReflectionResult",
         "kind": "class",
         "line": 47,
-        "file_path": "src/delia/ace/reflector.py",
+        "file_path": "src/delia/learning/reflector.py",
         "summary": null
       },
       {
         "name": "Reflector",
         "kind": "class",
         "line": 106,
-        "file_path": "src/delia/ace/reflector.py",
+        "file_path": "src/delia/learning/reflector.py",
         "summary": null
       },
       {
         "name": "get_reflector",
         "kind": "function",
         "line": 394,
-        "file_path": "src/delia/ace/reflector.py",
+        "file_path": "src/delia/learning/reflector.py",
+        "summary": null
+      }
+    ],
+    "edge_summaries": {}
+  },
+  "src/delia/learning/retrieval.py": {
+    "mtime": 1766550728.2443807,
+    "imports": [
+      "math",
+      "typing",
+      "numpy",
+      "json",
+      "datetime",
+      "pathlib",
+      "__future__",
+      "dataclasses",
+      "structlog"
+    ],
+    "symbols": [
+      {
+        "name": "cosine_similarity",
+        "kind": "function",
+        "line": 30,
+        "file_path": "src/delia/learning/retrieval.py",
+        "summary": null
+      },
+      {
+        "name": "ScoredBullet",
+        "kind": "class",
+        "line": 40,
+        "file_path": "src/delia/learning/retrieval.py",
+        "summary": null
+      },
+      {
+        "name": "HybridRetriever",
+        "kind": "class",
+        "line": 50,
+        "file_path": "src/delia/learning/retrieval.py",
+        "summary": null
+      },
+      {
+        "name": "get_retriever",
+        "kind": "function",
+        "line": 330,
+        "file_path": "src/delia/learning/retrieval.py",
         "summary": null
       }
     ],
@@ -7839,11 +8225,11 @@
   "dashboard/src/app/page.tsx": {
     "mtime": 1766464273.5906057,
     "imports": [
-      "recharts",
-      "@/components/ui/badge",
-      "@/components/ui/select",
+      "react",
       "@/components/ui/card",
-      "react"
+      "@/components/ui/select",
+      "@/components/ui/badge",
+      "recharts"
     ],
     "symbols": [
       {
@@ -7883,10 +8269,10 @@
   "dashboard/src/lib/paths.ts": {
     "mtime": 1766434747.3445995,
     "imports": [
-      "fs",
       "url",
+      "os",
       "path",
-      "os"
+      "fs"
     ],
     "symbols": [
       {
@@ -8021,10 +8407,10 @@
   "dashboard/src/components/ui/badge.tsx": {
     "mtime": 1766035775.4950166,
     "imports": [
-      "react",
-      "@radix-ui/react-slot",
       "@/lib/utils",
-      "class-variance-authority"
+      "react",
+      "class-variance-authority",
+      "@radix-ui/react-slot"
     ],
     "symbols": [
       {
@@ -8099,8 +8485,8 @@
   "dashboard/src/components/ui/chart.tsx": {
     "mtime": 1766035775.4950557,
     "imports": [
-      "recharts",
       "react",
+      "recharts",
       "@/lib/utils"
     ],
     "symbols": [
@@ -8145,10 +8531,10 @@
   "dashboard/src/components/ui/select.tsx": {
     "mtime": 1766035775.4950557,
     "imports": [
-      "lucide-react",
       "react",
-      "@/lib/utils",
-      "@radix-ui/react-select"
+      "@radix-ui/react-select",
+      "lucide-react",
+      "@/lib/utils"
     ],
     "symbols": [
       {
@@ -8227,10 +8613,10 @@
   "dashboard/src/app/api/backends/route.ts": {
     "mtime": 1766035775.4941108,
     "imports": [
-      "@/lib/paths",
-      "fs/promises",
+      "next/server",
       "path",
-      "next/server"
+      "@/lib/paths",
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8295,9 +8681,9 @@
   "dashboard/src/app/api/circuit-breaker/route.ts": {
     "mtime": 1766035775.4941108,
     "imports": [
+      "next/server",
       "@/lib/paths",
-      "fs/promises",
-      "next/server"
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8313,10 +8699,10 @@
   "dashboard/src/app/api/config/route.ts": {
     "mtime": 1766035775.4941108,
     "imports": [
-      "@/lib/paths",
-      "fs/promises",
+      "next/server",
       "path",
-      "next/server"
+      "@/lib/paths",
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8367,9 +8753,9 @@
   "dashboard/src/app/api/melons/route.ts": {
     "mtime": 1766035775.4941108,
     "imports": [
+      "next/server",
       "@/lib/paths",
-      "fs/promises",
-      "next/server"
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8385,10 +8771,10 @@
   "dashboard/src/app/api/routing/route.ts": {
     "mtime": 1766035775.4943864,
     "imports": [
-      "@/lib/paths",
-      "fs/promises",
+      "next/server",
       "path",
-      "next/server"
+      "@/lib/paths",
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8453,9 +8839,9 @@
   "dashboard/src/app/api/stats/route.ts": {
     "mtime": 1766035775.4944806,
     "imports": [
+      "next/server",
       "@/lib/paths",
-      "fs/promises",
-      "next/server"
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8471,9 +8857,9 @@
   "dashboard/src/app/api/voting-stats/route.ts": {
     "mtime": 1766035775.4944806,
     "imports": [
+      "next/server",
       "@/lib/paths",
-      "fs/promises",
-      "next/server"
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8510,9 +8896,9 @@
   "dashboard/src/app/api/indexer/route.ts": {
     "mtime": 1766287371.1888614,
     "imports": [
+      "next/server",
       "path",
-      "fs/promises",
-      "next/server"
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8528,9 +8914,9 @@
   "dashboard/src/app/api/graph/route.ts": {
     "mtime": 1766434580.717642,
     "imports": [
+      "next/server",
       "@/lib/paths",
-      "fs/promises",
-      "next/server"
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8546,10 +8932,10 @@
   "dashboard/src/app/api/sessions/route.ts": {
     "mtime": 1766413179.917477,
     "imports": [
-      "@/lib/paths",
-      "fs/promises",
+      "next/server",
       "path",
-      "next/server"
+      "@/lib/paths",
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8572,10 +8958,10 @@
   "dashboard/src/app/api/playbooks/route.ts": {
     "mtime": 1766413179.9954765,
     "imports": [
-      "@/lib/paths",
-      "fs/promises",
+      "next/server",
       "path",
-      "next/server"
+      "@/lib/paths",
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8612,10 +8998,10 @@
   "dashboard/src/app/api/memories/route.ts": {
     "mtime": 1766413180.081476,
     "imports": [
-      "@/lib/paths",
-      "fs/promises",
+      "next/server",
       "path",
-      "next/server"
+      "@/lib/paths",
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8652,9 +9038,9 @@
   "dashboard/src/app/api/tools/route.ts": {
     "mtime": 1766434951.379321,
     "imports": [
+      "next/server",
       "@/lib/paths",
-      "fs/promises",
-      "next/server"
+      "fs/promises"
     ],
     "symbols": [
       {
@@ -8670,8 +9056,8 @@
   "dashboard/src/app/api/sse/backends/route.ts": {
     "mtime": 1766035775.4944806,
     "imports": [
-      "@/lib/paths",
       "fs",
+      "@/lib/paths",
       "fs/promises"
     ],
     "symbols": [
@@ -8749,590 +9135,6 @@
     "mtime": 1766035775.4911761,
     "imports": [],
     "symbols": [],
-    "edge_summaries": {}
-  },
-  "src/delia/tools/handlers_playbook.py": {
-    "mtime": 1766533698.2483244,
-    "imports": [
-      "pathlib",
-      "typing",
-      "REL:1:handlers_enforcement",
-      "__future__",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "get_playbook_impl",
-        "kind": "async_function",
-        "line": 35,
-        "file_path": "src/delia/tools/handlers_playbook.py",
-        "summary": null
-      },
-      {
-        "name": "report_feedback_impl",
-        "kind": "async_function",
-        "line": 81,
-        "file_path": "src/delia/tools/handlers_playbook.py",
-        "summary": null
-      },
-      {
-        "name": "get_project_context_impl",
-        "kind": "async_function",
-        "line": 118,
-        "file_path": "src/delia/tools/handlers_playbook.py",
-        "summary": null
-      },
-      {
-        "name": "playbook_stats_impl",
-        "kind": "async_function",
-        "line": 150,
-        "file_path": "src/delia/tools/handlers_playbook.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/tools/handlers_orchestration.py": {
-    "mtime": 1766533650.1596234,
-    "imports": [
-      "REL:2:container",
-      "REL:2:delegation",
-      "REL:2:text_utils",
-      "REL:2:language",
-      "asyncio",
-      "pathlib",
-      "typing",
-      "time",
-      "REL:2:",
-      "REL:2:routing",
-      "REL:1:handlers_enforcement",
-      "__future__",
-      "REL:2:orchestration.service",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "think_impl",
-        "kind": "async_function",
-        "line": 63,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "batch_impl",
-        "kind": "async_function",
-        "line": 117,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "delegate_tool_impl",
-        "kind": "async_function",
-        "line": 197,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "session_compact_impl",
-        "kind": "async_function",
-        "line": 403,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "session_stats_impl",
-        "kind": "async_function",
-        "line": 412,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "session_list_impl",
-        "kind": "async_function",
-        "line": 423,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "session_delete_impl",
-        "kind": "async_function",
-        "line": 432,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "chain_impl",
-        "kind": "async_function",
-        "line": 446,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "workflow_impl",
-        "kind": "async_function",
-        "line": 464,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      },
-      {
-        "name": "agent_impl",
-        "kind": "async_function",
-        "line": 482,
-        "file_path": "src/delia/tools/handlers_orchestration.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/tools/handlers_ace.py": {
-    "mtime": 1766500709.1694164,
-    "imports": [
-      "pathlib",
-      "typing",
-      "time",
-      "__future__",
-      "threading",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "resolve_project_path",
-        "kind": "function",
-        "line": 68,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "ACEEnforcementTracker",
-        "kind": "class",
-        "line": 96,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "ACEEnforcementManager",
-        "kind": "class",
-        "line": 302,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "get_ace_tracker",
-        "kind": "function",
-        "line": 371,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "get_ace_manager",
-        "kind": "function",
-        "line": 384,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "check_ace_gate",
-        "kind": "function",
-        "line": 389,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "check_checkpoint_gate",
-        "kind": "function",
-        "line": 408,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "record_checkpoint",
-        "kind": "function",
-        "line": 427,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "record_search",
-        "kind": "function",
-        "line": 437,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "get_phase_injection",
-        "kind": "function",
-        "line": 447,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "inject_ace_reminder",
-        "kind": "function",
-        "line": 457,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      },
-      {
-        "name": "auto_trigger_reflection",
-        "kind": "async_function",
-        "line": 469,
-        "file_path": "src/delia/tools/handlers_ace.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "smoke_test_internal.py": {
-    "mtime": 1766539460.2136266,
-    "imports": [
-      "os",
-      "asyncio",
-      "delia.container",
-      "sys",
-      "delia.tools.admin"
-    ],
-    "symbols": [
-      {
-        "name": "main",
-        "kind": "async_function",
-        "line": 12,
-        "file_path": "smoke_test_internal.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "check_logs.py": {
-    "mtime": 1766539501.5665414,
-    "imports": [
-      "os",
-      "asyncio",
-      "pathlib",
-      "delia.paths",
-      "sys"
-    ],
-    "symbols": [
-      {
-        "name": "main",
-        "kind": "function",
-        "line": 12,
-        "file_path": "check_logs.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/tools/handlers_enforcement.py": {
-    "mtime": 1766538471.3824265,
-    "imports": [
-      "pathlib",
-      "typing",
-      "time",
-      "__future__",
-      "threading",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "resolve_project_path",
-        "kind": "function",
-        "line": 68,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "EnforcementTracker",
-        "kind": "class",
-        "line": 96,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "EnforcementManager",
-        "kind": "class",
-        "line": 341,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "get_tracker",
-        "kind": "function",
-        "line": 410,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "get_manager",
-        "kind": "function",
-        "line": 423,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "check_context_gate",
-        "kind": "function",
-        "line": 428,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "check_checkpoint_gate",
-        "kind": "function",
-        "line": 447,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "record_checkpoint",
-        "kind": "function",
-        "line": 466,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "record_search",
-        "kind": "function",
-        "line": 476,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "get_phase_injection",
-        "kind": "function",
-        "line": 486,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "inject_reminder",
-        "kind": "function",
-        "line": 496,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      },
-      {
-        "name": "auto_trigger_reflection",
-        "kind": "async_function",
-        "line": 508,
-        "file_path": "src/delia/tools/handlers_enforcement.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/learning/__init__.py": {
-    "mtime": 1766533385.6634572,
-    "imports": [
-      "delia.learning.reflector",
-      "delia.learning.curator",
-      "delia.learning.retrieval",
-      "delia.learning.deduplication"
-    ],
-    "symbols": [],
-    "edge_summaries": {}
-  },
-  "src/delia/learning/retrieval.py": {
-    "mtime": 1766449280.3604872,
-    "imports": [
-      "numpy",
-      "structlog",
-      "pathlib",
-      "typing",
-      "math",
-      "dataclasses",
-      "__future__",
-      "datetime",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "cosine_similarity",
-        "kind": "function",
-        "line": 30,
-        "file_path": "src/delia/learning/retrieval.py",
-        "summary": null
-      },
-      {
-        "name": "ScoredBullet",
-        "kind": "class",
-        "line": 40,
-        "file_path": "src/delia/learning/retrieval.py",
-        "summary": null
-      },
-      {
-        "name": "HybridRetriever",
-        "kind": "class",
-        "line": 50,
-        "file_path": "src/delia/learning/retrieval.py",
-        "summary": null
-      },
-      {
-        "name": "get_retriever",
-        "kind": "function",
-        "line": 330,
-        "file_path": "src/delia/learning/retrieval.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/learning/deduplication.py": {
-    "mtime": 1766449330.594168,
-    "imports": [
-      "numpy",
-      "difflib",
-      "typing",
-      "dataclasses",
-      "__future__",
-      "structlog"
-    ],
-    "symbols": [
-      {
-        "name": "cosine_similarity",
-        "kind": "function",
-        "line": 25,
-        "file_path": "src/delia/learning/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "SimilarityMatch",
-        "kind": "class",
-        "line": 35,
-        "file_path": "src/delia/learning/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "DeduplicationResult",
-        "kind": "class",
-        "line": 44,
-        "file_path": "src/delia/learning/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "Cluster",
-        "kind": "class",
-        "line": 54,
-        "file_path": "src/delia/learning/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "SemanticDeduplicator",
-        "kind": "class",
-        "line": 61,
-        "file_path": "src/delia/learning/deduplication.py",
-        "summary": null
-      },
-      {
-        "name": "get_deduplicator",
-        "kind": "function",
-        "line": 329,
-        "file_path": "src/delia/learning/deduplication.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/learning/reflector.py": {
-    "mtime": 1766533888.4081357,
-    "imports": [
-      "enum",
-      "typing",
-      "dataclasses",
-      "__future__",
-      "structlog",
-      "json"
-    ],
-    "symbols": [
-      {
-        "name": "InsightType",
-        "kind": "class",
-        "line": 25,
-        "file_path": "src/delia/learning/reflector.py",
-        "summary": null
-      },
-      {
-        "name": "ExtractedInsight",
-        "kind": "class",
-        "line": 35,
-        "file_path": "src/delia/learning/reflector.py",
-        "summary": null
-      },
-      {
-        "name": "ReflectionResult",
-        "kind": "class",
-        "line": 47,
-        "file_path": "src/delia/learning/reflector.py",
-        "summary": null
-      },
-      {
-        "name": "Reflector",
-        "kind": "class",
-        "line": 106,
-        "file_path": "src/delia/learning/reflector.py",
-        "summary": null
-      },
-      {
-        "name": "get_reflector",
-        "kind": "function",
-        "line": 394,
-        "file_path": "src/delia/learning/reflector.py",
-        "summary": null
-      }
-    ],
-    "edge_summaries": {}
-  },
-  "src/delia/learning/curator.py": {
-    "mtime": 1766537295.4725134,
-    "imports": [
-      "enum",
-      "typing",
-      "dataclasses",
-      "__future__",
-      "delia.learning.deduplication",
-      "structlog",
-      "delia.learning.reflector"
-    ],
-    "symbols": [
-      {
-        "name": "CurationAction",
-        "kind": "class",
-        "line": 30,
-        "file_path": "src/delia/learning/curator.py",
-        "summary": null
-      },
-      {
-        "name": "CurationDelta",
-        "kind": "class",
-        "line": 41,
-        "file_path": "src/delia/learning/curator.py",
-        "summary": null
-      },
-      {
-        "name": "CurationResult",
-        "kind": "class",
-        "line": 54,
-        "file_path": "src/delia/learning/curator.py",
-        "summary": null
-      },
-      {
-        "name": "Curator",
-        "kind": "class",
-        "line": 65,
-        "file_path": "src/delia/learning/curator.py",
-        "summary": null
-      },
-      {
-        "name": "get_curator",
-        "kind": "function",
-        "line": 532,
-        "file_path": "src/delia/learning/curator.py",
-        "summary": null
-      }
-    ],
     "edge_summaries": {}
   }
 }

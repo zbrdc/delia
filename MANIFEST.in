@@ -1,0 +1,4 @@
+include src/delia/mcp_instructions.md
+recursive-include src/delia/templates/playbooks *.json
+recursive-include src/delia/templates/profiles *.md
+recursive-include src/delia/resources *

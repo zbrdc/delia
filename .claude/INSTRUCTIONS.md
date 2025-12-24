@@ -16,7 +16,7 @@ To use these tools effectively, you must operate in a **resource-efficient and i
 
 1.  **Playbooks (The "How")**: Procedural strategies and project patterns. Loaded via `auto_context`.
 2.  **Memories (The "What")**: Declarative facts and architecture decisions. Found in `.delia/memories/`.
-3.  **CodeRAG (The "Where")**: Semantic/Symbolic search to find code by intent.
+3.  **Semantic Search (The "Where")**: `lsp_find_symbol_semantic` to find code by intent.
 
 ---
 

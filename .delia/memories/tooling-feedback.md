@@ -46,7 +46,7 @@ These add latency and confusion without clear benefit.
 
 ### Unclear Boundaries
 - What's "Delia" vs "external MCP servers configured alongside Delia"?
-- CodeRAG confusion was a symptom of this
+- CodeRAG was removed - Delia uses its own semantic search (`lsp_find_symbol_semantic`)
 - `.mcp.json` in delia repo configures non-delia servers
 
 ### Dead Code Creates Confusion

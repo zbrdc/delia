@@ -1,0 +1,6 @@
+[2m2025-12-24 01:31:43[0m [[32m[1minfo     [0m] [1msettings_loaded               [0m [36mbackends[0m=[35m6[0m [36menabled[0m=[35m['ollama-local', 'test-url-change', 'backend-0', 'backend-1', 'backend-2', 'test-reload'][0m [36mmcp_servers[0m=[35m0[0m
+[2m2025-12-24 01:31:46[0m [[32m[1minfo     [0m] [1mstats_loaded                  [0m [36mcoder_calls[0m=[35m0[0m [36mmoe_calls[0m=[35m0[0m [36mquick_calls[0m=[35m30[0m
+[2m2025-12-24 01:31:46[0m [[32m[1minfo     [0m] [1menhanced_stats_loaded         [0m [36mrecent_calls[0m=[35m30[0m
+[2m2025-12-24 01:31:46[0m [[32m[1minfo     [0m] [1mmcp_configs_loaded            [0m [36mcount[0m=[35m0[0m
+[2m2025-12-24 01:31:46[0m [[32m[1minfo     [0m] [1mauth_disabled                 [0m [36mmessage[0m=[35m'Authentication routes not registered. Set DELIA_AUTH_ENABLED=true to enable.'[0m
+Import complete.

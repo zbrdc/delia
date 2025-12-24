@@ -19,7 +19,7 @@ All planned LSP enhancements have been implemented.
 ### Search
 | Tool | Description |
 |------|-------------|
-| `lsp_find_symbol_semantic` | CodeRAG + LSP fusion for meaning-based search |
+| `lsp_find_symbol_semantic` | Semantic + LSP fusion for meaning-based search |
 | `lsp_get_hot_files` | List recently modified files |
 | `lsp_get_dependencies` | Cross-file dependency visualization |
 

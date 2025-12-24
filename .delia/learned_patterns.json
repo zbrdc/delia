@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "patterns": [
+    {
+      "pattern": "\\bexplore\\b",
+      "task_type": "coding",
+      "weight": 2,
+      "success_count": 0,
+      "failure_count": 0,
+      "created_at": "2025-12-24T12:20:04.455096",
+      "source": "feedback"
+    },
+    {
+      "pattern": "\\bcodebase\\b",
+      "task_type": "coding",
+      "weight": 2,
+      "success_count": 0,
+      "failure_count": 0,
+      "created_at": "2025-12-24T12:20:04.455242",
+      "source": "feedback"
+    },
+    {
+      "pattern": "\\btest\\b",
+      "task_type": "coding",
+      "weight": 2,
+      "success_count": 0,
+      "failure_count": 0,
+      "created_at": "2025-12-24T12:20:04.455385",
+      "source": "feedback"
+    }
+  ],
+  "negative_patterns": [
+    {
+      "trigger_word": "test",
+      "context_pattern": "\\btest\\b.*\\bexplore\\b|\\bexplore\\b.*\\btest\\b",
+      "wrong_task": "testing",
+      "correct_task": "coding",
+      "penalty": 3,
+      "occurrences": 1,
+      "created_at": "2025-12-24T12:20:04.454628"
+    },
+    {
+      "trigger_word": "test",
+      "context_pattern": "\\btest\\b.*\\bcodebase\\b|\\bcodebase\\b.*\\btest\\b",
+      "wrong_task": "testing",
+      "correct_task": "coding",
+      "penalty": 3,
+      "occurrences": 1,
+      "created_at": "2025-12-24T12:20:04.454895"
+    }
+  ],
+  "updated_at": "2025-12-24T12:20:04.455556"
+}

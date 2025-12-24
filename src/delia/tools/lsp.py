@@ -1058,7 +1058,7 @@ async def lsp_find_symbol_semantic_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Find symbols semantically using CodeRAG + LSP fusion.
+    """Find symbols semantically using embeddings + LSP fusion.
 
     Combines semantic search (embeddings) with LSP symbol resolution.
     Use natural language queries like "authentication logic" or "database connection".
