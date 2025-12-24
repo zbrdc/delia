@@ -50,12 +50,18 @@ sys.stdout = sys.stderr
 import asyncio
 import contextlib
 import atexit
+import fcntl
+import httpx
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Optional
 
 import structlog
 from fastmcp import FastMCP
+
+# Singleton lock file location
+_LOCK_FILE = Path.home() / ".delia" / "server.lock"
+_HTTP_PORT_FILE = Path.home() / ".delia" / "http_server.port"
 
 # Context variables for user tracking in multi-user mode
 current_client_id: ContextVar[Optional[str]] = ContextVar("current_client_id", default=None)
@@ -96,6 +102,44 @@ log = structlog.get_logger()
 # Use services from container
 model_queue = container.model_queue
 mcp_client_manager = container.mcp_client_manager
+stats_service = container.stats_service
+
+# ============================================================
+# BACKWARD COMPATIBILITY RE-EXPORTS
+# ============================================================
+# These re-exports maintain backward compatibility for tests and
+# external code that imports from mcp_server directly.
+
+# Tool implementations (for tests that call handlers directly)
+from .tools.handlers_orchestration import (
+    delegate_tool_impl as delegate,
+    think_impl as think,
+    batch_impl as batch,
+    session_compact_impl as session_compact,
+    session_stats_impl as session_stats,
+)
+from .tools.admin import (
+    health_impl as health,
+    switch_model_impl as switch_model,
+    switch_backend_impl as switch_backend,
+    get_model_info_impl as get_model_info,
+    models_impl as models,
+    queue_status_impl as queue_status,
+)
+
+# Routing utilities
+from .routing import detect_code_content
+from .config import detect_model_tier
+
+# Orchestration service
+from .orchestration.service import get_orchestration_service
+
+# Stats utilities
+from .stats_handler import save_all_stats_async
+
+# Queue and routing
+from .queue import ModelQueue
+from .routing import ModelRouter, get_router
 
 # Ensure all data directories exist
 paths.ensure_directories()
@@ -153,8 +197,9 @@ def _build_dynamic_instructions(project_path: str | None = None) -> str:
 mcp = FastMCP("delia", instructions=_build_dynamic_instructions())
 
 # ============================================================ 
-# TOOL REGISTRATION
+# TOOL REGISTRATION (Profile-based)
 # ============================================================ 
+# Profiles: minimal (~15 tools), standard (~35 tools), full (~67 tools)
 
 from .tools.handlers import register_tool_handlers
 from .tools.admin import register_admin_tools
@@ -164,13 +209,30 @@ from .tools.files import register_file_tools
 from .tools.lsp import register_lsp_tools
 from .tools.mcp_management import register_mcp_management_tools
 
-register_tool_handlers(mcp)
-register_admin_tools(mcp)
-register_resource_tools(mcp)
-register_consolidated_tools(mcp)
+tool_profile = config.tool_profile
+log.info("tool_profile_selected", profile=tool_profile)
+
+# Profile-based tool registration
+# minimal: ~20 tools (file ops, LSP, delegate)
+# standard: ~45 tools (+ framework, consolidated, admin)  
+# full: ~67 tools (everything)
+
+# MINIMAL: Always register core tools
 register_file_tools(mcp)
 register_lsp_tools(mcp)
-register_mcp_management_tools(mcp)
+
+if tool_profile in ("standard", "full"):
+    # STANDARD: Add framework and admin tools
+    register_consolidated_tools(mcp)
+    register_admin_tools(mcp)
+    register_tool_handlers(mcp)  # orchestration + framework
+
+if tool_profile == "full":
+    # FULL: Add resources and MCP management
+    register_resource_tools(mcp)
+    register_mcp_management_tools(mcp)
+
+log.info("tools_registered", profile=tool_profile, count=len(mcp._tool_manager._tools))
 
 # Register Middleware
 from .middleware import UserTrackingMiddleware
@@ -182,6 +244,108 @@ if config.auth_enabled:
     register_oauth_routes(mcp)
 else:
     log.info("auth_disabled", message="Authentication routes not registered.")
+
+
+# ============================================================ 
+# SINGLETON & PROXY SUPPORT
+# ============================================================ 
+
+def _acquire_singleton_lock() -> bool:
+    """Try to acquire singleton lock for stdio mode.
+    
+    Returns:
+        True if lock acquired (we're the only instance)
+        False if another instance is running
+    """
+    _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        lock_fd = open(_LOCK_FILE, "w")
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Write PID for debugging
+        lock_fd.write(str(os.getpid()))
+        lock_fd.flush()
+        # Keep file open to hold lock
+        return True
+    except (IOError, OSError):
+        return False
+
+
+def _get_http_server_port() -> int | None:
+    """Get port of running HTTP server if any."""
+    if not _HTTP_PORT_FILE.exists():
+        return None
+    try:
+        port = int(_HTTP_PORT_FILE.read_text().strip())
+        # Verify server is actually running
+        with httpx.Client(timeout=1.0) as client:
+            resp = client.get(f"http://localhost:{port}/health")
+            if resp.status_code == 200:
+                return port
+    except Exception:
+        pass
+    return None
+
+
+def _save_http_server_port(port: int) -> None:
+    """Save HTTP server port for proxy clients."""
+    _HTTP_PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _HTTP_PORT_FILE.write_text(str(port))
+
+
+def _run_proxy_mode(port: int) -> None:
+    """Run as a proxy, forwarding stdio to HTTP server.
+    
+    This allows multiple AI tools to share a single Delia HTTP backend.
+    """
+    import json
+    import select
+    
+    # Restore stdout for JSON-RPC
+    os.dup2(_original_stdout_fd, 1)
+    sys.stdout = _original_stdout
+    
+    base_url = f"http://localhost:{port}"
+    
+    print(json.dumps({
+        "jsonrpc": "2.0",
+        "method": "notifications/message",
+        "params": {
+            "level": "info",
+            "message": f"Delia proxy mode: forwarding to HTTP server on port {port}"
+        }
+    }), file=sys.stderr)
+    
+    with httpx.Client(timeout=30.0) as client:
+        while True:
+            # Read JSON-RPC request from stdin
+            if select.select([sys.stdin], [], [], 0.1)[0]:
+                try:
+                    line = sys.stdin.readline()
+                    if not line:
+                        break
+                    
+                    request = json.loads(line)
+                    
+                    # Forward to HTTP server
+                    resp = client.post(
+                        f"{base_url}/mcp",
+                        json=request,
+                        headers={"Content-Type": "application/json"}
+                    )
+                    
+                    # Return response
+                    print(resp.text, flush=True)
+                    
+                except json.JSONDecodeError:
+                    continue
+                except httpx.RequestError as e:
+                    # Connection lost, exit proxy
+                    print(json.dumps({
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32000, "message": f"Proxy error: {e}"}
+                    }), flush=True)
+                    break
 
 
 # ============================================================ 
@@ -198,6 +362,23 @@ def run_server(
     transport = transport.lower().strip()
 
     if transport == "stdio":
+        # Check if HTTP server is running - use proxy mode if so
+        http_port = _get_http_server_port()
+        if http_port:
+            log.info("proxy_mode", port=http_port, reason="HTTP server detected")
+            _run_proxy_mode(http_port)
+            return
+        
+        # Check singleton lock to prevent multiple heavy instances
+        if not _acquire_singleton_lock():
+            # Another stdio instance is running - warn and continue anyway
+            # (we can't fully prevent this without breaking some use cases)
+            log.warning(
+                "multiple_instances_detected",
+                message="Another Delia stdio server is running. Consider using HTTP mode for shared access.",
+                hint="Run 'delia serve --transport http' and configure AI tools to connect to it"
+            )
+        
         # Ensure we are currently redirecting everything to stderr
         # This re-applies the redirection in case it was somehow reset, 
         # but relies primarily on the early setup.
@@ -231,8 +412,12 @@ def run_server(
         atexit.register(lambda: asyncio.run(shutdown_handler()))
         start_prewarm_task()
 
+        # Save port for proxy clients to discover
+        _save_http_server_port(port)
+        atexit.register(lambda: _HTTP_PORT_FILE.unlink(missing_ok=True))
+
         auth_endpoints = ["/auth/register"] if config.auth_enabled else []
-        log.info("server_starting", transport="http", host=host, port=port, endpoints=auth_endpoints)
+        log.info("server_starting", transport="http", host=host, port=port, endpoints=auth_endpoints, proxy_enabled=True)
         mcp.run(transport="http", host=host, port=port)
 
     elif transport == "sse":

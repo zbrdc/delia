@@ -798,9 +798,16 @@ def run(
 
     This is the default command when running 'delia' without arguments.
     """
-    # Import and run the server
-    from .mcp_server import run_server
+    # For stdio transport, check if we can use lightweight proxy mode
+    # This avoids loading the heavy MCP server when an HTTP backend is available
+    if transport.lower() == "stdio":
+        from .proxy import maybe_run_proxy
+        if maybe_run_proxy():
+            # Successfully ran as proxy, exit
+            return
 
+    # No proxy available or non-stdio transport - load full server
+    from .mcp_server import run_server
     run_server(transport=transport, port=port, host=host)
 
 
