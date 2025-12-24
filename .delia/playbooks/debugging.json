@@ -1,98 +1,127 @@
-[
-  {
-    "content": "Check structlog output for detailed traces",
-    "id": "strat-7d72fb83",
-    "section": "general_strategies",
-    "helpful_count": 2,
-    "harmful_count": 0,
-    "created_at": "2025-12-22T20:39:44.473215",
-    "last_used": "2025-12-23T00:16:54.187033",
-    "source_task": null,
-    "source": "learned",
-    "utility_score": 1.0
-  },
-  {
-    "content": "MCP tool errors are returned in error key of result",
-    "id": "strat-e077ebc0",
-    "section": "general_strategies",
-    "helpful_count": 2,
-    "harmful_count": 0,
-    "created_at": "2025-12-22T20:39:44.473227",
-    "last_used": "2025-12-23T00:16:54.187345",
-    "source_task": null,
-    "source": "learned",
-    "utility_score": 1.0
-  },
-  {
-    "content": "LSP issues often stem from language server not running",
-    "id": "strat-18c6d664",
-    "section": "general_strategies",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-22T20:39:44.473232",
-    "last_used": null,
-    "source_task": null,
-    "source": "learned",
-    "utility_score": 0.5
-  },
-  {
-    "content": "Use health() tool to check backend connectivity",
-    "id": "strat-ab17e78d",
-    "section": "general_strategies",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-22T20:39:44.473235",
-    "last_used": null,
-    "source_task": null,
-    "source": "learned",
-    "utility_score": 0.5
-  },
-  {
-    "content": "Dashboard at localhost:8765 shows real-time tool usage",
-    "id": "strat-595f499a",
-    "section": "general_strategies",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-22T20:39:44.473239",
-    "last_used": null,
-    "source_task": null,
-    "source": "learned",
-    "utility_score": 0.5
-  },
-  {
-    "content": "When writing regex patterns for context detection, always include common verb forms and plurals using patterns like `s?` for plurals and `(ed|es|ing)?` for verb conjugations. This prevents missing common variations like \"crashes\" vs \"crash\".",
-    "id": "strat-69ba19c8",
-    "section": "learned_strategies",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-22T20:45:37.943324",
-    "last_used": null,
-    "source_task": "debugging",
-    "source": "reflector",
-    "utility_score": 0.5
-  },
-  {
-    "content": "ACE STRUCTURED RESPONSES: When finding issues, document HOW you found them (search patterns used, verification steps), not just WHAT you found. This methodology becomes playbook bullets for other models to use.",
-    "id": "strat-93aa47a0",
-    "section": "general_strategies",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-22T23:12:58.767669",
-    "last_used": null,
-    "source_task": "debugging",
-    "source": "reflector",
-    "utility_score": 0.5
-  },
-  {
-    "content": "When path parameter is optional, don't default to Path.cwd() and reset playbook_manager - instead use the existing project context from playbook_manager.playbook_dir.parent.parent",
-    "id": "strat-29779b64",
-    "section": "learned_strategies",
-    "helpful_count": 0,
-    "harmful_count": 0,
-    "created_at": "2025-12-23T00:16:54.353852",
-    "last_used": null,
-    "source_task": "debugging",
-    "source": "reflector",
-    "utility_score": 0.5
-  }
-]
+{
+  "schema_version": 2,
+  "task_type": "debugging",
+  "updated_at": "2025-12-23T23:05:48.322831",
+  "bullets": [
+    {
+      "content": "Check structlog output for detailed traces",
+      "id": "strat-7d72fb83",
+      "section": "general_strategies",
+      "helpful_count": 6,
+      "harmful_count": 0,
+      "created_at": "2025-12-22T20:39:44.473215",
+      "last_used": "2025-12-23T22:42:32.025438",
+      "source_task": null,
+      "source": "learned",
+      "utility_score": 1.0
+    },
+    {
+      "content": "MCP tool errors are returned in error key of result",
+      "id": "strat-e077ebc0",
+      "section": "general_strategies",
+      "helpful_count": 6,
+      "harmful_count": 0,
+      "created_at": "2025-12-22T20:39:44.473227",
+      "last_used": "2025-12-23T23:05:48.322823",
+      "source_task": null,
+      "source": "learned",
+      "utility_score": 1.0
+    },
+    {
+      "content": "LSP issues often stem from language server not running",
+      "id": "strat-18c6d664",
+      "section": "general_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-22T20:39:44.473232",
+      "last_used": null,
+      "source_task": null,
+      "source": "learned",
+      "utility_score": 0.5
+    },
+    {
+      "content": "Use health() tool to check backend connectivity",
+      "id": "strat-ab17e78d",
+      "section": "general_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-22T20:39:44.473235",
+      "last_used": null,
+      "source_task": null,
+      "source": "learned",
+      "utility_score": 0.5
+    },
+    {
+      "content": "Dashboard at localhost:8765 shows real-time tool usage",
+      "id": "strat-595f499a",
+      "section": "general_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-22T20:39:44.473239",
+      "last_used": null,
+      "source_task": null,
+      "source": "learned",
+      "utility_score": 0.5
+    },
+    {
+      "content": "When writing regex patterns for context detection, always include common verb forms and plurals using patterns like `s?` for plurals and `(ed|es|ing)?` for verb conjugations. This prevents missing common variations like \"crashes\" vs \"crash\".",
+      "id": "strat-69ba19c8",
+      "section": "learned_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-22T20:45:37.943324",
+      "last_used": null,
+      "source_task": "debugging",
+      "source": "reflector",
+      "utility_score": 0.5
+    },
+    {
+      "content": "DELIA STRUCTURED RESPONSES: When finding issues, document HOW you found them (search patterns used, verification steps), not just WHAT you found. This methodology becomes playbook bullets for other models to use.",
+      "id": "strat-93aa47a0",
+      "section": "general_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-22T23:12:58.767669",
+      "last_used": null,
+      "source_task": "debugging",
+      "source": "reflector",
+      "utility_score": 0.5
+    },
+    {
+      "content": "When path parameter is optional, don't default to Path.cwd() and reset playbook_manager - instead use the existing project context from playbook_manager.playbook_dir.parent.parent",
+      "id": "strat-29779b64",
+      "section": "learned_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-23T00:16:54.353852",
+      "last_used": null,
+      "source_task": "debugging",
+      "source": "reflector",
+      "utility_score": 0.5
+    },
+    {
+      "content": "When modularizing large files, use Sequence instead of list for covariant type parameters to avoid pyright type errors when passing subtype lists",
+      "id": "strat-11ac3dad",
+      "section": "learned_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-23T09:24:40.628055",
+      "last_used": null,
+      "source_task": "debugging",
+      "source": "reflector",
+      "utility_score": 0.5
+    },
+    {
+      "content": "When verifying renames/refactors, search for multiple pattern types: imports, string literals, variable names, comments - not just one pattern",
+      "id": "strat-6d037678",
+      "section": "general_strategies",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-12-23T19:28:12.469594",
+      "last_used": null,
+      "source_task": "debugging",
+      "source": "reflector",
+      "utility_score": 0.5
+    }
+  ]
+}

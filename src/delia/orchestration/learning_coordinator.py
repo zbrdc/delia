@@ -1,7 +1,7 @@
 # Copyright (C) 2024 Delia Contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-Learning Coordinator - Manages the ACE Framework learning pipeline.
+Learning Coordinator - Manages the Delia Framework learning pipeline.
 
 Coordinates the Reflector→Curator→Playbook pipeline to ensure consistent
 learning from task outcomes. Extracted from OrchestrationExecutor (P3).
@@ -13,8 +13,8 @@ from typing import Any
 
 import structlog
 
-from ..ace.curator import Curator
-from ..ace.reflector import Reflector
+from ..learning.curator import Curator
+from ..learning.reflector import Reflector
 from ..playbook import PlaybookBullet, get_playbook_manager
 
 log = structlog.get_logger()
@@ -22,7 +22,7 @@ log = structlog.get_logger()
 
 class LearningCoordinator:
     """
-    Coordinates the ACE Framework learning loop.
+    Coordinates the Delia Framework learning loop.
 
     Responsibilities:
     - Trigger reflection on task outcomes
@@ -63,7 +63,7 @@ class LearningCoordinator:
         """
         Reflect on a task outcome and learn from it.
 
-        This is the main entry point for the ACE learning loop:
+        This is the main entry point for the Delia learning loop:
         1. Reflector extracts insights
         2. Curator deduplicates and validates
         3. Playbook manager persists learned bullets

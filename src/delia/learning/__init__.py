@@ -1,9 +1,9 @@
 # Copyright (C) 2024 Delia Contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-ACE Framework: Agentic Context Engineering
+Delia Learning Framework
 
-This module implements the ACE framework for adaptive context optimization:
+This module implements adaptive context optimization for the Delia Framework:
 
 Components:
 - SemanticDeduplicator: Embedding-based duplicate detection
@@ -11,13 +11,13 @@ Components:
 - Reflector: Task outcome analysis and insight extraction
 - Curator: Playbook maintenance via delta updates
 
-Based on Stanford ACE research and Anthropic's context engineering principles.
+Based on context engineering research and Anthropic's principles.
 """
 
-from delia.ace.deduplication import SemanticDeduplicator, SimilarityMatch, DeduplicationResult
-from delia.ace.retrieval import HybridRetriever, ScoredBullet
-from delia.ace.reflector import Reflector, ReflectionResult, ExtractedInsight, InsightType
-from delia.ace.curator import Curator, CurationResult, CurationDelta, CurationAction
+from delia.learning.deduplication import SemanticDeduplicator, SimilarityMatch, DeduplicationResult
+from delia.learning.retrieval import HybridRetriever, ScoredBullet
+from delia.learning.reflector import Reflector, ReflectionResult, ExtractedInsight, InsightType
+from delia.learning.curator import Curator, CurationResult, CurationDelta, CurationAction
 
 __all__ = [
     # Deduplication

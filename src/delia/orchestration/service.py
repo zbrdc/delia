@@ -706,7 +706,7 @@ class OrchestrationService:
                 save_model_affinity()  # Persist immediately
                 affinity_updated = True
 
-            # Award melons! 🍈
+            # Award melons
             from ..melons import award_melons_for_quality
             melons_awarded = award_melons_for_quality(
                 model_id=result.model_used,
@@ -714,7 +714,7 @@ class OrchestrationService:
                 quality_score=quality_score,
             )
             
-            # Record winning pair for local RL dataset 🏆
+            # Record winning pair for local RL dataset
             get_reward_collector().record_winning_pair(
                 prompt=message,
                 response=result.response,

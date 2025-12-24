@@ -1,4 +1,4 @@
-# Delia Profile: Building MCP Tools & ACE Components
+# Delia Profile: Building MCP Tools & Learning Components
 
 This profile is REQUIRED when working on the Delia codebase.
 
@@ -297,7 +297,7 @@ async def handle_tool(
 
 ---
 
-## 7. Feedback Loop (ACE Framework)
+## 7. Feedback Loop (Delia Framework)
 
 **Every task MUST close the feedback loop:**
 

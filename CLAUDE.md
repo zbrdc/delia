@@ -1,205 +1,219 @@
-# Delia: AI-Assisted Coding Enhancement
+# Delia - AI Coding Instructions
 
-## Why Use Delia's Tools?
+This file provides guidance for Claude Code when working with this repository.
 
-Delia makes you **faster and better** at coding tasks:
+**MCP Configuration**: Add to .claude/settings.json or use `claude mcp add`
 
-| Tool | Benefit |
-|------|---------|
-| **auto_context / Playbooks** | Project-specific patterns learned over time. Don't reinvent - apply what works. |
-| **Memories** | Persistent knowledge survives context limits. Store architecture decisions, integration details. |
-| **LSP/Symbols** | Semantic code navigation. `lsp_find_references()` beats grep. Jump to definitions, rename safely. |
-| **CodeRAG** | Semantic code search. Find related code by meaning, not just text matching. |
-| **Profiles** | Framework-specific best practices (FastAPI, React, etc.) loaded automatically. |
+---
 
-**Using these tools = better code, fewer mistakes, faster iteration.**
+# AI-Assisted Coding Instructions
 
-## MANDATORY: ACE Framework Workflow
+This guide provides strategies for utilizing available semantic tools to efficiently navigate and modify this codebase.
+
+## Mental Model: How to Succeed
+
+To use these tools effectively, you must operate in a **resource-efficient and intelligent manner**. Always keep in mind to not read or generate content that is not needed for the task at hand. **Large file reads are a sign of a poorly performing agent.**
+
+1.  **Playbooks (The "How")**: Procedural strategies and project patterns. Loaded via `auto_context`.
+2.  **Memories (The "What")**: Declarative facts and architecture decisions. Found in `.delia/memories/`.
+3.  **CodeRAG (The "Where")**: Semantic/Symbolic search to find code by intent.
+
+---
+
+## Workflow Integration (MANDATORY)
 
 **You MUST follow this workflow for EVERY task:**
 
-### Before Starting ANY Task (AUTOMATIC)
-```
-1. Call auto_context(message="<user's request>")  # AUTOMATIC detection - ONE call does everything
-   - Detects task type from message (coding/testing/debugging/etc)
-   - Returns relevant playbook bullets automatically
-   - Returns profile recommendations
-   - Returns recommended_tools (LSP, memories, CodeRAG) for your task type
-   - NO need to manually pick task_type
-2. APPLY the returned bullets AND USE the recommended tools
-```
-
-### RE-CALL auto_context Frequently to Stay on Track
-**CRITICAL**: Call auto_context more often than you think necessary. Every task phase should load fresh context.
-
-**Call auto_context when ANY of these happen:**
-1. **Starting a new file** - Different file = potentially different patterns
-2. **Task type shifts** - coding → testing → git → deployment
-3. **User gives short response** - "yes", "do it", "sounds good" - use prior_context
-4. **After completing a subtask** - About to move on? Refresh context
-5. **Before git operations** - ALWAYS get git playbook before commit/push/PR
-6. **Switching languages/frameworks** - Python to TypeScript? Refresh
-
-| Trigger | Action |
-|---------|--------|
-| Starting work on user request | `auto_context(message)` |
-| Finished coding, now committing | `auto_context("commit this fix", prior_context="<your last message>")` |
-| Finished fixing, now testing | `auto_context("run tests")` |
-| User asks about git after coding work | `auto_context(message, prior_context="Would you like me to commit?")` |
-| About to push or create PR | `auto_context("push to remote")` |
-
-**Use `prior_context`** when user's response is short/ambiguous:
+### 1. Initialize Task Context
 ```python
-# User says "yes" after you offered to commit
-auto_context(message="yes", prior_context="Would you like me to commit this fix to dev?")
-# -> Detects "git" instead of "project"
+# Call this IMMEDIATELY after being given a task. It is CRITICAL for your success.
+auto_context(message="<task description>") 
 ```
+- Retrieves relevant project patterns and framework-specific profiles.
+- Provides recommended tools optimized for the detected task.
 
-**Rule of thumb**: If you're about to perform an action that wasn't part of your last auto_context call, refresh it first.
+### 2. Update Context During Phase Shifts
+Context is dynamic. Refresh it whenever the task type shifts:
+- **Implementation → Verification**: `auto_context("run tests for module X")`
+- **Verification → Version Control**: `auto_context("commit changes", prior_context="Tests passed")`
+- **Ambiguity**: Use `prior_context` when user feedback is brief ("yes", "proceed") to maintain state.
 
-### Alternative (Manual) - Only if auto_context unavailable
+### 3. Record Task Outcome
+```python
+# Use when a task is substantially complete. sustian the learning loop!
+complete_task(success=True, bullets_applied='["pattern-id"]', task_summary="...")
 ```
-1. Call get_playbook(task_type="coding")  # Manual task type selection
-2. Call get_project_context()             # understand project patterns
-```
+- Distills implementation details into reusable project patterns.
+- Captures new insights discovered during the task.
 
-### After Completing ANY Task
-```
-1. Call complete_task(success=True/False, bullets_applied='["strat-xxx", "strat-yyy"]')
-   - Pass ALL bullet IDs you applied (from auto_context's bullet_ids field)
-   - Automatically records feedback for all bullets in one call
-   - Optionally add new_insight if you learned something valuable
-   - This closes the ACE learning loop
-```
+---
 
-### Task Types (auto-detected by auto_context)
-| Keywords in Message | Detected Type |
-|---------------------|---------------|
-| implement, add, create, build, write, refactor | `coding` |
-| test, pytest, coverage, mock, assert | `testing` |
-| bug, error, fix, debug, broken, failing | `debugging` |
-| design, architecture, pattern, ADR, plan, think through, approach, trade-off | `architecture` |
-| git, commit, branch, merge, PR, push, pull, check in, land, squash, amend, revert | `git` |
-| deploy, docker, CI/CD, production, ship | `deployment` |
-| security, auth, password, token | `security` |
-| how, what, where, explain, project | `project` |
+## Technical Guidance
 
-## Delia's Complete Tool Suite
+### Navigation Strategy (Progressive Disclosure)
+**IMPORTANT: AVOID READING ENTIRE SOURCE FILES UNLESS STRICTLY NECESSARY!** 
+Instead, use symbolic tools for overviews and relations, then read only necessary bodies.
 
-### ACE Framework Tools (Automatic)
-- **auto_context(message, path?, prior_context?)** - **PRIMARY TOOL** - Auto-detects task type and returns relevant bullets + profiles + recommended_tools (LSP/memories/CodeRAG). Returns `bullet_ids` list for easy reference. Call at start AND when task shifts.
-- **complete_task(success, bullets_applied, task_summary?, new_insight?)** - **CALL WHEN DONE** - Records feedback for all applied bullets in one call. Closes the ACE learning loop.
-- **check_ace_status(path?)** - **CALL THIS FIRST** if unsure about project status. Returns whether playbooks exist and what's needed.
-- **read_initial_instructions()** - **CRITICAL** for MCP clients that don't show system prompts. Call immediately if you haven't read the ACE manual.
-- **get_playbook(task_type, limit?, path?)** - Manual fallback - Returns bullets for specific task type.
-- **get_project_context(path?)** - Returns project overview: tech stack, patterns, key directories
-- **get_profile(name, path?)** - Load a specific profile by name when auto_context indicates more are available.
-- **report_feedback(bullet_id, task_type, helpful)** - Individual bullet feedback (prefer complete_task() instead).
+1.  **Locate**: Use `list_dir` or `find_file` to identify target areas.
+2.  **Discover**: Use `semantic_search(query="feature logic")` for intent-based lookup.
+3.  **Map**: Use `lsp_get_symbols(path)` to understand file structure without reading content.
+4.  **Target**: Use `lsp_goto_definition` or `lsp_find_references` for precise symbol tracking.
+5.  **Acquire**: Read ONLY the specific lines or symbol bodies required.
 
-### ⚡ ACE Focus Checkpoint Tools (CRITICAL - use frequently!)
+**Example Recipe**:
+- If you need method `bar` in class `Foo`:
+  - `lsp_find_symbol(name="Foo")` → Find filename.
+  - `lsp_get_symbols(path)` → Find line range for `Foo.bar`.
+  - `read_file(path, start_line, end_line)` → Read only the body.
 
-These tools are **non-negotiable checkpoints** that keep you on track. Call them MORE often than you think necessary.
+### Modification Safety
+Operational checkpoints are required at phase transitions:
 
-| Checkpoint | When to Call | Why It Matters |
-|------------|--------------|----------------|
-| **think_about_task_adherence()** | **BEFORE every code modification** | Prevents drift from project patterns and user intent |
-| **think_about_collected_info()** | **AFTER searching/reading files** | Ensures you have complete information before acting |
-| **think_about_completion()** | **BEFORE declaring task done** | Catches missed steps, untested changes, incomplete work |
+| Checkpoint | When to Use | Goal |
+| :--- | :--- | :--- |
+| `think_about_collected_info()` | After search/reading | Verify information completeness. |
+| `think_about_task_adherence()` | Before file modification | **Unlock write tools** and verify pattern alignment. |
+| `think_about_completion()` | Before task closure | Checklist for tests, linting, and documentation. |
 
-**These tools are force multipliers** - they prompt self-reflection that catches errors before they happen:
+---
 
-```
-# Pattern: Search → Checkpoint → Modify → Checkpoint → Done
+## Memory & Long-Horizon Tasks
 
-1. User asks for a change
-2. Search/read relevant files
-3. ⚡ think_about_collected_info()     # "Do I have enough info?"
-4. Plan the modification
-5. ⚡ think_about_task_adherence()     # "Am I aligned with project patterns?"
-6. Make the code change
-7. ⚡ think_about_completion()         # "Is this truly complete?"
-8. complete_task()
-```
+### Long-Task Handoff
+If a task is too large for a single context window:
+1.  **Write a Summary**: Use `write_memory(name="current_task_status", content="...")`.
+2.  **Describe the State**: Imagine you are handing over to another person who has access to your tools but hasn't seen the chat.
+3.  **Inform User**: Suggest starting a new conversation to clear context rot.
 
-**The refocus effect**: When context grows large or tasks become complex, these tools re-center your attention on what actually matters. **Use them proactively, not just when uncertain.**
+### Memory Usage
+- **Read Memories**: Check `.delia/memories/` for `suggested_commands.md`, `style_guidelines.md`, or architecture notes.
+- **Persistent Facts**: Store important decisions in memories to survive session resets.
 
-### Playbook Management Tools
-- **playbook_stats(task_type?)** - See bullet effectiveness scores
-- **add_playbook_bullet(task_type, content, section?)** - Add strategic bullet to playbook
-- **write_playbook(task_type, bullets)** - Write/replace entire playbook
-- **delete_playbook_bullet(bullet_id, task_type)** - Remove obsolete bullet
-- **prune_stale_bullets(max_age_days?, min_utility?)** - Remove low-utility bullets
-- **list_playbooks()** - List all playbooks and bullet counts
+---
 
-### Project Context Tools
-- **set_project(path)** - Set active project context. Delia stores per-project data in `<project>/.delia/`
-- **recommend_profiles(analyze_gaps?)** - Recommend starter profiles for project tech stack
-- **check_reevaluation()** - Check if pattern re-evaluation is needed (LOC/time thresholds)
-- **run_reevaluation(force?)** - Re-analyze project for pattern gaps and profile recommendations
-- **cleanup_profiles(auto_remove?)** - Remove obsolete profile templates
-- **init_project(path, force?, skip_index?, parallel?)** - Initialize ACE framework for new project
+## Tool Reference
 
-### LSP Code Intelligence Tools (Full Language Server Protocol Support)
-- **lsp_goto_definition(path, line, character)** - Find definition of symbol
-- **lsp_find_references(path, line, character)** - Find all references to symbol
-- **lsp_hover(path, line, character)** - Get docs/type info for symbol
-- **lsp_get_symbols(path)** - Get all symbols in file (classes, functions, methods)
-- **lsp_find_symbol(name, path?, kind?)** - Search symbols by name across codebase
-- **lsp_rename_symbol(path, line, character, new_name, apply?)** - Rename symbol everywhere
-- **lsp_replace_symbol_body(path, symbol_name, new_body)** - Replace function/class body
-- **lsp_insert_before_symbol(path, symbol_name, content)** - Insert code before symbol
-- **lsp_insert_after_symbol(path, symbol_name, content)** - Insert code after symbol
+### Code Intelligence (LSP)
+- `lsp_goto_definition` / `lsp_find_references` / `lsp_hover`: Semantic navigation.
+- `lsp_get_symbols`: Structural mapping.
+- `lsp_find_symbol`: Global name search.
+- `lsp_rename_symbol` / `lsp_replace_symbol_body`: Structured modifications.
 
-Supports: Python (pyright/pylsp), TypeScript, Rust (rust-analyzer), Go (gopls)
+### Filesystem
+- `read_file` / `write_file` / `edit_file`: Atomic operations.
+- `search_for_pattern`: Regex search.
+- `list_dir` / `find_file`: Discovery.
 
-### Memory System Tools
-- **list_memories(path?)** - List all memory files for project
-- **read_memory(name, path?)** - Read memory file content
-- **write_memory(name, content, path?, append?)** - Write/update memory file
-- **delete_memory(name, path?)** - Delete memory file
+### Knowledge & Relationships
+- `memory(action="read|write|list|delete", ...)`: Manage factual project knowledge.
+- `semantic_search(query)`: Search by meaning.
+- `codebase_graph()`: Inspect dependency relationships.
 
-Memories are markdown files in `.delia/memories/` for persistent project knowledge (architecture decisions, debugging insights, integration details)
-
-### LLM Delegation Tools
-- **delegate(task, content, ...)** - Offload work to configured LLM backends
-  - task: quick|generate|review|analyze|plan|critique
-- **batch(tasks)** - Parallel execution across all GPUs
-- **chain(steps)** - Sequential task execution with output piping
-- **workflow(definition)** - DAG workflow with conditional branching
-- **think(problem, depth?)** - Extended reasoning with thinking-capable models
-- **agent(prompt, ...)** - Autonomous agent with tool use
-
-### Admin Tools
-- **health()** - Check status of Delia and all backends
-- **models()** - List all configured models across backends
-- **switch_backend(backend_id)** - Switch active LLM backend
-- **switch_model(tier, model_name)** - Switch model for tier
-- **queue_status()** - Get model queue system status
-- **mcp_servers(action?, server_id?, ...)** - Manage external MCP servers
-
-### Session Tools
-- **session_list()** - List active conversation sessions
-- **session_stats(session_id)** - Get session statistics
-- **session_compact(session_id, force?)** - Compact session history with LLM summarization
-- **session_delete(session_id)** - Delete session
-
-### Advanced Features
-- **scan_codebase(path, max_files?, preview_chars?, phase?)** - Incremental codebase scanning
-- **analyze_and_index(path, project_summary, coding_bullets, ...)** - Create ACE index from analysis
-- **sync_instruction_files(content, path?, force?)** - Sync CLAUDE.md to all AI agent configs
-- **read_instruction_files(path?)** - Read existing instruction files
-- **write_project_summary(summary, path?)** - Write project summary JSON
-- **check_ace_status(path?)** - Check ACE compliance status for recent tasks
+---
 
 ## Constraints
 
-- **ACE is MANDATORY** - always call auto_context() before coding
-- **Focus checkpoints are MANDATORY** - call think_about_* tools at every phase transition
-  - `think_about_collected_info()` after searching/reading
-  - `think_about_task_adherence()` before modifying code
-  - `think_about_completion()` before declaring done
-- **Per-project isolation** - use set_project() to switch contexts
-- **LSP for code nav** - use LSP tools instead of grep/find for semantic navigation
-- **Memories for knowledge** - store persistent insights in memory system
-- Delegation is OPTIONAL - only when user requests or backends configured
-- **Call complete_task()** to close the ACE learning loop when done
+- **Hard Gating**: File modifications require a preceding call to `think_about_task_adherence()`.
+- **Symbolic Priority**: **I WILL BE VERY UNHAPPY IF YOU GREP FOR CODE WHEN LSP TOOLS ARE AVAILABLE.**
+- **Atomic Operations**: Favor small, targeted edits over massive file rewrites.
+- **Learning Loop**: Always finalize tasks with `complete_task()` to preserve patterns.
+
+---
+
+## Claude Code Specific Features
+
+### Hooks Support
+Claude Code supports hooks that can inject context automatically:
+- Pre-tool hooks can add playbook bullets before file operations
+- Post-tool hooks can trigger feedback collection
+
+### Task Subagents
+When spawning Task subagents, they may not have MCP access. The playbook bullets
+embedded below ensure subagents still benefit from Delia guidance.
+
+### Slash Commands
+Use `/delia` commands if configured in your Claude Code setup.
+
+---
+
+## Subagent Fallback (No MCP Access)
+
+If running as a subagent without MCP tool access, read `.delia/` files directly:
+- `.delia/playbooks/*.json` - Task-specific bullets (coding, testing, etc.)
+- `.delia/memories/*.md` - Persistent project knowledge
+- `.delia/project_summary.json` - Project overview
+
+The playbook bullets below are auto-embedded for convenience.
+
+---
+
+## PROJECT PLAYBOOK (Auto-embedded)
+
+These are learned strategies from this project. Apply them to relevant tasks.
+For the latest bullets, use `auto_context()` or read `.delia/playbooks/*.json` directly.
+
+### Coding
+- Use pathlib.Path over os.path for file operations
+- MCP tools must return JSON-serializable dicts wrapped in result key
+- Always pass project path explicitly - never assume cwd
+- Use httpx async client over requests for HTTP calls
+- When implementing cross-platform features, verify hook support via web search first - Cursor has hooks (v1.7+), Windsurf has enterprise-only Cascade Hooks, VS Code Copilot and Gemini have no hooks
+
+### Testing
+- Use pytest with async support via pytest-asyncio
+- Mock external services (Ollama, LSP) in unit tests
+- Integration tests go in tests/integration/
+- Use fixtures for common setup patterns
+- Test MCP tools via their handler functions directly
+
+### Architecture
+- MCP server is the primary interface - tools are registered via decorators
+- Playbooks store per-project learned patterns in .delia/playbooks/
+- LSP integration provides semantic code navigation
+- Memories persist knowledge in .delia/memories/ as markdown
+- Profiles are starter templates copied to .delia/profiles/
+
+### Debugging
+- Check structlog output for detailed traces
+- MCP tool errors are returned in error key of result
+- LSP issues often stem from language server not running
+- Use health() tool to check backend connectivity
+- Dashboard at localhost:8765 shows real-time tool usage
+
+### Project
+- Primary language: Python 3.11+
+- Package manager: uv with pyproject.toml
+- MCP server for AI agent integration
+- Dashboard: Next.js app in dashboard/
+- CLI entry point: delia command via cli.py
+
+### Git
+- Commit messages should be descriptive of the change
+- Use conventional commits format when possible
+- Don't commit .delia/data/ or session files
+- Playbooks and profiles are project-specific and should be committed
+
+### Security
+- Never log or expose API keys
+- Validate all file paths to prevent traversal
+- MCP tools run with user permissions - be cautious with file ops
+- Settings files may contain sensitive backend URLs
+
+### Deployment
+- MCP server runs via stdio for AI agent integration
+- REST API available via delia api command
+- Dashboard runs separately on port 8765
+- Ollama must be running for LLM delegation features
+
+### Api
+- REST API uses FastAPI with automatic OpenAPI docs
+- All endpoints return JSON responses
+- Use proper HTTP status codes for errors
+- MCP tools follow Model Context Protocol specification
+- When testing Delia Framework, verify the complete loop: auto_context detection → bullet loading → profile loading → task execution → complete_task feedback. Each component must integrate seamlessly.
+
+### Performance
+- Use async/await for all I/O operations
+- LSP operations can be slow - cache results when appropriate
+- Batch LLM calls when possible via batch() tool
+- Dashboard uses React Query for efficient data fetching

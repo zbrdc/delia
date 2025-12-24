@@ -13,12 +13,138 @@ from pathlib import Path
 from typing import List, Optional
 
 import structlog
+from fastmcp import FastMCP
 
 from ..types import Workspace
 from .registry import ToolDefinition, ToolRegistry
+from .handlers import check_checkpoint_gate
 from .. import lsp_client
 
 log = structlog.get_logger()
+
+
+def register_lsp_tools(mcp: FastMCP):
+    """Register LSP tools with FastMCP."""
+
+    # Register tools using the public functions directly
+    mcp.tool(name="lsp_goto_definition")(lsp_goto_definition)
+    mcp.tool(name="lsp_find_references")(lsp_find_references)
+    mcp.tool(name="lsp_hover")(lsp_hover)
+    mcp.tool(name="lsp_get_symbols")(lsp_get_symbols)
+    mcp.tool(name="lsp_find_symbol")(lsp_find_symbol)
+    
+    # These have gating, so we wrap them to include the check
+    @mcp.tool()
+    async def lsp_rename_symbol(
+        path: str,
+        line: int,
+        character: int,
+        new_name: str,
+        apply: bool = False,
+    ) -> str:
+        """
+        Rename a symbol across the entire codebase.
+
+        Uses LSP to find all references and rename them consistently.
+        By default shows a preview; set apply=True to execute the rename.
+
+        Args:
+            path: Path to file containing the symbol
+            line: Line number (1-indexed)
+            character: Character position (0-indexed)
+            new_name: The new name for the symbol
+            apply: If True, apply changes. If False, preview only.
+
+        Returns:
+            Preview of changes, or confirmation if apply=True
+        """
+        # Checkpoint Gating
+        checkpoint_error = check_checkpoint_gate("lsp_rename_symbol", path)
+        if checkpoint_error:
+            return checkpoint_error
+
+        return await lsp_rename_symbol_impl(path, line, character, new_name, apply)
+
+    @mcp.tool()
+    async def lsp_replace_symbol_body(
+        path: str,
+        symbol_name: str,
+        new_body: str,
+    ) -> str:
+        """
+        Replace the entire body of a symbol (function, class, method).
+
+        Finds the symbol by name and replaces its complete definition
+        with the provided new code.
+
+        Args:
+            path: Path to the file containing the symbol
+            symbol_name: Name of the symbol (e.g., "MyClass", "my_function")
+            new_body: The complete new code for the symbol
+
+        Returns:
+            Confirmation of replacement or error message
+        """
+        # Checkpoint Gating
+        checkpoint_error = check_checkpoint_gate("lsp_replace_symbol_body", path)
+        if checkpoint_error:
+            return checkpoint_error
+
+        return await lsp_replace_symbol_body_impl(path, symbol_name, new_body)
+
+    @mcp.tool()
+    async def lsp_insert_before_symbol(
+        path: str,
+        symbol_name: str,
+        content: str,
+    ) -> str:
+        """
+        Insert code before a symbol.
+
+        Useful for adding imports, decorators, or new functions/classes
+        before an existing symbol.
+
+        Args:
+            path: Path to the file
+            symbol_name: Name of the symbol to insert before
+            content: The code to insert
+
+        Returns:
+            Confirmation or error message
+        """
+        # Checkpoint Gating
+        checkpoint_error = check_checkpoint_gate("lsp_insert_before_symbol", path)
+        if checkpoint_error:
+            return checkpoint_error
+
+        return await lsp_insert_before_symbol_impl(path, symbol_name, content)
+
+    @mcp.tool()
+    async def lsp_insert_after_symbol(
+        path: str,
+        symbol_name: str,
+        content: str,
+    ) -> str:
+        """
+        Insert code after a symbol.
+
+        Useful for adding new functions, classes, or code blocks
+        after an existing symbol.
+
+        Args:
+            path: Path to the file
+            symbol_name: Name of the symbol to insert after
+            content: The code to insert
+
+        Returns:
+            Confirmation or error message
+        """
+        # Checkpoint Gating
+        checkpoint_error = check_checkpoint_gate("lsp_insert_after_symbol", path)
+        if checkpoint_error:
+            return checkpoint_error
+
+        return await lsp_insert_after_symbol_impl(path, symbol_name, content)
 
 
 def get_lsp_tools(workspace: Workspace | None = None) -> ToolRegistry:
@@ -93,6 +219,7 @@ def get_lsp_tools(workspace: Workspace | None = None) -> ToolRegistry:
 
     return registry
 
+
 async def lsp_goto_definition(
     path: str,
     line: int,
@@ -100,16 +227,19 @@ async def lsp_goto_definition(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Find the definition of the symbol at the given position.
+    """
+    Find the definition of a symbol at the given file position.
+
+    Uses Language Server Protocol to provide semantic code navigation.
+    Supports Python (pyright/pylsp), TypeScript, Rust, and Go.
 
     Args:
         path: Path to the file
         line: Line number (1-indexed)
         character: Character position (0-indexed)
-        workspace: Workspace context
 
     Returns:
-        List of definitions found
+        File path and line number where the symbol is defined
     """
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
@@ -130,16 +260,19 @@ async def lsp_find_references(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Find all references to the symbol at the given position.
+    """
+    Find all references to a symbol at the given file position.
+
+    Uses Language Server Protocol to find all usages of a symbol
+    across the codebase. Supports Python, TypeScript, Rust, and Go.
 
     Args:
         path: Path to the file
         line: Line number (1-indexed)
         character: Character position (0-indexed)
-        workspace: Workspace context
 
     Returns:
-        List of references found
+        List of locations where the symbol is used
     """
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
@@ -161,16 +294,19 @@ async def lsp_hover(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Get documentation and type information for the symbol at the given position.
+    """
+    Get documentation and type information for a symbol.
+
+    Uses Language Server Protocol to retrieve docstrings, type signatures,
+    and other documentation for the symbol at the given position.
 
     Args:
         path: Path to the file
         line: Line number (1-indexed)
         character: Character position (0-indexed)
-        workspace: Workspace context
 
     Returns:
-        Hover information (markdown)
+        Documentation and type info in markdown format
     """
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
@@ -187,14 +323,18 @@ async def lsp_get_symbols(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Get all symbols in a file (classes, functions, methods, etc.).
+    """
+    Get all symbols in a file (classes, functions, methods, variables).
+
+    Returns a hierarchical view of the file's structure, similar to an
+    IDE's outline view. Use this to understand a file's organization
+    before making edits.
 
     Args:
-        path: Path to the file
-        workspace: Workspace context
+        path: Path to the file to analyze
 
     Returns:
-        Hierarchical list of symbols with their locations and types
+        Hierarchical list of symbols with their types and line ranges
     """
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
@@ -229,7 +369,9 @@ async def lsp_get_symbols(
     return "\n".join(lines)
 
 
-async def lsp_rename_symbol(
+# Internal implementation functions for modification (kept internal to force gating)
+
+async def lsp_rename_symbol_impl(
     path: str,
     line: int,
     character: int,
@@ -238,19 +380,6 @@ async def lsp_rename_symbol(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Rename a symbol across the entire codebase.
-
-    Args:
-        path: Path to the file containing the symbol
-        line: Line number where the symbol is (1-indexed)
-        character: Character position (0-indexed)
-        new_name: The new name for the symbol
-        apply: If True, apply the changes. If False, preview only.
-        workspace: Workspace context
-
-    Returns:
-        Preview of changes or confirmation of applied changes
-    """
     import json
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
@@ -284,7 +413,8 @@ async def lsp_rename_symbol(
             file_lines = content.splitlines(keepends=True)
 
             # Sort edits in reverse order to apply from end to start
-            sorted_edits = sorted(edits, key=lambda e: (e["start_line"], e["start_char"]), reverse=True)
+            sorted_edits = sorted(edits, key=lambda e: (e["start_line"], e["start_char"]),
+                                  reverse=True)
 
             for edit in sorted_edits:
                 start_line = edit["start_line"] - 1
@@ -305,31 +435,20 @@ async def lsp_rename_symbol(
 
             abs_path.write_text("".join(file_lines))
 
-        lines.append(f"\n✓ Applied {result['total_edits']} changes.")
+        lines.append(f"\nApplied {result['total_edits']} changes.")
     else:
         lines.append("\n(Preview only. Set apply=True to apply changes.)")
 
     return "\n".join(lines)
 
 
-async def lsp_find_symbol(
+async def lsp_find_symbol_impl(
     name: str,
     path: str | None = None,
     kind: str | None = None,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Find a symbol by name in a file or across the workspace.
-
-    Args:
-        name: Symbol name to search for (partial match supported)
-        path: Optional file path to search in (if None, searches all files)
-        kind: Optional filter by kind (class, function, method, etc.)
-        workspace: Workspace context
-
-    Returns:
-        List of matching symbols with their locations
-    """
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
@@ -349,7 +468,7 @@ async def lsp_find_symbol(
     else:
         # Search across common source files
         from pathlib import Path as P
-        code_extensions = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs"}
+        code_extensions = { ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs"}
         src_dirs = ["src", "app", "lib", "."]
 
         for src_dir in src_dirs:
@@ -393,25 +512,17 @@ async def lsp_find_symbol(
 
     return "\n".join(lines)
 
+# Expose lsp_find_symbol as public function
+lsp_find_symbol = lsp_find_symbol_impl
 
-async def lsp_replace_symbol_body(
+
+async def lsp_replace_symbol_body_impl(
     path: str,
     symbol_name: str,
     new_body: str,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Replace the entire body of a symbol (function, class, method).
-
-    Args:
-        path: Path to the file containing the symbol
-        symbol_name: Name of the symbol to replace (e.g., "MyClass" or "my_function")
-        new_body: The new code to replace the symbol with
-        workspace: Workspace context
-
-    Returns:
-        Confirmation of the replacement or error message
-    """
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
@@ -454,27 +565,16 @@ async def lsp_replace_symbol_body(
     # Write back
     abs_path.write_text("".join(lines))
 
-    return f"✓ Replaced {target['kind']} '{symbol_name}' (lines {start_line + 1}-{end_line + 1}) in {path}"
+    return f"Replaced {target['kind']} '{symbol_name}' (lines {start_line + 1}-{end_line + 1}) in {path}"
 
 
-async def lsp_insert_before_symbol(
+async def lsp_insert_before_symbol_impl(
     path: str,
     symbol_name: str,
     content: str,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Insert content before a symbol.
-
-    Args:
-        path: Path to the file containing the symbol
-        symbol_name: Name of the symbol to insert before
-        content: The code to insert
-        workspace: Workspace context
-
-    Returns:
-        Confirmation or error message
-    """
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
@@ -509,27 +609,16 @@ async def lsp_insert_before_symbol(
     # Write back
     abs_path.write_text("".join(lines))
 
-    return f"✓ Inserted content before {target['kind']} '{symbol_name}' at line {insert_line + 1} in {path}"
+    return f"Inserted content before {target['kind']} '{symbol_name}' at line {insert_line + 1} in {path}"
 
 
-async def lsp_insert_after_symbol(
+async def lsp_insert_after_symbol_impl(
     path: str,
     symbol_name: str,
     content: str,
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Insert content after a symbol.
-
-    Args:
-        path: Path to the file containing the symbol
-        symbol_name: Name of the symbol to insert after
-        content: The code to insert
-        workspace: Workspace context
-
-    Returns:
-        Confirmation or error message
-    """
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
@@ -569,5 +658,4 @@ async def lsp_insert_after_symbol(
     # Write back
     abs_path.write_text("".join(lines))
 
-    return f"✓ Inserted content after {target['kind']} '{symbol_name}' at line {insert_line + 1} in {path}"
-
+    return f"Inserted content after {target['kind']} '{symbol_name}' at line {insert_line + 1} in {path}"

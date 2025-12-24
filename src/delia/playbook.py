@@ -14,7 +14,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-ACE-inspired Strategic Playbook Management.
+Strategic Playbook Management (inspired by Stanford ACE research).
 
 This module implements the "Playbook" system for Delia, allowing it to
 accumulate, refine, and organize strategies through incremental delta updates.
@@ -35,6 +35,23 @@ from pydantic import BaseModel, Field, computed_field
 from . import paths
 
 log = structlog.get_logger()
+
+# =============================================================================
+# SCHEMA VERSIONING
+# =============================================================================
+# Version history:
+#   1 - Original flat array format: [{"content": ...}, ...]
+#   2 - Wrapped format with metadata: {"schema_version": 2, "bullets": [...], ...}
+#
+# Migration is automatic on load. All saves use the current version.
+# =============================================================================
+
+SCHEMA_VERSION = 2
+
+SCHEMA_CHANGELOG = {
+    1: "Original flat array format",
+    2: "Added schema_version, task_type metadata, updated_at timestamp",
+}
 
 
 def _generate_bullet_id() -> str:
@@ -57,7 +74,7 @@ class PlaybookBullet(BaseModel):
     source_task: str | None = Field(default=None, description="Reference to the task that generated this")
     source: Literal["seed", "learned", "manual", "reflector", "curator"] = Field(
         default="learned",
-        description="Origin: 'seed' from profiles, 'learned' from feedback, 'manual' from user, 'reflector'/'curator' from ACE"
+        description="Origin: 'seed' from profiles, 'learned' from feedback, 'manual' from user, 'reflector'/'curator' from learning module"
     )
 
     @computed_field
@@ -91,6 +108,188 @@ class PlaybookBullet(BaseModel):
             mapped[mapped_key] = value
         
         return cls(**mapped)
+
+
+# =============================================================================
+# BULLET QUALITY VALIDATION
+# =============================================================================
+
+class QualityIssue(BaseModel):
+    """A quality issue found in a bullet."""
+    code: str
+    message: str
+    severity: Literal["error", "warning"] = "error"
+
+
+class QualityResult(BaseModel):
+    """Result of quality validation."""
+    is_valid: bool
+    issues: list[QualityIssue] = Field(default_factory=list)
+
+    @property
+    def error_messages(self) -> list[str]:
+        return [i.message for i in self.issues if i.severity == "error"]
+
+
+class BulletQualityValidator:
+    """
+    Validates bullet content quality before addition.
+
+    Quality gates to prevent garbage content:
+    1. Length: 15-300 chars (not too short, not a code dump)
+    2. Actionable: Contains action verbs or patterns suggesting a strategy
+    3. Not placeholder: Reject TODO, TBD, placeholder text
+    4. Not repetitive: Reject excessive repetition
+    5. Specific: Reject overly vague content
+    """
+
+    # Minimum/maximum content length
+    MIN_LENGTH = 15
+    MAX_LENGTH = 300
+
+    # Action words that indicate strategic content
+    ACTION_PATTERNS = [
+        r"\b(use|always|never|avoid|prefer|add|create|define|implement|handle)\b",
+        r"\b(ensure|maintain|follow|check|validate|test|run|keep|call)\b",
+        r"\b(should|must|can|will|need)\b",
+        r"->|→",  # Arrow indicating transformation/action
+    ]
+
+    # Placeholder patterns to reject
+    PLACEHOLDER_PATTERNS = [
+        r"\bTODO\b",
+        r"\bTBD\b",
+        r"\bFIXME\b",
+        r"\bXXX\b",
+        r"\bplaceholder\b",
+        r"\bto be (?:added|completed|defined)\b",
+        r"^\.\.\.$",
+        r"^…$",
+    ]
+
+    # Vague content patterns to reject
+    VAGUE_PATTERNS = [
+        r"^(?:do|use|try|check) (?:this|it|that)\.?$",
+        r"^(?:good|bad|ok|fine)\.?$",
+        r"^(?:yes|no|maybe)\.?$",
+        r"^(?:remember|note|important)\.?$",
+    ]
+
+    @classmethod
+    def validate(cls, content: str, strict: bool = True) -> QualityResult:
+        """
+        Validate bullet content quality.
+
+        Args:
+            content: The bullet content to validate
+            strict: If True, apply all quality checks. If False, only check basics.
+
+        Returns:
+            QualityResult with is_valid and any issues found
+        """
+        issues: list[QualityIssue] = []
+        content = content.strip()
+
+        # 1. Length check
+        if len(content) < cls.MIN_LENGTH:
+            issues.append(QualityIssue(
+                code="too_short",
+                message=f"Content too short ({len(content)} chars, min {cls.MIN_LENGTH})",
+            ))
+
+        if len(content) > cls.MAX_LENGTH:
+            issues.append(QualityIssue(
+                code="too_long",
+                message=f"Content too long ({len(content)} chars, max {cls.MAX_LENGTH})",
+            ))
+
+        # 2. Empty/whitespace check
+        if not content or content.isspace():
+            issues.append(QualityIssue(
+                code="empty",
+                message="Content is empty or whitespace only",
+            ))
+            return QualityResult(is_valid=False, issues=issues)
+
+        # 3. Placeholder check
+        import re
+        for pattern in cls.PLACEHOLDER_PATTERNS:
+            if re.search(pattern, content, re.IGNORECASE):
+                issues.append(QualityIssue(
+                    code="placeholder",
+                    message="Content appears to be placeholder text",
+                ))
+                break
+
+        if strict:
+            # 4. Actionable check - should contain action words
+            has_action = any(
+                re.search(pattern, content, re.IGNORECASE)
+                for pattern in cls.ACTION_PATTERNS
+            )
+            if not has_action:
+                issues.append(QualityIssue(
+                    code="not_actionable",
+                    message="Content lacks actionable guidance (no action verbs found)",
+                    severity="warning",  # Warning, not error - might be valid
+                ))
+
+            # 5. Vague content check
+            for pattern in cls.VAGUE_PATTERNS:
+                if re.match(pattern, content, re.IGNORECASE):
+                    issues.append(QualityIssue(
+                        code="too_vague",
+                        message="Content is too vague to be useful",
+                    ))
+                    break
+
+            # 6. Repetition check
+            words = content.lower().split()
+            if len(words) >= 5:
+                unique_words = set(words)
+                repetition_ratio = len(unique_words) / len(words)
+                if repetition_ratio < 0.3:  # Less than 30% unique words
+                    issues.append(QualityIssue(
+                        code="repetitive",
+                        message="Content has excessive word repetition",
+                    ))
+
+            # 7. Code dump check - too many special chars suggests code
+            special_count = sum(1 for c in content if c in "{}[]();:=<>")
+            if len(content) > 30 and special_count / len(content) > 0.15:
+                issues.append(QualityIssue(
+                    code="code_dump",
+                    message="Content appears to be code, not a strategy",
+                    severity="warning",
+                ))
+
+            # 8. Pure code pattern check - catches shorter code snippets
+            code_patterns = [
+                r"^\s*(?:def|class|function|const|let|var|import|from)\s+\w+",  # Function/class/import definitions
+                r"^\s*(?:if|while|try|catch)\s*\(",  # Control flow with parens (JS/C-style)
+                r"^\s*for\s+\w+\s+in\s+",  # Python for loop
+                r"^\s*\w+\s*=\s*[\[\{\(]",  # Variable assignments to collections
+            ]
+            for pattern in code_patterns:
+                if re.match(pattern, content):
+                    issues.append(QualityIssue(
+                        code="code_snippet",
+                        message="Content appears to be a code snippet, not a strategy",
+                        severity="error",  # Error for pure code
+                    ))
+                    break
+
+        # Errors make it invalid, warnings alone don't
+        errors = [i for i in issues if i.severity == "error"]
+        return QualityResult(is_valid=len(errors) == 0, issues=issues)
+
+    @classmethod
+    def format_rejection(cls, result: QualityResult) -> str:
+        """Format rejection message for display."""
+        if result.is_valid:
+            return ""
+        errors = [i.message for i in result.issues if i.severity == "error"]
+        return "; ".join(errors)
 
 
 class PlaybookManager:
@@ -130,29 +329,45 @@ class PlaybookManager:
         return self.playbook_dir / f"{task_type}.json"
 
     def load_playbook(self, task_type: str = "general") -> list[PlaybookBullet]:
-        """Load bullets for a specific task type."""
+        """Load bullets for a specific task type.
+
+        Handles automatic migration from older schema versions:
+        - v1 (flat array): Migrates to v2 on next save
+        - v2 (wrapped object): Current format
+        """
         if task_type in self._cache:
             return self._cache[task_type]
-            
+
         path = self._get_path(task_type)
         if not path.exists():
             return []
-            
+
         try:
             with open(path, "r") as f:
                 data = json.load(f)
-                
-                # Handle both formats:
-                # 1. Flat array: [{"content": ...}, ...]
-                # 2. Wrapped object: {"bullets": [...], "playbook": ...}
-                if isinstance(data, dict) and "bullets" in data:
-                    bullet_list = data["bullets"]
-                elif isinstance(data, list):
+
+                # Detect schema version and extract bullets
+                if isinstance(data, list):
+                    # v1: Flat array format (legacy)
                     bullet_list = data
+                    file_version = 1
+                elif isinstance(data, dict):
+                    # v2+: Wrapped object format
+                    file_version = data.get("schema_version", 1)
+                    bullet_list = data.get("bullets", [])
                 else:
                     log.warning("playbook_unknown_format", task_type=task_type)
                     return []
-                
+
+                # Log version info
+                if file_version < SCHEMA_VERSION:
+                    log.info(
+                        "playbook_schema_migration",
+                        task_type=task_type,
+                        from_version=file_version,
+                        to_version=SCHEMA_VERSION,
+                    )
+
                 bullets = [PlaybookBullet.from_dict(b) for b in bullet_list]
                 self._cache[task_type] = bullets
                 return bullets
@@ -161,13 +376,28 @@ class PlaybookManager:
             return []
 
     def save_playbook(self, task_type: str, bullets: list[PlaybookBullet]):
-        """Persist a playbook to disk."""
+        """Persist a playbook to disk using current schema version.
+
+        Schema v2 format:
+        {
+            "schema_version": 2,
+            "task_type": "coding",
+            "updated_at": "2025-12-23T...",
+            "bullets": [...]
+        }
+        """
         path = self._get_path(task_type)
         try:
+            playbook_data = {
+                "schema_version": SCHEMA_VERSION,
+                "task_type": task_type,
+                "updated_at": _now_iso(),
+                "bullets": [b.to_dict() for b in bullets],
+            }
             with open(path, "w") as f:
-                json.dump([b.to_dict() for b in bullets], f, indent=2)
+                json.dump(playbook_data, f, indent=2)
             self._cache[task_type] = bullets
-            log.info("playbook_saved", task_type=task_type, count=len(bullets))
+            log.info("playbook_saved", task_type=task_type, count=len(bullets), schema_version=SCHEMA_VERSION)
         except Exception as e:
             log.error("playbook_save_failed", task_type=task_type, error=str(e))
 
@@ -177,8 +407,51 @@ class PlaybookManager:
         content: str,
         section: str = "general_strategies",
         source: Literal["seed", "learned", "manual", "reflector", "curator"] = "learned",
-    ) -> PlaybookBullet:
-        """Add a new strategic bullet to a playbook."""
+        skip_validation: bool = False,
+    ) -> PlaybookBullet | None:
+        """Add a new strategic bullet to a playbook.
+
+        Args:
+            task_type: The playbook to add to (coding, testing, etc.)
+            content: The bullet content
+            section: Section within the playbook
+            source: Origin of the bullet
+            skip_validation: If True, bypass quality validation (use sparingly)
+
+        Returns:
+            The created PlaybookBullet, or None if rejected by quality gate
+
+        Quality gates prevent garbage content:
+        - Length: 15-300 chars
+        - Actionable: Contains action verbs
+        - Not placeholder: No TODO, TBD, etc.
+        - Not vague: Specific enough to be useful
+        """
+        # Quality gate - reject garbage content
+        if not skip_validation:
+            # Manual additions get less strict validation (warnings only)
+            strict = source not in ("manual",)
+            quality = BulletQualityValidator.validate(content, strict=strict)
+
+            if not quality.is_valid:
+                rejection = BulletQualityValidator.format_rejection(quality)
+                log.warning(
+                    "playbook_bullet_rejected",
+                    task_type=task_type,
+                    reason=rejection,
+                    content=content[:50] + "..." if len(content) > 50 else content,
+                )
+                return None
+
+            # Log warnings even if valid
+            warnings = [i for i in quality.issues if i.severity == "warning"]
+            if warnings:
+                log.debug(
+                    "playbook_bullet_warnings",
+                    task_type=task_type,
+                    warnings=[w.message for w in warnings],
+                )
+
         bullets = self.load_playbook(task_type)
 
         # Simple deduplication check
@@ -195,6 +468,7 @@ class PlaybookManager:
         )
         bullets.append(new_bullet)
         self.save_playbook(task_type, bullets)
+        log.info("playbook_bullet_added", task_type=task_type, bullet_id=new_bullet.id)
         return new_bullet
 
     def delete_bullet(self, task_type: str, bullet_id: str) -> bool:
@@ -249,7 +523,7 @@ class PlaybookManager:
 
         formatted = "### STRATEGIC PLAYBOOK (Learned Lessons)\n"
         for b in bullets:
-            # ACE-style bullet format: [ID] content
+            # Bullet format: [ID] content
             formatted += f"- [{b.id}] {b.content}\n"
         return formatted
 
@@ -289,7 +563,7 @@ class PlaybookManager:
     ) -> str:
         """Get automatically-selected playbook bullets for prompt injection.
         
-        This is the primary entry point for ACE Framework enforcement.
+        This is the primary entry point for Delia Framework enforcement.
         Called by ContextEngine.prepare_content() to ensure playbook guidance
         is ALWAYS included in prompts.
         
@@ -323,7 +597,7 @@ class PlaybookManager:
         if not parts:
             return ""
         
-        header = "### ACE PLAYBOOK (Apply These Learned Strategies)"
+        header = "### DELIA PLAYBOOK (Apply These Learned Strategies)"
         footer = "_Report feedback with: report_feedback(bullet_id, helpful=True/False)_"
         
         return f"{header}\n" + "\n".join(parts) + f"\n\n{footer}"
@@ -551,7 +825,7 @@ async def generate_project_playbook(summarizer: Any = None) -> int:
 
     # Store in playbook manager under "project" task type
     # P4: Use curator to ensure semantic deduplication
-    from .ace.curator import Curator
+    from .learning.curator import Curator
     curator = Curator(playbook_manager=playbook_manager)
 
     added_count = 0
@@ -1435,7 +1709,7 @@ def _get_obsolete_reason(profile_name: str, tech_stack: dict[str, Any]) -> str:
 
 
 # =============================================================================
-# Profile to Playbook Seed Conversion (ACE Framework)
+# Profile to Playbook Seed Conversion
 # =============================================================================
 
 import re

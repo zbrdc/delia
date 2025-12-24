@@ -6,7 +6,7 @@ High-level MCP tool handlers for Delia.
 
 This module registers all MCP tools with FastMCP. Implementation functions
 are in separate modules:
-- handlers_ace.py: ACE enforcement classes and helpers
+- handlers_enforcement.py: Framework enforcement classes and helpers
 - handlers_orchestration.py: delegate, think, batch, chain, workflow, agent
 - handlers_playbook.py: playbook management tools
 """
@@ -24,19 +24,19 @@ from ..container import get_container
 from ..language import detect_language
 
 # Import from refactored modules
-from .handlers_ace import (
-    ACE_EXEMPT_TOOLS,
+from .handlers_enforcement import (
+    EXEMPT_TOOLS,
     CHECKPOINT_REQUIRED_TOOLS,
-    ACEEnforcementTracker,
-    ACEEnforcementManager,
-    get_ace_tracker,
-    get_ace_manager,
-    check_ace_gate,
+    EnforcementTracker,
+    EnforcementManager,
+    get_tracker,
+    get_manager,
+    check_context_gate,
     check_checkpoint_gate,
     record_checkpoint,
     record_search,
     get_phase_injection,
-    inject_ace_reminder,
+    inject_reminder,
     auto_trigger_reflection,
 )
 from .handlers_orchestration import (
@@ -61,7 +61,7 @@ from .handlers_playbook import (
 log = structlog.get_logger()
 
 # Re-export for backwards compatibility
-_ace_manager = get_ace_manager()
+_enforcement_manager = get_manager()
 
 
 def register_tool_handlers(mcp: FastMCP):
@@ -166,7 +166,7 @@ def register_tool_handlers(mcp: FastMCP):
 
 
     # =========================================================================
-    # Playbook Tools (ACE Framework)
+    # Playbook Tools (Delia Framework)
     # =========================================================================
 
     @mcp.tool()
@@ -249,7 +249,7 @@ def register_tool_handlers(mcp: FastMCP):
         Set the active project context for dynamic instruction generation.
 
         Call this when switching between projects to ensure playbooks and
-        ACE guidance are loaded from the correct project directory.
+        framework guidance are loaded from the correct project directory.
 
         Args:
             path: Absolute or relative path to the project directory
@@ -391,7 +391,7 @@ def register_tool_handlers(mcp: FastMCP):
         # Falls back to utility × recency if no embeddings
         all_bullets = []
         try:
-            from ..ace.retrieval import get_retriever
+            from ..learning.retrieval import get_retriever
             retriever = get_retriever()
 
             for task_type in context.all_tasks():
@@ -539,12 +539,20 @@ def register_tool_handlers(mcp: FastMCP):
         # Always include memory tools - they're useful for ALL tasks
         recommended_tools.extend(MEMORY_TOOLS)
 
-        # Register with ACE enforcement tracker
-        tracker = get_ace_tracker()
-        tracker.record_ace_started(str(project_path))
+        # Register with enforcement tracker (store message for feedback learning)
+        tracker = get_tracker()
+        tracker.record_context_started(
+            str(project_path),
+            task_type=context.primary_task,
+            message=message,
+        )
 
-        # Build response
+        # Build response with system time for agent awareness
+        from ..language import get_current_time_context
+        system_time = get_current_time_context()
+
         result = {
+            "system_time": system_time,
             "detected_context": {
                 "primary_task": context.primary_task,
                 "secondary_tasks": context.secondary_tasks,
@@ -558,7 +566,7 @@ def register_tool_handlers(mcp: FastMCP):
             "profiles": loaded_profiles,
             "other_available_profiles": other_available,
             "recommended_tools": recommended_tools,
-            "ace_workflow": {
+            "delia_workflow": {
                 "current_step": "APPLY",
                 "next_step": "complete_task()",
                 "instruction": (
@@ -663,12 +671,12 @@ def register_tool_handlers(mcp: FastMCP):
         path: str | None = None,
     ) -> str:
         """
-        Complete an ACE task and update bullet feedback in one call.
+        Complete a task and update bullet feedback in one call.
 
-        **CRITICAL**: Call this when you finish a task to close the ACE learning loop.
+        **CRITICAL**: Call this when you finish a task to close the Delia learning loop.
         This replaces calling report_feedback() multiple times.
 
-        The ACE workflow:
+        The Delia workflow:
         1. auto_context() → get bullets + profiles
         2. Apply bullets to your work
         3. complete_task() → report success/failure + which bullets you used
@@ -736,7 +744,12 @@ def register_tool_handlers(mcp: FastMCP):
                         })
                     break
 
+        # Get system time for agent awareness
+        from ..language import get_current_time_context
+        system_time = get_current_time_context()
+
         result = {
+            "system_time": system_time,
             "status": "completed",
             "success": success,
             "feedback_recorded": feedback_recorded,
@@ -749,16 +762,62 @@ def register_tool_handlers(mcp: FastMCP):
             task_type = feedback_recorded[0]["task_type"]
 
         # =====================================================================
-        # ACE LEARNING LOOP: Reflector → Curator pipeline
+        # DETECTION FEEDBACK LOOP: Auto-learn from misdetections
         # =====================================================================
-        # Learn from BOTH success AND failure to maximize ACE improvements.
+        # Compare what was detected by auto_context vs what was actually worked on.
+        # If they differ, record feedback to improve future detection.
+        # =====================================================================
+        try:
+            from .handlers_enforcement import get_tracker
+            from ..context_detector import get_pattern_learner
+
+            tracker = get_tracker()
+            detected_task, original_message = tracker.get_detection_context(str(project_path))
+
+            if detected_task and original_message and detected_task != task_type:
+                # Misdetection occurred - record feedback to learn
+                learner = get_pattern_learner(project_path)
+                feedback_result = learner.record_feedback(
+                    message=original_message,
+                    detected_task=detected_task,
+                    correct_task=task_type,
+                    was_correct=False,
+                )
+                result["detection_feedback"] = {
+                    "detected": detected_task,
+                    "actual": task_type,
+                    "patterns_learned": feedback_result.get("patterns_added", 0),
+                    "message": f"Learned: '{original_message[:50]}...' → {task_type} (was {detected_task})",
+                }
+                log.info(
+                    "detection_feedback_auto_recorded",
+                    detected=detected_task,
+                    actual=task_type,
+                    patterns_added=feedback_result.get("patterns_added", 0),
+                )
+            elif detected_task and original_message and detected_task == task_type:
+                # Detection was correct - reinforce patterns
+                learner = get_pattern_learner(project_path)
+                learner.record_feedback(
+                    message=original_message,
+                    detected_task=detected_task,
+                    correct_task=task_type,
+                    was_correct=True,
+                )
+        except Exception as e:
+            log.debug("detection_feedback_skipped", error=str(e))
+
+        # =====================================================================
+        # DELIA LEARNING LOOP: Reflector → Curator pipeline
+        # =====================================================================
+        # Learn from BOTH success AND failure to maximize learning improvements.
         # Success: Learn what worked well (patterns to reinforce)
         # Failure: Learn what went wrong (anti-patterns to avoid)
         # =====================================================================
         if success or (not success and failure_reason):
             try:
-                from ..ace.reflector import get_reflector
-                from ..ace.curator import get_curator
+                from ..learning.reflector import get_reflector
+                from ..learning.curator import get_curator
 
                 reflector = get_reflector()
                 curator = get_curator(str(project_path))
@@ -784,13 +843,13 @@ def register_tool_handlers(mcp: FastMCP):
                 # Curate: Apply delta updates based on reflection
                 curation = await curator.curate(reflection, auto_prune=False)
 
-                result["ace_reflection"] = {
+                result["reflection"] = {
                     "insights_extracted": len(reflection.insights),
                     "bullets_tagged_helpful": len(reflection.bullets_to_tag_helpful),
                     "bullets_tagged_harmful": len(reflection.bullets_to_tag_harmful),
                     "root_causes": reflection.root_causes[:2] if reflection.root_causes else [],
                 }
-                result["ace_curation"] = {
+                result["curation"] = {
                     "bullets_added": curation.bullets_added,
                     "bullets_removed": curation.bullets_removed,
                     "dedup_prevented": curation.dedup_prevented,
@@ -798,34 +857,39 @@ def register_tool_handlers(mcp: FastMCP):
                 }
 
                 log.info(
-                    "ace_reflection_complete",
+                    "reflection_complete",
                     task_succeeded=success,
                     insights=len(reflection.insights),
                     curation_added=curation.bullets_added,
                 )
             except Exception as e:
-                log.warning("ace_reflection_failed", error=str(e))
-                result["ace_reflection_error"] = str(e)
+                log.warning("reflection_failed", error=str(e))
+                result["reflection_error"] = str(e)
 
         # If user provided explicit insight (regardless of reflection), add it
         if new_insight:
             try:
-                from ..ace.curator import get_curator
+                from ..learning.curator import get_curator
                 curator = get_curator(str(project_path))
 
-                added, existing_id = await curator.add_bullet(
+                add_result = await curator.add_bullet(
                     task_type=task_type,
                     content=new_insight,
                     section="learned_strategies" if success else "failure_modes",
                     source="reflector",
                 )
 
-                if added:
+                if add_result.get("added"):
                     result["new_bullet_added"] = True
                     result["insight_recorded"] = new_insight
+                    result["bullet_id"] = add_result.get("bullet_id")
+                elif add_result.get("quality_rejected"):
+                    result["new_bullet_added"] = False
+                    result["quality_rejected"] = True
+                    result["rejection_reason"] = add_result.get("reason")
                 else:
                     result["new_bullet_added"] = False
-                    result["similar_bullet_exists"] = existing_id
+                    result["similar_bullet_exists"] = add_result.get("bullet_id")
             except Exception as e:
                 result["insight_error"] = str(e)
 
@@ -835,7 +899,7 @@ def register_tool_handlers(mcp: FastMCP):
             result["failure_reason"] = failure_reason
 
         log.info(
-            "ace_task_completed",
+            "task_completed",
             success=success,
             bullets_updated=len(feedback_recorded),
             new_insight=bool(new_insight),
@@ -854,7 +918,7 @@ def register_tool_handlers(mcp: FastMCP):
         path: str | None = None,
     ) -> str:
         """
-        Manually trigger ACE Reflector to analyze a task execution.
+        Manually trigger Delia Reflector to analyze a task execution.
 
         Use this tool when you want to analyze what happened during a task
         and extract insights for the playbook. The Reflector will:
@@ -906,8 +970,8 @@ def register_tool_handlers(mcp: FastMCP):
                 bullet_ids = [b.strip() for b in applied_bullets.split(",") if b.strip()]
 
         try:
-            from ..ace.reflector import get_reflector
-            from ..ace.curator import get_curator
+            from ..learning.reflector import get_reflector
+            from ..learning.curator import get_curator
 
             reflector = get_reflector()
             curator = get_curator(str(project_path))
@@ -968,13 +1032,13 @@ def register_tool_handlers(mcp: FastMCP):
             }, indent=2)
 
     # =========================================================================
-    # ACE Workflow Checkpoint Tools
+    # Workflow Checkpoint Tools
     # =========================================================================
 
     @mcp.tool()
-    async def check_ace_status(path: str | None = None) -> str:
+    async def check_status(path: str | None = None) -> str:
         """
-        Check whether ACE workflow was followed and what actions are needed.
+        Check whether Delia Framework workflow was followed and what actions are needed.
 
         **IMPORTANT**: Call this tool at the start of EVERY conversation to see
         if onboarding/playbooks are available and what context to load.
@@ -986,7 +1050,7 @@ def register_tool_handlers(mcp: FastMCP):
             path: Optional project path
 
         Returns:
-            JSON with ACE status, available playbooks, and recommended actions
+            JSON with framework status, available playbooks, and recommended actions
         """
         from pathlib import Path as PyPath
         from ..playbook import get_playbook_manager
@@ -1001,7 +1065,11 @@ def register_tool_handlers(mcp: FastMCP):
             project_path = pm.playbook_dir.parent.parent
 
         stats = pm.get_stats()
-        tracker = get_ace_tracker()
+        tracker = get_tracker()
+
+        # Get system time for agent awareness
+        from ..language import get_current_time_context
+        system_time = get_current_time_context()
 
         # Check if playbooks exist
         has_playbooks = stats.get("total_bullets", 0) > 0
@@ -1009,14 +1077,16 @@ def register_tool_handlers(mcp: FastMCP):
 
         if not has_playbooks:
             return json.dumps({
+                "system_time": system_time,
                 "status": "no_playbooks",
-                "message": "ACE Framework not initialized for this project.",
-                "action_required": f"Run `init_project(path='{project_path}')` to initialize ACE Framework.",
+                "message": "Delia Framework not initialized for this project.",
+                "action_required": f"Run `init_project(path='{project_path}')` to initialize the framework.",
                 "alternative": "Or manually call `scan_codebase()` followed by `analyze_and_index()`",
             }, indent=2)
 
         if not playbook_queried:
             return json.dumps({
+                "system_time": system_time,
                 "status": "playbook_not_loaded",
                 "message": "Playbooks available but not loaded for this session.",
                 "action_required": "Call `auto_context(message='<your task>')` to load relevant playbooks.",
@@ -1025,8 +1095,9 @@ def register_tool_handlers(mcp: FastMCP):
             }, indent=2)
 
         return json.dumps({
+            "system_time": system_time,
             "status": "ready",
-            "message": "ACE Framework active. Playbooks loaded.",
+            "message": "Delia Framework active. Playbooks loaded.",
             "playbook_stats": stats,
             "reminder": "Apply playbook bullets to your work. Call report_feedback() when done.",
         }, indent=2)
@@ -1125,11 +1196,11 @@ def register_tool_handlers(mcp: FastMCP):
                 "linting": "Code formatted and linted?",
                 "documentation": "Docs updated if needed?",
                 "methodology": "Captured reusable methodology as playbook bullets?",
-                "ace_complete": "Called complete_task(success, bullets_applied)?",
+                "workflow_complete": "Called complete_task(success, bullets_applied)?",
             },
-            "ace_workflow": {
+            "workflow": {
                 "final_step": "complete_task(success=True/False, bullets_applied='[\"strat-xxx\", ...]')",
-                "purpose": "Records feedback for all bullets in one call, closing the ACE learning loop",
+                "purpose": "Records feedback for all bullets in one call, closing the Delia learning loop",
             },
             "methodology_capture": {
                 "question": "What did I do differently that found issues others might miss?",
@@ -1141,21 +1212,140 @@ def register_tool_handlers(mcp: FastMCP):
                 "For exploration-only tasks, tests and linting may not be needed. "
                 "For code changes, verify the full validation workflow. "
                 "IMPORTANT: Capture reusable methodology as playbook bullets so other models can learn. "
-                "ALWAYS call complete_task() to close the ACE learning loop."
+                "ALWAYS call complete_task() to close the Delia learning loop."
             ),
+        }, indent=2)
+
+    @mcp.tool()
+    async def snapshot_context(
+        task_summary: str,
+        pending_items: str,
+        key_decisions: str | None = None,
+        files_modified: str | None = None,
+        next_steps: str | None = None,
+        path: str | None = None,
+    ) -> str:
+        """
+        Capture current task state for continuation in a new conversation.
+
+        Use this tool when a task is too large for the current context window,
+        or when you need to preserve state before the user starts a new session.
+        This creates a persistent memory file that future agents can read.
+
+        Args:
+            task_summary: Brief description of the overall task and current progress
+            pending_items: JSON array of remaining work items (e.g., '["Fix tests", "Update docs"]')
+            key_decisions: Optional JSON object of important decisions made (e.g., '{"auth": "JWT over sessions"}')
+            files_modified: Optional JSON array of files changed so far
+            next_steps: Optional guidance for the next agent on how to proceed
+            path: Optional project path (defaults to current project)
+
+        Returns:
+            Confirmation with path to the snapshot file
+
+        Example:
+            snapshot_context(
+                task_summary="Implementing user authentication - 60% complete",
+                pending_items='["Add password reset", "Write integration tests"]',
+                key_decisions='{"auth_method": "JWT", "token_expiry": "24h"}',
+                files_modified='["src/auth.py", "src/models/user.py"]',
+                next_steps="Start with password reset flow. Test fixtures are in tests/conftest.py"
+            )
+        """
+        from datetime import datetime
+        from ..playbook import get_playbook_manager
+
+        pm = get_playbook_manager()
+        if path:
+            project_path = Path(path).resolve()
+        elif pm.playbook_dir.exists():
+            project_path = pm.playbook_dir.parent.parent
+        else:
+            project_path = Path.cwd()
+
+        memories_dir = project_path / ".delia" / "memories"
+        memories_dir.mkdir(parents=True, exist_ok=True)
+
+        # Parse JSON inputs
+        try:
+            pending_list = json.loads(pending_items) if pending_items else []
+        except json.JSONDecodeError:
+            pending_list = [pending_items]  # Treat as single item if not valid JSON
+
+        try:
+            decisions_dict = json.loads(key_decisions) if key_decisions else {}
+        except json.JSONDecodeError:
+            decisions_dict = {"note": key_decisions} if key_decisions else {}
+
+        try:
+            files_list = json.loads(files_modified) if files_modified else []
+        except json.JSONDecodeError:
+            files_list = [files_modified] if files_modified else []
+
+        # Build snapshot content
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            "# Task Snapshot",
+            "",
+            f"*Captured: {timestamp}*",
+            "",
+            "## Summary",
+            task_summary,
+            "",
+            "## Pending Items",
+        ]
+
+        for item in pending_list:
+            lines.append(f"- [ ] {item}")
+        lines.append("")
+
+        if decisions_dict:
+            lines.append("## Key Decisions")
+            for key, value in decisions_dict.items():
+                lines.append(f"- **{key}**: {value}")
+            lines.append("")
+
+        if files_list:
+            lines.append("## Files Modified")
+            for f in files_list:
+                lines.append(f"- `{f}`")
+            lines.append("")
+
+        if next_steps:
+            lines.append("## Next Steps")
+            lines.append(next_steps)
+            lines.append("")
+
+        lines.extend([
+            "---",
+            "*To continue: Read this file at the start of your next session.*",
+        ])
+
+        content = "\n".join(lines)
+        snapshot_path = memories_dir / "task_snapshot.md"
+        snapshot_path.write_text(content)
+
+        return json.dumps({
+            "status": "snapshot_saved",
+            "path": str(snapshot_path.relative_to(project_path)),
+            "message": (
+                "Task state captured. Suggest user start a new conversation. "
+                "The next agent should call read_memory(name='task_snapshot') to resume."
+            ),
+            "pending_count": len(pending_list),
         }, indent=2)
 
     @mcp.tool()
     async def read_initial_instructions() -> str:
         """
-        Get the Delia ACE Framework instructions manual.
+        Get the Delia Framework instructions manual.
 
-        **CRITICAL**: If you haven't already read the ACE Framework instructions,
+        **CRITICAL**: If you haven't already read the Delia Framework instructions,
         call this tool IMMEDIATELY at the start of the conversation. Some MCP
         clients do not automatically display system prompts.
 
         Returns:
-            Complete ACE Framework instructions for this project
+            Complete Delia Framework instructions for this project
         """
         from pathlib import Path as PyPath
         from ..playbook import get_playbook_manager
@@ -1175,7 +1365,7 @@ def register_tool_handlers(mcp: FastMCP):
         stats = pm.get_stats()
 
         return json.dumps({
-            "message": "Delia ACE Framework Instructions Manual",
+            "message": "Delia Framework Instructions Manual",
             "instructions": instructions,
             "playbook_summary": stats,
             "quick_start": [
@@ -1185,7 +1375,7 @@ def register_tool_handlers(mcp: FastMCP):
                 "4. Call think_about_completion() when you think you're done",
                 "5. Call report_feedback(bullet_id, task_type, helpful) to close the loop",
             ],
-            "note": "You have hereby read the ACE Framework manual and do not need to read it again.",
+            "note": "You have hereby read the Delia Framework manual and do not need to read it again.",
         }, indent=2)
 
     @mcp.tool()
@@ -1474,8 +1664,9 @@ def register_tool_handlers(mcp: FastMCP):
         """
         from .registry import TOOL_CATEGORIES
 
-        # Get all MCP tools from the server
-        tools_info = mcp.list_tools()
+        # Get all MCP tools from the server (async, returns dict of name -> Tool)
+        tools_dict = await mcp.get_tools()
+        tools_info = list(tools_dict.values())
 
         # Group by category (for now, we'll categorize based on name patterns)
         categorized: dict[str, list[dict]] = {cat: [] for cat in TOOL_CATEGORIES}
@@ -1487,8 +1678,8 @@ def register_tool_handlers(mcp: FastMCP):
             "lsp": ["lsp_"],
             "git": ["git_"],
             "testing": ["run_tests"],
-            "ace": ["auto_context", "complete_task", "get_playbook", "report_feedback",
-                   "get_project_context", "playbook", "check_ace_status", "think_about_", "reflect"],
+            "framework": ["auto_context", "complete_task", "get_playbook", "report_feedback",
+                   "get_project_context", "playbook", "check_status", "think_about_", "reflect"],
             "orchestration": ["delegate", "think", "batch", "chain", "workflow", "agent"],
             "admin": ["health", "models", "switch_", "set_project", "init_project",
                      "mcp_servers", "session", "admin"],
@@ -1497,7 +1688,7 @@ def register_tool_handlers(mcp: FastMCP):
 
         for tool in tools_info:
             tool_name = tool.name if hasattr(tool, 'name') else str(tool)
-            tool_desc = tool.description if hasattr(tool, 'description') else ""
+            tool_desc = getattr(tool, 'description', None) or ""
 
             assigned = False
             for cat, patterns in category_patterns.items():
@@ -1554,42 +1745,41 @@ def register_tool_handlers(mcp: FastMCP):
         Returns:
             Full tool description with parameters and examples
         """
-        tools_info = mcp.list_tools()
+        tools_dict = await mcp.get_tools()
 
-        for tool in tools_info:
-            tool_name = tool.name if hasattr(tool, 'name') else str(tool)
-            if tool_name == name:
-                return json.dumps({
-                    "name": tool_name,
-                    "description": tool.description if hasattr(tool, 'description') else "",
-                    "parameters": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
-                }, indent=2)
+        if name in tools_dict:
+            tool = tools_dict[name]
+            return json.dumps({
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.parameters if hasattr(tool, 'parameters') else {},
+            }, indent=2)
 
         return json.dumps({"error": f"Tool not found: {name}"})
 
     # =========================================================================
-    # ACE Manager Admin
+    # Framework Manager Admin
     # =========================================================================
 
     @mcp.tool()
-    async def ace_manager_stats() -> str:
+    async def framework_stats() -> str:
         """
-        Get statistics about per-project ACE enforcement.
+        Get statistics about per-project Delia Framework enforcement.
 
-        Shows which projects have active ACE trackers and allows cleanup
+        Shows which projects have active framework trackers and allows cleanup
         of stale trackers.
 
         Returns:
-            Active projects and their ACE state
+            Active projects and their framework state
         """
-        stats = _ace_manager.get_stats()
+        stats = _enforcement_manager.get_stats()
 
         # Add per-project details
         project_details = {}
         for project in stats["projects"]:
-            tracker = _ace_manager.get_tracker(project)
+            tracker = _enforcement_manager.get_tracker(project)
             project_details[project] = {
-                "ace_started": tracker.is_ace_started(project),
+                "context_started": tracker.is_context_started(project),
                 "playbook_queried": tracker.was_playbook_queried(project),
                 "last_activity": tracker.get_last_activity(),
             }
@@ -1602,11 +1792,11 @@ def register_tool_handlers(mcp: FastMCP):
         }, indent=2)
 
     @mcp.tool()
-    async def ace_manager_cleanup(
+    async def framework_cleanup(
         max_age_hours: float = 1.0,
     ) -> str:
         """
-        Clean up stale ACE trackers for inactive projects.
+        Clean up stale framework trackers for inactive projects.
 
         Args:
             max_age_hours: Remove trackers inactive for longer than this (default 1 hour)
@@ -1615,11 +1805,11 @@ def register_tool_handlers(mcp: FastMCP):
             Number of trackers cleaned up
         """
         max_age_seconds = int(max_age_hours * 3600)
-        removed = _ace_manager.cleanup_stale(max_age_seconds)
+        removed = _enforcement_manager.cleanup_stale(max_age_seconds)
 
         return json.dumps({
             "result": {
                 "trackers_removed": removed,
-                "remaining_projects": len(_ace_manager.list_projects()),
+                "remaining_projects": len(_enforcement_manager.list_projects()),
             }
         }, indent=2)

@@ -35,12 +35,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Import StatsService and constants
 from delia.stats import MAX_RECENT_CALLS, StatsService
 
-# Import the singleton and save function from mcp_server
-from delia.mcp_server import (
-    _update_stats_sync,
-    save_all_stats_async,
-    stats_service,
-)
+# Import the singleton and save function
+from delia.container import get_container
+from delia.stats_handler import update_stats_sync, save_all_stats_async
+
+# Get stats service from container
+_container = get_container()
+stats_service = _container.stats_service
+
+# Wrapper to match test's expected signature
+def _update_stats_sync(*args, **kwargs):
+    return update_stats_sync(*args, **kwargs)
 
 
 @pytest.fixture(autouse=True)

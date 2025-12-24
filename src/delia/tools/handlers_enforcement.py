@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """
-ACE Framework enforcement and tracking for Delia MCP tools.
+Delia Framework enforcement and tracking for MCP tools.
 
 Provides:
-- ACEEnforcementTracker: Per-project ACE workflow tracking
-- ACEEnforcementManager: Thread-safe manager for multiple projects
-- Helper functions for ACE gating and reminders
+- EnforcementTracker: Per-project workflow tracking
+- EnforcementManager: Thread-safe manager for multiple projects
+- Helper functions for context gating and reminders
 """
 
 from __future__ import annotations
@@ -27,13 +27,13 @@ log = structlog.get_logger()
 
 
 # =============================================================================
-# ACE Framework Dynamic Enforcement
+# Delia Framework Dynamic Enforcement
 # =============================================================================
 
 # Tools that can be used without calling auto_context first
-ACE_EXEMPT_TOOLS = {
+EXEMPT_TOOLS = {
     "auto_context",
-    "check_ace_status",
+    "check_status",
     "read_initial_instructions",
     "health",
     "models",
@@ -93,17 +93,17 @@ def resolve_project_path(path: str | None) -> str:
     return str(p)
 
 
-class ACEEnforcementTracker:
-    """Track ACE compliance dynamically across tool calls.
+class EnforcementTracker:
+    """Track Delia Framework compliance dynamically across tool calls.
 
     Provides two enforcement mechanisms:
     1. Soft enforcement: record_playbook_query() and check_compliance()
-    2. Hard enforcement: record_ace_started() and require_ace_started()
+    2. Hard enforcement: record_context_started() and require_context_started()
     """
 
     def __init__(self) -> None:
         self._playbook_queries: dict[str, float] = {}  # path -> last query timestamp
-        self._ace_started: dict[str, float] = {}  # path -> timestamp when auto_context called
+        self._context_started: dict[str, float] = {}  # path -> timestamp when auto_context called
         self._pending_tasks: dict[str, dict] = {}  # path -> {task, start_time}
         self._compliance_warnings: int = 0
         self._gating_enabled: bool = True  # Can be disabled for testing
@@ -112,40 +112,54 @@ class ACEEnforcementTracker:
         # Phase tracking: search → checkpoint → modify
         self._current_phase: dict[str, str] = {}  # path -> current phase (search/checkpoint/modify)
         self._search_count: dict[str, int] = {}  # path -> number of search/read operations
+        # Context-shift detection
+        self._last_task_type: dict[str, str] = {}  # path -> last detected task type
+        # Detection feedback tracking
+        self._last_message: dict[str, str] = {}  # path -> original message for feedback
 
-    def record_ace_started(self, path: str) -> None:
+    def record_context_started(
+        self, path: str, task_type: str | None = None, message: str | None = None
+    ) -> None:
         """Record that auto_context was called for a project."""
-        self._ace_started[path] = time.time()
+        self._context_started[path] = time.time()
         self._playbook_queries[path] = time.time()  # Also counts as playbook query
-        log.info("ace_workflow_started", path=path)
+        if task_type:
+            self._last_task_type[path] = task_type
+        if message:
+            self._last_message[path] = message
+        log.info("workflow_started", path=path, task_type=task_type)
 
-    def is_ace_started(self, path: str) -> bool:
+    def get_detection_context(self, path: str) -> tuple[str | None, str | None]:
+        """Get the last detected task type and message for feedback purposes."""
+        return self._last_task_type.get(path), self._last_message.get(path)
+
+    def is_context_started(self, path: str) -> bool:
         """Check if auto_context was called recently (within 30 minutes)."""
-        if path not in self._ace_started:
+        if path not in self._context_started:
             return False
         # 30 minute window for a single task session
-        return (time.time() - self._ace_started[path]) < 1800
+        return (time.time() - self._context_started[path]) < 1800
 
-    def require_ace_started(self, path: str, tool_name: str) -> dict | None:
-        """Check if ACE was started. Returns error dict if not, None if OK.
+    def require_context_started(self, path: str, tool_name: str) -> dict | None:
+        """Check if context was started. Returns error dict if not, None if OK.
 
-        Use this for tool gating - returns an error response if ACE wasn't started.
+        Use this for tool gating - returns an error response if context wasn't started.
         """
         if not self._gating_enabled:
             return None
 
-        if tool_name in ACE_EXEMPT_TOOLS:
+        if tool_name in EXEMPT_TOOLS:
             return None
 
-        if self.is_ace_started(path):
+        if self.is_context_started(path):
             return None
 
-        # ACE not started - return error for tool gating
+        # Context not started - return error for tool gating
         return {
-            "error": "ACE_WORKFLOW_REQUIRED",
+            "error": "WORKFLOW_REQUIRED",
             "message": (
                 "You must call auto_context() before using this tool. "
-                "ACE Framework ensures you get project-specific guidance before making changes."
+                "Delia Framework ensures you get project-specific guidance before making changes."
             ),
             "action": f'auto_context(message="your task description", path="{path}")',
             "tool_blocked": tool_name,
@@ -154,7 +168,7 @@ class ACEEnforcementTracker:
     def record_playbook_query(self, path: str) -> None:
         """Record that playbooks were queried for a project."""
         self._playbook_queries[path] = time.time()
-        log.debug("ace_playbook_queried", path=path)
+        log.debug("playbook_queried", path=path)
 
     def record_task_start(self, path: str, task_type: str) -> None:
         """Record that a coding task started."""
@@ -166,7 +180,7 @@ class ACEEnforcementTracker:
         }
 
     def check_compliance(self, path: str) -> dict | None:
-        """Check if ACE workflow was followed. Returns warning if not."""
+        """Check if Delia workflow was followed. Returns warning if not."""
         pending = self._pending_tasks.get(path)
         if not pending:
             return None
@@ -174,30 +188,35 @@ class ACEEnforcementTracker:
         if not pending.get("playbook_queried"):
             self._compliance_warnings += 1
             return {
-                "warning": "ACE_PLAYBOOK_NOT_QUERIED",
+                "warning": "PLAYBOOK_NOT_QUERIED",
                 "message": f"Started {pending['task_type']} task without querying playbooks first.",
                 "action_required": f"Call get_playbook(task_type='{pending['task_type']}', path='{path}') before coding.",
                 "total_warnings": self._compliance_warnings,
             }
         return None
 
-    def get_dynamic_reminder(self, path: str, response: str) -> str | None:
-        """Generate dynamic reminder to inject into response."""
+    def get_dynamic_reminder(self, path: str, response: str, tool_name: str | None = None) -> str | None:
+        """Generate professional guidance to inject into response."""
         warning = self.check_compliance(path)
         if warning:
             return (
-                f"\n\n⚠️ **ACE Framework Reminder**: {warning['message']}\n"
+                f"\n\n[GUIDANCE] Delia context: {warning['message']}\n"
                 f"Action: {warning['action_required']}\n"
-                f"Then call `confirm_ace_compliance()` after completing the task."
+                f"Call complete_task() once the implementation is verified."
             )
+
+        # Check for context shift if tool name provided
+        if tool_name:
+            shift_reminder = self.check_context_shift(path, tool_name)
+            if shift_reminder:
+                return shift_reminder
 
         # Check if task completed without confirmation
         pending = self._pending_tasks.get(path)
         if pending and (time.time() - pending.get("start_time", 0)) > 60:  # Task > 1 min
             return (
-                "\n\n📋 **ACE Reminder**: Don't forget to close the learning loop!\n"
-                "Call `confirm_ace_compliance(task_description='...', bullets_applied='...', ...)` "
-                "then `report_feedback()` for helpful bullets."
+                "\n\n[STRATEGY] Task appears substantially complete. "
+                "Close the loop with complete_task(success=True, ...) to record learned patterns."
             )
         return None
 
@@ -210,6 +229,46 @@ class ACEEnforcementTracker:
         self._search_count.pop(path, None)
 
     # =========================================================================
+    # Context-Shift Detection
+    # =========================================================================
+
+    # Tool patterns that imply specific task types
+    TOOL_TASK_HINTS: dict[str, str] = {
+        # Git tools
+        "git_commit": "git", "git_push": "git", "git_status": "git",
+        # Testing tools
+        "pytest": "testing", "run_tests": "testing",
+        # Debug tools
+        "debug": "debugging", "breakpoint": "debugging",
+        # Deployment
+        "docker": "deployment", "deploy": "deployment",
+    }
+
+    def check_context_shift(self, path: str, tool_name: str) -> str | None:
+        """Check if current tool implies a different task type than last auto_context."""
+        last_type = self._last_task_type.get(path)
+        if not last_type:
+            return None
+
+        implied_type = None
+        tool_lower = tool_name.lower()
+
+        for pattern, task_type in self.TOOL_TASK_HINTS.items():
+            if pattern in tool_lower:
+                implied_type = task_type
+                break
+
+        if tool_name in CHECKPOINT_REQUIRED_TOOLS and last_type in ("project", "debugging"):
+            implied_type = "coding"
+
+        if implied_type and implied_type != last_type:
+            return (
+                f"\n\n[CONTEXT] Shift detected: Current work ({implied_type}) differs from active context ({last_type}).\n"
+                f"Refresh context: auto_context(message='...') to load relevant patterns.\n"
+            )
+        return None
+
+    # =========================================================================
     # Checkpoint Tracking (Hard Gating)
     # =========================================================================
 
@@ -217,20 +276,16 @@ class ACEEnforcementTracker:
         """Record that think_about_task_adherence() was called."""
         self._checkpoint_called[path] = time.time()
         self._current_phase[path] = "checkpoint"
-        log.info("ace_checkpoint_called", path=path)
+        log.info("checkpoint_called", path=path)
 
     def is_checkpoint_valid(self, path: str) -> bool:
         """Check if checkpoint was called recently (within 10 minutes)."""
         if path not in self._checkpoint_called:
             return False
-        # 10 minute window - must re-checkpoint for long tasks
         return (time.time() - self._checkpoint_called[path]) < 600
 
     def require_checkpoint(self, path: str, tool_name: str) -> dict | None:
-        """Check if checkpoint was called. Returns blocking error if not.
-
-        This is HARD GATING - the tool will NOT execute without the checkpoint.
-        """
+        """Check if checkpoint was called. Returns blocking error if not."""
         if not self._gating_enabled:
             return None
 
@@ -241,16 +296,15 @@ class ACEEnforcementTracker:
             self._current_phase[path] = "modify"
             return None
 
-        # Checkpoint not called - BLOCK the tool
         return {
             "error": "CHECKPOINT_REQUIRED",
             "message": (
-                f"⛔ BLOCKED: You must call think_about_task_adherence() before using {tool_name}. "
-                "This checkpoint ensures you're aligned with project patterns and user intent."
+                f"[BLOCK] Operational checkpoint required before using {tool_name}. "
+                "Call think_about_task_adherence() to ensure alignment with project conventions."
             ),
             "action": "think_about_task_adherence()",
             "tool_blocked": tool_name,
-            "reason": "Hard gating prevents file modifications without explicit checkpoint.",
+            "reason": "Hard gating prevents modifications without validation checkpoint.",
         }
 
     # =========================================================================
@@ -263,20 +317,15 @@ class ACEEnforcementTracker:
         self._search_count[path] = self._search_count.get(path, 0) + 1
 
     def get_phase_warning(self, path: str, tool_name: str) -> str | None:
-        """Get warning if phase transition is suspicious.
-
-        Returns injection text to prepend to tool response.
-        """
+        """Get warning if phase transition is suspicious."""
         phase = self._current_phase.get(path, "unknown")
         search_count = self._search_count.get(path, 0)
 
-        # Warn if trying to modify after many searches without checkpoint
         if tool_name in CHECKPOINT_REQUIRED_TOOLS:
             if phase == "search" and search_count >= 3:
                 return (
-                    "⚠️ **Phase Warning**: You've done multiple search/read operations "
-                    "but haven't called think_about_collected_info() or think_about_task_adherence(). "
-                    "Consider pausing to verify you have enough information.\n\n"
+                    "[GUIDANCE] High search volume detected without validation. "
+                    "Call think_about_collected_info() or think_about_task_adherence() to verify state.\n\n"
                 )
         return None
 
@@ -292,41 +341,41 @@ class ACEEnforcementTracker:
         timestamps = []
         if self._playbook_queries:
             timestamps.append(max(self._playbook_queries.values()))
-        if self._ace_started:
-            timestamps.append(max(self._ace_started.values()))
+        if self._context_started:
+            timestamps.append(max(self._context_started.values()))
         if self._pending_tasks:
             timestamps.extend(t.get("start_time", 0) for t in self._pending_tasks.values())
         return max(timestamps) if timestamps else 0
 
 
-class ACEEnforcementManager:
-    """Manages per-project ACE enforcement trackers.
+class EnforcementManager:
+    """Manages per-project Delia Framework enforcement trackers.
 
-    Ensures that each project has its own isolated ACE state,
+    Ensures that each project has its own isolated enforcement state,
     preventing cross-contamination when agents work on multiple
     projects concurrently.
     """
 
     def __init__(self) -> None:
-        self._trackers: dict[str, ACEEnforcementTracker] = {}
+        self._trackers: dict[str, EnforcementTracker] = {}
         self._lock = threading.Lock()
 
-    def get_tracker(self, project_path: str) -> ACEEnforcementTracker:
+    def get_tracker(self, project_path: str) -> EnforcementTracker:
         """Get or create tracker for a project.
 
         Args:
             project_path: Absolute path to the project
 
         Returns:
-            ACEEnforcementTracker for that project
+            EnforcementTracker for that project
         """
         # Normalize path
         normalized = str(Path(project_path).resolve())
 
         with self._lock:
             if normalized not in self._trackers:
-                self._trackers[normalized] = ACEEnforcementTracker()
-                log.debug("ace_tracker_created", project=normalized)
+                self._trackers[normalized] = EnforcementTracker()
+                log.debug("tracker_created", project=normalized)
             return self._trackers[normalized]
 
     def cleanup_stale(self, max_age_seconds: int = 3600) -> int:
@@ -347,7 +396,7 @@ class ACEEnforcementManager:
             ]
             for p in stale:
                 del self._trackers[p]
-                log.debug("ace_tracker_cleaned", project=p)
+                log.debug("tracker_cleaned", project=p)
             return len(stale)
 
     def list_projects(self) -> list[str]:
@@ -365,29 +414,29 @@ class ACEEnforcementManager:
 
 
 # Global manager instance (replaces single tracker)
-_ace_manager = ACEEnforcementManager()
+_enforcement_manager = EnforcementManager()
 
 
-def get_ace_tracker(project_path: str | None = None) -> ACEEnforcementTracker:
-    """Get ACE enforcement tracker for a project.
+def get_tracker(project_path: str | None = None) -> EnforcementTracker:
+    """Get enforcement tracker for a project.
 
     Args:
         project_path: Project path. If None, uses current working directory.
 
     Returns:
-        ACEEnforcementTracker for that project
+        EnforcementTracker for that project
     """
     path = project_path or str(Path.cwd())
-    return _ace_manager.get_tracker(path)
+    return _enforcement_manager.get_tracker(path)
 
 
-def get_ace_manager() -> ACEEnforcementManager:
-    """Get the global ACE enforcement manager."""
-    return _ace_manager
+def get_manager() -> EnforcementManager:
+    """Get the global enforcement manager."""
+    return _enforcement_manager
 
 
-def check_ace_gate(tool_name: str, path: str | None = None) -> str | None:
-    """Check if ACE workflow was followed. Returns error JSON if not, None if OK.
+def check_context_gate(tool_name: str, path: str | None = None) -> str | None:
+    """Check if Delia workflow was followed. Returns error JSON if not, None if OK.
 
     Call this at the start of tools that modify code or delegate work.
     Returns None if OK to proceed, or a JSON error string to return immediately.
@@ -397,8 +446,8 @@ def check_ace_gate(tool_name: str, path: str | None = None) -> str | None:
         path: File or project path (resolves to project root)
     """
     project_path = resolve_project_path(path)
-    tracker = get_ace_tracker(project_path)
-    error = tracker.require_ace_started(project_path, tool_name)
+    tracker = get_tracker(project_path)
+    error = tracker.require_context_started(project_path, tool_name)
 
     if error:
         return json.dumps({"result": error}, indent=2)
@@ -416,7 +465,7 @@ def check_checkpoint_gate(tool_name: str, path: str | None = None) -> str | None
         path: File or project path (resolves to project root)
     """
     project_path = resolve_project_path(path)
-    tracker = get_ace_tracker(project_path)
+    tracker = get_tracker(project_path)
     error = tracker.require_checkpoint(project_path, tool_name)
 
     if error:
@@ -430,7 +479,7 @@ def record_checkpoint(path: str | None = None) -> None:
     Call this from the think_about_task_adherence tool handler.
     """
     project_path = resolve_project_path(path)
-    tracker = get_ace_tracker(project_path)
+    tracker = get_tracker(project_path)
     tracker.record_checkpoint_called(project_path)
 
 
@@ -440,7 +489,7 @@ def record_search(path: str | None = None) -> None:
     Call this from search tools (grep, glob, read_file, etc.)
     """
     project_path = resolve_project_path(path)
-    tracker = get_ace_tracker(project_path)
+    tracker = get_tracker(project_path)
     tracker.record_search_operation(project_path)
 
 
@@ -450,17 +499,17 @@ def get_phase_injection(tool_name: str, path: str | None = None) -> str | None:
     Returns warning text or None.
     """
     project_path = resolve_project_path(path)
-    tracker = get_ace_tracker(project_path)
+    tracker = get_tracker(project_path)
     return tracker.get_phase_warning(project_path, tool_name)
 
 
-def inject_ace_reminder(response: str, project_path: str) -> str:
-    """Inject ACE Framework reminder into tool response if needed.
+def inject_reminder(response: str, project_path: str, tool_name: str | None = None) -> str:
+    """Inject Delia Framework reminder into tool response if needed.
 
-    This ensures agents are consistently reminded to follow the ACE workflow.
+    This ensures agents are consistently reminded to follow the workflow.
     """
-    tracker = get_ace_tracker(project_path)
-    reminder = tracker.get_dynamic_reminder(project_path, response)
+    tracker = get_tracker(project_path)
+    reminder = tracker.get_dynamic_reminder(project_path, response, tool_name)
     if reminder:
         return response + reminder
     return response
@@ -492,8 +541,8 @@ async def auto_trigger_reflection(
         Reflection result dict or None if failed
     """
     try:
-        from ..ace.reflector import get_reflector
-        from ..ace.curator import get_curator
+        from ..learning.reflector import get_reflector
+        from ..learning.curator import get_curator
 
         proj_path = Path(project_path) if project_path else Path.cwd()
         reflector = get_reflector()

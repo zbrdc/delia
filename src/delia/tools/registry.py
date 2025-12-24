@@ -44,12 +44,88 @@ TOOL_CATEGORIES = {
     "lsp": "Language Server Protocol code intelligence",
     "git": "Git version control operations",
     "testing": "Test execution and analysis",
-    "ace": "ACE Framework (playbooks, context, feedback)",
+    "framework": "Delia Framework (playbooks, context, feedback)",
     "orchestration": "LLM delegation and workflows",
     "admin": "System administration and configuration",
     "search": "Code search and discovery",
     "general": "General purpose tools",
 }
+
+
+def sanitize_tool_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize JSON schema for OpenAI tool compatibility.
+    
+    Performs the following transformations:
+    1. 'integer' -> 'number' (with multipleOf: 1)
+    2. Removes 'null' from type union arrays
+    3. Flattens oneOf/anyOf that only differ by integer/number
+    """
+    import copy
+    s = copy.deepcopy(schema)
+
+    def walk(node: Any) -> Any:
+        if not isinstance(node, dict):
+            return node
+
+        # 1. Handle 'type' property
+        t = node.get("type")
+        if isinstance(t, str):
+            if t == "integer":
+                node["type"] = "number"
+                node.setdefault("multipleOf", 1)
+        elif isinstance(t, list):
+            # OpenAI doesn't like 'null' in type list, and prefers 'number' over 'integer'
+            new_types = [x if x != "integer" else "number" for x in t if x != "null"]
+            if not new_types:
+                new_types = ["object"]
+            node["type"] = new_types[0] if len(new_types) == 1 else new_types
+            if "integer" in t or "number" in new_types:
+                node.setdefault("multipleOf", 1)
+
+        # 2. Simplify anyOf/oneOf if they only differ by nullability or integer/number
+        for key in ("oneOf", "anyOf"):
+            if key in node and isinstance(node[key], list):
+                # Recurse into sub-schemas first
+                node[key] = [walk(sub) for sub in node[key]]
+                
+                # Check for "type X" and "null" pattern
+                if len(node[key]) == 2:
+                    types = [sub.get("type") for sub in node[key] if isinstance(sub, dict)]
+                    if "null" in types:
+                        non_null_sub = next(sub for sub in node[key] if sub.get("type") != "null")
+                        # Collapse to the non-null type
+                        node.update(non_null_sub)
+                        node.pop(key)
+                        continue
+
+                # If all choices are identical after sanitization, collapse
+                try:
+                    canon = [json.dumps(x, sort_keys=True) for x in node[key]]
+                    if len(set(canon)) == 1:
+                        only = node[key][0]
+                        node.pop(key)
+                        node.update(only)
+                except Exception:
+                    pass
+
+        # 3. Recurse into properties and items
+        if "properties" in node and isinstance(node["properties"], dict):
+            for k, v in node["properties"].items():
+                node["properties"][k] = walk(v)
+        
+        if "items" in node:
+            node["items"] = walk(node["items"])
+            
+        for k in ("allOf", "not"):
+            if k in node:
+                if isinstance(node[k], list):
+                    node[k] = [walk(x) for x in node[k]]
+                else:
+                    node[k] = walk(node[k])
+
+        return node
+
+    return walk(s)
 
 
 @dataclass
@@ -79,7 +155,7 @@ class ToolDefinition:
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.parameters,
+                "parameters": sanitize_tool_schema(self.parameters),
             }
         }
 

@@ -61,7 +61,7 @@ async def test_automatic_failover_on_error():
 
     # Patch the global backend_manager
     with patch("delia.backend_manager.backend_manager") as mock_bm, \
-         patch("delia.mcp_server.call_llm", side_effect=chaos_call):
+         patch("delia.llm.call_llm", side_effect=chaos_call):
         
         # Setup mocks
         mock_bm.get_active_backend.return_value = b1

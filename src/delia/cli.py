@@ -518,7 +518,7 @@ def init(
     if RICH_AVAILABLE and console:
         console.print(Panel.fit("[bold green]Welcome to Delia Setup![/bold green]", border_style="green"))
     else:
-        print("🍈 Welcome to Delia Setup!")
+        print("Welcome to Delia Setup!")
         print("=" * 40)
 
     delia_root = get_delia_root()
@@ -621,7 +621,7 @@ def init(
     if RICH_AVAILABLE and console:
         console.print(Panel.fit("[bold green]Setup complete![/bold green] Restart your AI assistant to use Delia.", border_style="green"))
     else:
-        print("🍉 Setup complete! Restart your AI assistant to use Delia.")
+        print("Setup complete! Restart your AI assistant to use Delia.")
 
 
 @app.command()
@@ -1084,7 +1084,7 @@ def init_project(
     parallel: int = typer.Option(4, "--parallel", "-p", help="Number of parallel summarization tasks"),
 ) -> None:
     """
-    Initialize a project with Delia's ACE Framework.
+    Initialize a project with Delia Framework.
 
     This command:
     1. Indexes the codebase with LLM summarization
@@ -1179,7 +1179,7 @@ def init_project(
                 f"Framework files synced:\n{agent_summary}\n\n"
                 f"[dim]Delia will now provide dynamic playbook guidance for this project.[/dim]",
                 border_style="green",
-                title="Delia ACE Framework"
+                title="Delia Framework"
             ))
         else:
             print("\nProject initialized successfully!")
@@ -1280,12 +1280,11 @@ def _generate_claude_md(project_name: str, tech_stack: dict[str, Any], project_r
     frameworks = tech_stack.get("frameworks", [])
     test_framework = tech_stack.get("test_framework", "pytest" if lang == "Python" else "Jest")
     pkg_manager = tech_stack.get("package_manager", "uv" if lang == "Python" else "npm")
-    is_async = tech_stack.get("is_async", False)
 
     # Build framework list
     framework_str = ", ".join(frameworks) if frameworks else "Standard library"
 
-    # Generate test command
+    # Generate commands
     if lang == "Python":
         test_cmd = "uv run pytest" if pkg_manager == "uv" else "pytest"
         lint_cmd = "ruff check" if pkg_manager == "uv" else "ruff check"
@@ -1296,80 +1295,14 @@ def _generate_claude_md(project_name: str, tech_stack: dict[str, Any], project_r
     # Build the CLAUDE.md content
     content = f'''# {project_name} Development Instructions
 
-This file provides guidance to AI coding assistants when working with code in this repository.
-
----
-
-## ACE Framework: Delia-Controlled Playbooks
-
-Delia manages project-specific playbooks that provide learned strategies, patterns, and guidance.
-Instead of reading static profile files, query Delia for dynamic, feedback-refined guidance.
-
-### Getting Playbook Guidance
-
-**Before starting a task**, query Delia for relevant playbook bullets:
-
-```python
-# Get task-specific guidance
-get_playbook(task_type="coding")  # or: testing, architecture, debugging, project
-
-# Get project context (tech stack, patterns, conventions)
-get_project_context()
-```
-
-The playbooks contain strategic bullets with:
-- **Learned lessons** from past tasks
-- **Project-specific patterns** (detected from codebase analysis via `delia index --summarize`)
-- **Utility scores** - bullets that helped more rank higher
-
-### Applying Guidance
-
-Use the bullet content to guide your work. Each bullet has an ID for feedback:
-
-```json
-{{
-  "id": "strat-a1b2c3d4",
-  "content": "This project uses async/await patterns. Prefer async def for I/O operations.",
-  "utility_score": 0.85
-}}
-```
-
-### Closing the Learning Loop
-
-**After completing a task**, report whether the guidance helped:
-
-```python
-# If the bullet helped complete the task successfully
-report_feedback(bullet_id="strat-a1b2c3d4", task_type="coding", helpful=True)
-
-# If the bullet was misleading or irrelevant
-report_feedback(bullet_id="strat-a1b2c3d4", task_type="coding", helpful=False)
-```
-
-This feedback updates bullet utility scores, improving future recommendations.
-
-### Task Type Mapping
-
-| Task Type | Keywords | Playbook |
-|-----------|----------|----------|
-| coding | implement, add, create, write | `coding` |
-| testing | test, {test_framework.lower() if test_framework else "test"}, coverage, assert | `testing` |
-| architecture | design, ADR, refactor, pattern | `architecture` |
-| debugging | error, bug, fix, stack trace | `debugging` |
-| project | general project context | `project` |
-
----
+This file provides guidance for AI coding assistants working in this repository.
 
 ## Project Overview
-
-**Project:** {project_name}
-**Language:** {lang}
-**Frameworks:** {framework_str}
-
----
+- **Language:** {lang}
+- **Frameworks:** {framework_str}
+- **Primary Tooling:** {pkg_manager}
 
 ## Build & Development Commands
-
 ```bash
 # Install dependencies
 {pkg_manager} {"sync" if pkg_manager == "uv" else "install"}
@@ -1381,121 +1314,21 @@ This feedback updates bullet utility scores, improving future recommendations.
 {lint_cmd}
 ```
 
----
+## Repository Patterns & Rules
+- **Search First**: Before creating new code, search the codebase for similar patterns (DRY).
+- **Type Safety**: {"No 'any' types, use Zod for validation" if lang == "TypeScript" else "Use type hints and Pydantic models where applicable"}.
+- **Checkpoints**: Use available semantic tools to validate understanding before making modifications.
+- **Atomic Commits**: Use descriptive commit messages: `type(scope): description`.
 
-## INLINED CRITICAL RULES
-
-These rules are mandatory for all work in this project:
-
-### From core.md - Universal Rules
-```
-ALWAYS:
-- Search codebase for similar patterns before creating new code (DRY)
-- Check existing utilities before creating new ones
-- Run tests before committing
-- Complete Integration: No placeholders, remove old code
-- Type safety: {"No TypeScript 'any', use Zod validation" if lang == "TypeScript" else "Use type hints and Pydantic models"}
-```
-
-### From coding.md - Before Writing Code
-```
-PRE-IMPLEMENTATION CHECKLIST (Cannot skip):
-[] Query Delia playbook for guidance
-[] Search codebase for similar patterns (DRY)
-[] Check existing utilities before creating new ones
-[] Verify function signatures match project style
-[] Run tests before committing
-```
-
-### From git.md - Git Operations
-```
-BRANCH DECISION:
-- Multi-file changes? -> Create branch: feature/, fix/, refactor/
-- Single-file trivial fix? -> Commit directly to main
-- Experimental? -> Always branch
-
-COMMIT FORMAT:
-type(scope): description
-Examples: feat(core):, fix(api):, refactor(utils):
-
-NEVER:
-- Force-push to main
-- Skip tests before push
-- Leave branches hanging
-```
-
-### From debugging.md - Fixing Issues
-```
-DEBUG ORDER:
-1. Error stack trace -> exact file/line
-2. Recent commits -> what changed?
-3. Test output -> which test failing?
-4. Logs -> structured log events
-
-FIX STRATEGY:
-- Small bug (<10 lines): Direct to main
-- Complex bug (>10 lines): Create fix/ branch
-- ALWAYS add regression test
-```
-
----
-
-## Anti-Patterns (NEVER DO)
-
-```
-Code:
-- Placeholder delegations -> Actually extract and integrate
-- Duplicate state (old + new module) -> Remove old, use new
-- {"TypeScript 'any'" if lang == "TypeScript" else "Untyped functions"} -> Proper types{"" if lang == "TypeScript" else " and type hints"}
-- Create abstractions for one-time use -> Keep it simple
-
-Process:
-- Commit without running tests -> NEVER
-- Force-push to main -> NEVER
-- Leave dead code "just in case" -> DELETE it
-- Skip playbook guidance -> ALWAYS query Delia
-```
-
----
-
-## Validation Checklist (Before Marking Complete)
-
-```
-[] Playbook bullets queried and applied (get_playbook)
-[] Feedback reported for useful bullets (report_feedback)
-[] Code passes: {lint_cmd}
-[] Tests pass: {test_cmd}
-[] No placeholder delegations
-[] Old code removed if extracting
-[] Tests updated to match new implementation
-```
-
----
-
-**All projects use Delia for dynamic playbook guidance.**
+## Validation Checklist
+- [ ] Code passes `{lint_cmd}`
+- [ ] Tests pass `{test_cmd}`
+- [ ] No placeholder implementations or temporary code left behind
+- [ ] Documentation updated if public interfaces changed
 '''
-
-    # Add async-specific content if detected
-    if is_async and lang == "Python":
-        async_section = '''
-## Async Patterns
-
-This project uses async/await. Follow these patterns:
-
-```python
-# DO: Use async def for I/O operations
-async def fetch_data(url: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        return response.json()
-
-# DO: Use asyncio.gather for parallel operations
-results = await asyncio.gather(task1(), task2(), task3())
-```
-'''
-        content = content.replace("---\n\n**All projects", f"---\n{async_section}\n---\n\n**All projects")
 
     return content
+
 
 
 @app.command()
@@ -1605,8 +1438,8 @@ def melons(
     Display the melon leaderboard for Delia's model garden.
 
     Models earn melons for helpful responses:
-    - 🍈 Regular melons for good work
-    - 🏆 Golden melons (500 melons each) for top performers
+    - Regular melons for good work
+    - Golden melons (500 melons each) for top performers
 
     Golden melons influence routing - trusted models get more requests.
 
@@ -1643,7 +1476,7 @@ def melons(
     
     if not leaderboard_text or "=" * 40 in leaderboard_text and len(leaderboard_text.split("\n")) < 5:
         print()
-        print("🍈 DELIA'S MELON GARDEN")
+        print("DELIA'S MELON GARDEN")
         print("=" * 40)
         print()
         print("  No melons yet! The garden is empty.")
@@ -2021,6 +1854,141 @@ def prewarm() -> None:
                     print_error(f"Failed to load {model}: {res.error}")
 
     asyncio.run(run_prewarm())
+
+
+@app.command()
+def validate(
+    path: Annotated[Optional[str], typer.Argument(help="Project path to validate")] = None,
+    fix: Annotated[bool, typer.Option("--fix", "-f", help="Attempt to fix simple issues")] = False,
+) -> None:
+    """
+    Validate Delia Framework files (playbooks, profiles, memories).
+
+    Checks for:
+    - Valid JSON structure in playbooks
+    - Required fields (id, content) in bullets
+    - Utility scores in valid range (0-1)
+    - Profile/memory files exist and are readable
+    """
+    from pathlib import Path as P
+    from pydantic import ValidationError
+    from .playbook import PlaybookBullet
+
+    project_path = P(path) if path else P.cwd()
+    delia_dir = project_path / ".delia"
+
+    if not delia_dir.exists():
+        print_error(f"No .delia directory found in {project_path}")
+        print_info("Run 'delia init' to initialize the framework.")
+        raise typer.Exit(1)
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    valid_count = 0
+
+    # Validate playbooks
+    from .playbook import SCHEMA_VERSION
+    playbooks_dir = delia_dir / "playbooks"
+    needs_migration = []
+
+    if playbooks_dir.exists():
+        for pb_file in playbooks_dir.glob("*.json"):
+            try:
+                import json
+                with open(pb_file) as f:
+                    data = json.load(f)
+
+                # Handle both schema formats
+                if isinstance(data, list):
+                    # v1: Legacy flat array format
+                    bullet_list = data
+                    file_version = 1
+                elif isinstance(data, dict):
+                    # v2+: Wrapped object format
+                    file_version = data.get("schema_version", 1)
+                    bullet_list = data.get("bullets", [])
+                else:
+                    errors.append(f"{pb_file.name}: Unknown format (expected array or object)")
+                    continue
+
+                # Track files needing migration
+                if file_version < SCHEMA_VERSION:
+                    needs_migration.append(pb_file.name)
+
+                for i, bullet in enumerate(bullet_list):
+                    try:
+                        # Validate using Pydantic model
+                        pb = PlaybookBullet.from_dict(bullet)
+
+                        # Check content quality
+                        if len(pb.content) < 10:
+                            warnings.append(f"{pb_file.name}[{i}]: Content too short ({len(pb.content)} chars)")
+                        if len(pb.content) > 500:
+                            warnings.append(f"{pb_file.name}[{i}]: Content too long ({len(pb.content)} chars)")
+
+                        valid_count += 1
+                    except ValidationError as e:
+                        errors.append(f"{pb_file.name}[{i}]: {e.errors()[0]['msg']}")
+                    except Exception as e:
+                        errors.append(f"{pb_file.name}[{i}]: {str(e)}")
+
+                version_info = f"v{file_version}" if file_version < SCHEMA_VERSION else ""
+                print_success(f"playbooks/{pb_file.name} ({len(bullet_list)} bullets) {version_info}")
+            except json.JSONDecodeError as e:
+                errors.append(f"{pb_file.name}: Invalid JSON - {e}")
+            except Exception as e:
+                errors.append(f"{pb_file.name}: {str(e)}")
+    else:
+        warnings.append("No playbooks directory found")
+
+    # Report schema version status
+    if needs_migration:
+        warnings.append(f"Schema migration needed: {len(needs_migration)} files at v1 (current: v{SCHEMA_VERSION})")
+        if fix:
+            print_info("Migrating playbooks to current schema version...")
+            from .playbook import PlaybookManager
+            pm = PlaybookManager(playbooks_dir)  # Pass playbooks dir, not project root
+            for task_type in [f.replace(".json", "") for f in needs_migration]:
+                bullets = pm.load_playbook(task_type)
+                pm.save_playbook(task_type, bullets)
+                print_success(f"  Migrated {task_type}.json to v{SCHEMA_VERSION} ({len(bullets)} bullets)")
+
+    # Check profiles exist
+    profiles_dir = delia_dir / "profiles"
+    if profiles_dir.exists():
+        profile_count = len(list(profiles_dir.glob("*.md")))
+        print_success(f"profiles/ ({profile_count} files)")
+    else:
+        warnings.append("No profiles directory found")
+
+    # Check memories exist
+    memories_dir = delia_dir / "memories"
+    if memories_dir.exists():
+        memory_count = len(list(memories_dir.glob("*.md")))
+        print_success(f"memories/ ({memory_count} files)")
+    else:
+        warnings.append("No memories directory found")
+
+    # Summary
+    print()
+    if errors:
+        print_header(f"Errors ({len(errors)})")
+        for err in errors:
+            print_error(f"  {err}")
+
+    if warnings:
+        print_header(f"Warnings ({len(warnings)})")
+        for warn in warnings:
+            print_warning(f"  {warn}")
+
+    print()
+    if errors:
+        print_error(f"Validation failed: {len(errors)} errors, {len(warnings)} warnings")
+        raise typer.Exit(1)
+    elif warnings:
+        print_warning(f"Validation passed with {len(warnings)} warnings")
+    else:
+        print_success(f"Validation passed: {valid_count} bullets valid")
 
 
 @app.callback(invoke_without_command=True)

@@ -192,7 +192,7 @@ __all__ = [
     "get_json_schema_prompt",
     "parse_structured_output",
 
-    # Meta-Learning (ToT + ACE)
+    # Meta-Learning (ToT + Delia)
     "OrchestrationPattern",
     "OrchestrationLearner",
     "get_orchestration_learner",

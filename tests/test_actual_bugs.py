@@ -32,7 +32,7 @@ class TestValidationBugs:
 
     def test_validate_content_with_none_crashes(self):
         """BUG: validate_content crashes with None input instead of returning error."""
-        from delia.mcp_server import validate_content
+        from delia.validation import validate_content
 
         # This should return (False, "error message"), not crash
         try:
@@ -44,7 +44,7 @@ class TestValidationBugs:
 
     def test_validate_task_with_none_crashes(self):
         """BUG: validate_task may crash with None input."""
-        from delia.mcp_server import validate_task
+        from delia.validation import validate_task
 
         try:
             is_valid, error = validate_task(None)
@@ -54,7 +54,7 @@ class TestValidationBugs:
 
     def test_validate_content_with_non_string(self):
         """FIXED: validate_content now handles non-string input gracefully."""
-        from delia.mcp_server import validate_content
+        from delia.validation import validate_content
 
         non_strings = [123, 45.67, [], {}, object(), b"bytes"]
 
@@ -224,7 +224,7 @@ class TestCodeDetectionBugs:
 
     def test_code_detection_with_binary(self):
         """BUG: Code detection may crash on binary-like content."""
-        from delia.mcp_server import detect_code_content
+        from delia.routing import detect_code_content
 
         # Binary-like content with non-printable chars
         binary_content = "".join(chr(i) for i in range(256)) * 10
@@ -238,7 +238,7 @@ class TestCodeDetectionBugs:
 
     def test_code_detection_extremely_long_lines(self):
         """BUG: Code detection may hang on very long lines."""
-        from delia.mcp_server import detect_code_content
+        from delia.routing import detect_code_content
         import time
 
         # One extremely long line
@@ -256,7 +256,7 @@ class TestTokenCountingBugs:
 
     def test_token_count_surrogate_pairs(self):
         """BUG: Token counting may fail on text with surrogate pairs."""
-        from delia.mcp_server import count_tokens
+        from delia.tokens import count_tokens
 
         # Text with emoji that uses surrogate pairs
         text = "Hello 👨‍👩‍👧‍👦 World 🏳️‍🌈 Test"
@@ -269,7 +269,7 @@ class TestTokenCountingBugs:
 
     def test_estimate_tokens_empty(self):
         """BUG: estimate_tokens may divide by zero."""
-        from delia.mcp_server import estimate_tokens
+        from delia.tokens import estimate_tokens
 
         try:
             tokens = estimate_tokens("")
@@ -342,7 +342,7 @@ class TestSecurityBugs:
 
     def test_path_traversal_with_encoded_chars(self):
         """BUG: URL-encoded path traversal may bypass validation."""
-        from delia.mcp_server import validate_file_path
+        from delia.validation import validate_file_path
 
         # Already tested but double-check the actual ".." detection
         encoded_attempts = [
@@ -358,7 +358,7 @@ class TestSecurityBugs:
 
     def test_content_size_integer_overflow(self):
         """BUG: Extremely large content size check may overflow."""
-        from delia.mcp_server import MAX_CONTENT_LENGTH
+        from delia.validation import MAX_CONTENT_LENGTH
 
         # Verify MAX_CONTENT_LENGTH is reasonable
         assert MAX_CONTENT_LENGTH > 0

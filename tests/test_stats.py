@@ -52,7 +52,7 @@ class TestUsageStats:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
 
         model_usage, _, _, _ = stats_service.get_snapshot()
         assert "quick" in model_usage
@@ -64,7 +64,7 @@ class TestUsageStats:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
 
         model_usage, _, _, _ = stats_service.get_snapshot()
         for tier in ["quick", "coder", "moe"]:
@@ -76,7 +76,7 @@ class TestUsageStats:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
 
         _, task_stats, _, _ = stats_service.get_snapshot()
         assert isinstance(task_stats, dict)
@@ -90,7 +90,7 @@ class TestStatsLoadSave:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
         import asyncio
 
         # Add some data
@@ -107,7 +107,7 @@ class TestStatsLoadSave:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
         import asyncio
 
         with stats_service._lock:
@@ -138,7 +138,7 @@ class TestStatsLoadSave:
         with open(paths.STATS_FILE, "w") as f:
             json.dump(stats_data, f)
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
         # Reset stats before loading
         with stats_service._lock:
             for tier in stats_service.model_usage:
@@ -161,7 +161,7 @@ class TestStatsLoadSave:
         if paths.STATS_FILE.exists():
             paths.STATS_FILE.unlink()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
         # Should not raise
         stats_service.load()
 
@@ -178,7 +178,7 @@ class TestEnhancedStats:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
 
         _, _, _, recent_calls = stats_service.get_snapshot()
         assert isinstance(recent_calls, list)
@@ -188,7 +188,7 @@ class TestEnhancedStats:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
 
         _, _, response_times, _ = stats_service.get_snapshot()
         assert isinstance(response_times, dict)
@@ -201,7 +201,7 @@ class TestEnhancedStats:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
         import asyncio
 
         # Add some enhanced data
@@ -217,32 +217,34 @@ class TestLiveLogs:
     """Test live logging functionality."""
 
     def test_live_logs_exists(self):
-        """LIVE_LOGS should be available."""
+        """LoggingService should be available via container."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.container import get_container
+        container = get_container()
 
-        assert hasattr(mcp_server, 'LIVE_LOGS')
+        # LIVE_LOGS is now managed by LoggingService
+        assert hasattr(container, 'logging_service')
+        assert hasattr(container.logging_service, '_live_logs')
 
     def test_save_live_logs(self):
-        """Live logs should be saveable."""
+        """Live logs should be saveable via LoggingService."""
         from delia import paths
         paths.ensure_directories()
 
-        from delia import mcp_server
+        from delia.container import get_container
+        container = get_container()
 
-        # Add a log entry if the list exists
-        if hasattr(mcp_server, 'LIVE_LOGS') and isinstance(mcp_server.LIVE_LOGS, list):
-            mcp_server.LIVE_LOGS.append({
-                "ts": time.time(),
-                "type": "test",
-                "message": "Test log entry"
-            })
+        # Add a log entry via logging service
+        container.logging_service.add_live_log({
+            "ts": time.time(),
+            "type": "test",
+            "message": "Test log entry"
+        })
 
-        # Should not raise
-        if hasattr(mcp_server, '_save_live_logs_sync'):
-            mcp_server._save_live_logs_sync()
+        # Should not raise - LoggingService handles saving
+        container.logging_service._save_live_logs_sync()
 
 
 class TestCircuitBreakerStats:
@@ -272,7 +274,7 @@ class TestStatsSnapshot:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
 
         snapshot = stats_service.get_snapshot()
 
@@ -333,7 +335,7 @@ class TestLegacyStatsMigration:
         with open(paths.STATS_FILE, "w") as f:
             json.dump(legacy_stats, f)
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
         stats_service.load()
 
         # Should have loaded without crash (legacy migration)
@@ -381,7 +383,7 @@ class TestAtomicWrites:
         from delia import paths
         paths.ensure_directories()
 
-        from delia.mcp_server import stats_service
+        from delia.container import get_container; stats_service = get_container().stats_service
         import asyncio
 
         # Save stats

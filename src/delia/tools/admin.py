@@ -39,6 +39,305 @@ log = structlog.get_logger()
 # Implementation Functions (module-level, importable)
 # =============================================================================
 
+async def queue_status_impl() -> str:
+    """Get model queue system status."""
+    from .consolidated import admin_tool
+    res = await admin_tool(action="queue_status")
+    data = json.loads(res)
+    
+    # Format as Markdown
+    lines = ["# ⏳ Model Queue Status\n"]
+    lines.append(f"**Status**: {data.get('status', 'Unknown').upper()}")
+    
+    # If the tool starts returning more info later, add it here
+    return "\n".join(lines)
+
+
+async def switch_model_impl(tier: str, model_name: str) -> str:
+    """Switch model for a specific tier."""
+    from .consolidated import admin_tool
+    res = await admin_tool(action="switch_model", tier=tier, model_name=model_name)
+    
+    # Handle error responses which are in JSON
+    if res.startswith("{"):
+        try:
+            data = json.loads(res)
+            if "error" in data:
+                return f"**Error**: {data['error']}"
+        except: pass
+
+    return f"**Success**: Updated `{tier}` tier to use `{model_name}`"
+
+
+def generate_onboarding_memories(
+    project_root: Path,
+    tech_stack: dict[str, Any],
+    dependencies: list[str],
+    force: bool = False,
+) -> list[str]:
+    """Generate quickstart.md and conventions.md for new projects.
+
+    Creates opinionated onboarding files in .delia/memories/ to help
+    agents understand the project immediately.
+
+    Args:
+        project_root: Path to project root
+        tech_stack: Detected tech stack dict (primary_language, frameworks, etc.)
+        dependencies: List of detected dependencies
+        force: Overwrite existing files
+
+    Returns:
+        List of files created
+    """
+    memories_dir = project_root / ".delia" / "memories"
+    memories_dir.mkdir(parents=True, exist_ok=True)
+    created: list[str] = []
+
+    # Detect package manager and build system
+    has_uv = (project_root / "uv.lock").exists()
+    has_poetry = (project_root / "poetry.lock").exists()
+    has_npm = (project_root / "package-lock.json").exists()
+    has_yarn = (project_root / "yarn.lock").exists()
+    has_pnpm = (project_root / "pnpm-lock.yaml").exists()
+    has_cargo = (project_root / "Cargo.lock").exists()
+    has_go_mod = (project_root / "go.mod").exists()
+    has_makefile = (project_root / "Makefile").exists()
+
+    primary_lang = tech_stack.get("primary_language", "unknown")
+    frameworks = tech_stack.get("frameworks", [])
+
+    # Generate quickstart.md
+    quickstart_path = memories_dir / "quickstart.md"
+    if force or not quickstart_path.exists():
+        quickstart_content = _build_quickstart(
+            primary_lang, frameworks, dependencies,
+            has_uv, has_poetry, has_npm, has_yarn, has_pnpm,
+            has_cargo, has_go_mod, has_makefile, project_root
+        )
+        quickstart_path.write_text(quickstart_content)
+        created.append("quickstart.md")
+
+    # Generate conventions.md
+    conventions_path = memories_dir / "conventions.md"
+    if force or not conventions_path.exists():
+        conventions_content = _build_conventions(
+            primary_lang, frameworks, dependencies, project_root
+        )
+        conventions_path.write_text(conventions_content)
+        created.append("conventions.md")
+
+    return created
+
+
+def _build_quickstart(
+    lang: str, frameworks: list[str], deps: list[str],
+    has_uv: bool, has_poetry: bool, has_npm: bool, has_yarn: bool, has_pnpm: bool,
+    has_cargo: bool, has_go_mod: bool, has_makefile: bool, root: Path
+) -> str:
+    """Build quickstart.md content based on detected tools."""
+    lines = ["# Project Quickstart", "", "Common commands for this project.", ""]
+
+    # Install commands
+    lines.append("## Setup")
+    if has_uv:
+        lines.extend(["```bash", "uv sync  # Install dependencies", "```", ""])
+    elif has_poetry:
+        lines.extend(["```bash", "poetry install  # Install dependencies", "```", ""])
+    elif has_npm:
+        lines.extend(["```bash", "npm install  # Install dependencies", "```", ""])
+    elif has_yarn:
+        lines.extend(["```bash", "yarn install  # Install dependencies", "```", ""])
+    elif has_pnpm:
+        lines.extend(["```bash", "pnpm install  # Install dependencies", "```", ""])
+    elif has_cargo:
+        lines.extend(["```bash", "cargo build  # Build project", "```", ""])
+    elif has_go_mod:
+        lines.extend(["```bash", "go mod download  # Download dependencies", "```", ""])
+
+    # Run commands
+    lines.append("## Run")
+    if lang == "python":
+        if has_uv:
+            lines.extend(["```bash", "uv run python -m <module>  # Run module", "uv run <script>.py  # Run script", "```", ""])
+        else:
+            lines.extend(["```bash", "python -m <module>  # Run module", "python <script>.py  # Run script", "```", ""])
+    elif lang in ("javascript", "typescript"):
+        if "next" in str(frameworks).lower():
+            lines.extend(["```bash", "npm run dev  # Development server", "npm run build  # Production build", "```", ""])
+        else:
+            lines.extend(["```bash", "npm start  # Start application", "npm run dev  # Development mode", "```", ""])
+    elif has_cargo:
+        lines.extend(["```bash", "cargo run  # Run project", "```", ""])
+    elif has_go_mod:
+        lines.extend(["```bash", "go run .  # Run project", "```", ""])
+
+    # Test commands
+    lines.append("## Test")
+    if lang == "python":
+        if has_uv:
+            lines.extend(["```bash", "uv run pytest  # Run tests", "uv run pytest -v  # Verbose output", "uv run pytest --cov  # With coverage", "```", ""])
+        else:
+            lines.extend(["```bash", "pytest  # Run tests", "pytest -v  # Verbose output", "pytest --cov  # With coverage", "```", ""])
+    elif lang in ("javascript", "typescript"):
+        lines.extend(["```bash", "npm test  # Run tests", "npm run test:watch  # Watch mode", "```", ""])
+    elif has_cargo:
+        lines.extend(["```bash", "cargo test  # Run tests", "```", ""])
+    elif has_go_mod:
+        lines.extend(["```bash", "go test ./...  # Run all tests", "```", ""])
+
+    # Lint commands
+    lines.append("## Lint & Format")
+    if lang == "python":
+        if "ruff" in deps:
+            lines.extend(["```bash", "ruff check .  # Lint", "ruff format .  # Format", "```", ""])
+        elif has_uv:
+            lines.extend(["```bash", "uv run ruff check .  # Lint", "uv run ruff format .  # Format", "```", ""])
+    elif lang in ("javascript", "typescript"):
+        lines.extend(["```bash", "npm run lint  # Lint code", "npm run format  # Format code", "```", ""])
+    elif has_cargo:
+        lines.extend(["```bash", "cargo clippy  # Lint", "cargo fmt  # Format", "```", ""])
+    elif has_go_mod:
+        lines.extend(["```bash", "go vet ./...  # Lint", "gofmt -w .  # Format", "```", ""])
+
+    # Type check
+    if lang == "python" and ("mypy" in deps or "pyright" in deps):
+        lines.append("## Type Check")
+        if has_uv:
+            lines.extend(["```bash", "uv run pyright  # Type check", "```", ""])
+        else:
+            lines.extend(["```bash", "pyright  # Type check", "```", ""])
+    elif lang == "typescript":
+        lines.append("## Type Check")
+        lines.extend(["```bash", "npx tsc --noEmit  # Type check", "```", ""])
+
+    # Makefile targets
+    if has_makefile:
+        lines.append("## Makefile Targets")
+        lines.append("Run `make help` or `make` to see available targets.")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("*Auto-generated by Delia Framework. Update as needed.*")
+
+    return "\n".join(lines)
+
+
+def _build_conventions(
+    lang: str, frameworks: list[str], deps: list[str], root: Path
+) -> str:
+    """Build conventions.md content based on project analysis."""
+    lines = ["# Project Conventions", "", "Coding conventions detected for this project.", ""]
+
+    lines.append("## Language & Stack")
+    lines.append(f"- **Primary Language**: {lang.title() if lang else 'Unknown'}")
+    if frameworks:
+        lines.append(f"- **Frameworks**: {', '.join(frameworks)}")
+    lines.append("")
+
+    # Python conventions
+    if lang == "python":
+        lines.append("## Python Conventions")
+        lines.append("")
+
+        # Type hints
+        if "pyright" in deps or "mypy" in deps:
+            lines.append("### Type Hints")
+            lines.append("- Type hints are **required** on all function signatures")
+            lines.append("- Use `typing` module for complex types")
+            lines.append("")
+
+        # Async
+        if "asyncio" in deps or "httpx" in deps or "aiohttp" in deps:
+            lines.append("### Async")
+            lines.append("- Use `async/await` for I/O operations")
+            lines.append("- Prefer `httpx` over `requests` for async HTTP")
+            lines.append("")
+
+        # Testing
+        if "pytest" in deps:
+            lines.append("### Testing")
+            lines.append("- Use `pytest` for all tests")
+            lines.append("- Test files: `test_*.py` or `*_test.py`")
+            lines.append("- Use fixtures for common setup")
+            lines.append("")
+
+        # Formatting
+        if "ruff" in deps or "black" in deps:
+            lines.append("### Formatting")
+            lines.append("- Code must pass linting before commit")
+            if "ruff" in deps:
+                lines.append("- Use `ruff` for linting and formatting")
+            elif "black" in deps:
+                lines.append("- Use `black` for formatting")
+            lines.append("")
+
+        # Logging
+        if "structlog" in deps:
+            lines.append("### Logging")
+            lines.append("- Use `structlog` for structured logging")
+            lines.append("- Include context: `log.info('event_name', key=value)`")
+            lines.append("")
+
+    # JavaScript/TypeScript conventions
+    elif lang in ("javascript", "typescript"):
+        lines.append("## JavaScript/TypeScript Conventions")
+        lines.append("")
+
+        if lang == "typescript":
+            lines.append("### Types")
+            lines.append("- TypeScript strict mode is enabled")
+            lines.append("- Explicit types on function parameters")
+            lines.append("- Use interfaces over type aliases for objects")
+            lines.append("")
+
+        # React
+        if any("react" in f.lower() for f in frameworks):
+            lines.append("### React")
+            lines.append("- Functional components with hooks")
+            lines.append("- Use `useState`, `useEffect`, `useCallback`")
+            lines.append("- Component files: PascalCase (e.g., `MyComponent.tsx`)")
+            lines.append("")
+
+        # Testing
+        if any(t in deps for t in ["jest", "vitest", "mocha"]):
+            lines.append("### Testing")
+            lines.append("- Test files: `*.test.ts` or `*.spec.ts`")
+            lines.append("- Use describe/it blocks for organization")
+            lines.append("")
+
+    # Rust conventions
+    elif lang == "rust":
+        lines.append("## Rust Conventions")
+        lines.append("")
+        lines.append("### Style")
+        lines.append("- Run `cargo fmt` before committing")
+        lines.append("- Run `cargo clippy` to catch common issues")
+        lines.append("- Use `?` operator for error propagation")
+        lines.append("")
+
+    # Go conventions
+    elif lang == "go":
+        lines.append("## Go Conventions")
+        lines.append("")
+        lines.append("### Style")
+        lines.append("- Run `gofmt` before committing")
+        lines.append("- Run `go vet` for static analysis")
+        lines.append("- Package names are lowercase, single word")
+        lines.append("")
+
+    # General conventions
+    lines.append("## General")
+    lines.append("- Keep functions focused and small (<50 lines)")
+    lines.append("- Document public APIs with docstrings/comments")
+    lines.append("- Handle errors explicitly, avoid silent failures")
+    lines.append("")
+
+    lines.append("---")
+    lines.append("*Auto-generated by Delia Framework. Update as needed.*")
+
+    return "\n".join(lines)
+
+
 async def health_impl() -> str:
     """Check health status of Delia and all configured GPU backends."""
     container = get_container()
@@ -85,7 +384,27 @@ async def health_impl() -> str:
         },
         "voting": voting_stats,
     }
-    return json.dumps(status, indent=2)
+    
+    # Format as Markdown for better readability in CLI/Chat
+    lines = ["# Backend Health Status\n"]
+    lines.append(f"**System Status**: {status['status'].upper()}")
+    lines.append(f"**Active Backend**: `{status['active_backend']}`")
+    
+    lines.append("\n## Backends")
+    for b in status['backends']:
+        status_marker = "[OK]" if b['available'] and b['enabled'] else "[--]"
+        backend_status = "available" if b['available'] else ("disabled" if not b['enabled'] else "unavailable")
+        lines.append(f"- {status_marker} **{b['id']}** ({b['provider']}): {backend_status}")
+        if "metrics" in b:
+            m = b['metrics']
+            lines.append(f"  - Success: {m['success_rate']} | Latency: {m['latency_p50_ms']}ms | Throughput: {m['throughput_tps']} t/s")
+    
+    lines.append("\n## Usage & Savings")
+    lines.append(f"- Total Calls: {status['usage']['total_calls']}")
+    lines.append(f"- Total Tokens: {status['usage']['total_tokens']}")
+    lines.append(f"- Estimated Savings: **{status['usage']['estimated_savings']}** (vs GPT-4)")
+    
+    return "\n".join(lines)
 
 
 async def dashboard_url_impl() -> str:
@@ -115,13 +434,27 @@ async def models_impl() -> str:
     """List all configured models across all GPU backends."""
     container = get_container()
     backends = container.backend_manager.get_enabled_backends()
-    from ..mcp_server import get_loaded_models
-    loaded = await get_loaded_models()
+    # Get currently loaded models from the model queue
+    loaded = list(container.model_queue.loaded_models.keys())
 
     result = {"backends": [], "currently_loaded": loaded}
     for b in backends:
         result["backends"].append({"id": b.id, "name": b.name, "provider": b.provider, "models": b.models})
-    return json.dumps(result, indent=2)
+    
+    # Format as Markdown
+    lines = ["# Available Models\n"]
+    for b in result["backends"]:
+        lines.append(f"## {b['name']} (`{b['id']}`)")
+        for tier, model in b["models"].items():
+            lines.append(f"- **{tier.title()}**: `{model}`")
+        lines.append("")
+    
+    if loaded:
+        lines.append("## Currently Loaded in GPU")
+        for m in loaded:
+            lines.append(f"- `{m}`")
+    
+    return "\n".join(lines)
 
 
 async def switch_backend_impl(backend_id: str) -> str:
@@ -147,7 +480,7 @@ async def init_project(
     use_calling_agent: bool = True,
 ) -> str:
     """
-    Initialize a project with Delia's ACE Framework.
+    Initialize a project with Delia Framework.
 
     IMPORTANT: You MUST provide the 'path' parameter with the absolute path
     to the project you want to initialize. Do NOT omit this parameter.
@@ -252,7 +585,7 @@ async def init_project(
             results["status"] = "INCOMPLETE - TOOL CALLS REQUIRED"
 
             results["WHAT_IS_DELIA"] = (
-                "ACE Framework: Project-specific playbooks with learned strategies. "
+                "Delia Framework: Project-specific playbooks with learned strategies. "
                 "Call get_playbook() before coding, report_feedback() after."
             )
 
@@ -327,6 +660,13 @@ async def init_project(
                 "total": formatted["summary"]["total_recommendations"],
             }
 
+            # Generate opinionated onboarding files
+            onboarding_files = generate_onboarding_memories(
+                project_root, tech_stack, dependencies, force=force
+            )
+            if onboarding_files:
+                results["onboarding_memories"] = onboarding_files
+
             return json.dumps(results, indent=2)
 
         # Standard path: local backends available
@@ -377,6 +717,13 @@ async def init_project(
         playbook_count = await generate_project_playbook(summarizer if not skip_index else get_summarizer())
         results["steps"].append({"step": "playbook", "bullets": playbook_count})
 
+        # Generate opinionated onboarding files
+        onboarding_files = generate_onboarding_memories(
+            project_root, tech_stack, dependencies, force=force
+        )
+        if onboarding_files:
+            results["steps"].append({"step": "onboarding", "files": onboarding_files})
+
         results["status"] = "success"
         results["manual_mode"] = False
         log.info("init_project_complete", project=project_name, files=len(files_written))
@@ -396,7 +743,7 @@ async def scan_codebase(
     phase: str = "overview",
 ) -> str:
     """
-    Scan a codebase in manageable chunks for ACE initialization.
+    Scan a codebase in manageable chunks for Delia Framework initialization.
 
     Phases:
     - "overview": Quick scan returning structure and file list (default)
@@ -569,7 +916,7 @@ async def analyze_and_index(
     performance_bullets: str = "[]",
 ) -> str:
     """
-    Submit your analysis of the codebase to create the ACE Framework index.
+    Submit your analysis of the codebase to create the Delia Framework index.
 
     After calling scan_codebase, analyze the code and call THIS tool with:
     - A structured project summary
@@ -740,7 +1087,7 @@ def register_admin_tools(mcp: FastMCP):
         - System health and backend status
         - Tool usage metrics and analytics
         - Session browser
-        - ACE Framework editor (playbooks, memories)
+        - Delia Framework editor (playbooks, memories)
         - Dependency graph visualization
 
         Returns:

@@ -108,6 +108,7 @@ async def get_delegate_signals(ctx: Any, task: str, content: str, file: str | No
         "estimated_tokens": count_tokens(content), 
         "recommended_tier": "quick", 
         "recommended_model": "test", 
+        "recommended_backend": "test-backend",
         "task_type": task,
         "content_fits": True,
         "backend_available": True

@@ -37,7 +37,7 @@ async def playbook_tool(
         prune - Remove stale/low-utility bullets
         list - List all playbooks and bullet counts
         stats - Get effectiveness scores
-        confirm - Confirm ACE compliance
+        confirm - Confirm framework compliance
 
     Args:
         action: The operation to perform
@@ -65,30 +65,33 @@ async def playbook_tool(
 
         # Use Curator for deduplication-aware adding
         try:
-            from delia.ace.curator import get_curator
+            from delia.learning.curator import get_curator
             project_path = Path(path) if path else None
             curator = get_curator(str(project_path) if project_path else None)
 
-            added, existing_id = await curator.add_bullet(task_type, content, section)
+            add_result = await curator.add_bullet(task_type, content, section)
 
-            if added:
-                # Get the newly added bullet
-                bullets = playbook_manager.load_playbook(task_type)
-                bullet = next((b for b in bullets if b.content == content), None)
+            if add_result.get("added"):
                 return json.dumps({
                     "status": "added",
                     "bullet": {
-                        "id": bullet.id if bullet else "unknown",
+                        "id": add_result.get("bullet_id"),
                         "content": content,
                         "section": section,
                         "task_type": task_type
                     }
                 })
+            elif add_result.get("quality_rejected"):
+                return json.dumps({
+                    "status": "quality_rejected",
+                    "reason": add_result.get("reason"),
+                    "message": "Content failed quality validation. Bullets must be 15-300 chars, actionable, and not vague."
+                })
             else:
                 return json.dumps({
                     "status": "duplicate_prevented",
-                    "existing_bullet_id": existing_id,
-                    "message": f"Similar bullet already exists: {existing_id}"
+                    "existing_bullet_id": add_result.get("bullet_id"),
+                    "message": f"Similar bullet already exists: {add_result.get('bullet_id')}"
                 })
         except Exception as e:
             # P4: Always use curator - no fallback to direct add
@@ -188,7 +191,7 @@ async def playbook_tool(
         return json.dumps(stats)
 
     elif action == "confirm":
-        # confirm_ace_compliance(task_description, bullets_applied, patterns_followed)
+        # confirm_compliance(task_description, bullets_applied, patterns_followed)
         task_description = kwargs.get("task_description")
         bullets_applied = kwargs.get("bullets_applied", "")
         patterns_followed = kwargs.get("patterns_followed", "")
@@ -535,9 +538,9 @@ async def project_tool(
     """Unified project initialization and management tool.
 
     Actions:
-        init - Initialize ACE framework for project
+        init - Initialize Delia framework for project
         scan - Incremental codebase scanning
-        analyze - Create ACE index from analysis
+        analyze - Create Delia index from analysis
         sync - Sync CLAUDE.md to all AI agent configs
         read_instructions - Read existing instruction files
 

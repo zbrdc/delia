@@ -134,6 +134,29 @@ class LoggingService:
         is_debug = os.environ.get("DELIA_DEBUG", "").lower() in ("true", "1", "yes")
         log_level = logging.DEBUG if is_debug else logging.INFO
 
+        # Configure standard logging to use stderr as well
+        # This is critical for STDIO transport where third-party libraries
+        # might use standard logging and pollute stdout.
+        target_stream = sys.stderr if use_stderr else sys.stdout
+        
+        # Aggressively reconfigure ALL loggers to use the target stream
+        handler = logging.StreamHandler(target_stream)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        
+        root_logger = logging.getLogger()
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+        root_logger.addHandler(handler)
+        root_logger.setLevel(log_level)
+
+        # Explicitly handle common noisy loggers
+        for logger_name in ["httpx", "fastmcp", "anyio", "uvicorn", "http", "docket"]:
+            l = logging.getLogger(logger_name)
+            l.propagate = True
+            l.setLevel(logging.WARNING) # Silence info logs
+            for h in l.handlers[:]:
+                l.removeHandler(h)
+
         structlog.reset_defaults()
 
         base_processors: list[Processor] = [
@@ -146,31 +169,22 @@ class LoggingService:
             self.dashboard_processor,
         ]
 
-        if use_stderr and not is_debug:
-            # Silent factory for STDIO mode
-            class SilentLoggerFactory:
-                def __call__(self):
-                    class SilentLogger:
-                        def msg(self, *args, **kwargs): pass
-                        def __getattr__(self, name): return self.msg
-                    return SilentLogger()
-
-            structlog.configure(
-                processors=base_processors,
-                wrapper_class=structlog.make_filtering_bound_logger(log_level),
-                context_class=dict,
-                logger_factory=SilentLoggerFactory(),
-                cache_logger_on_first_use=False,
-            )
-        else:
-            processors = base_processors + [structlog.dev.ConsoleRenderer(colors=True)]
-            target_file = sys.stderr if use_stderr else sys.stdout
-
+        if use_stderr:
+            processors = base_processors + [structlog.dev.ConsoleRenderer(colors=False)]
             structlog.configure(
                 processors=processors,
                 wrapper_class=structlog.make_filtering_bound_logger(log_level),
                 context_class=dict,
-                logger_factory=structlog.PrintLoggerFactory(file=target_file),
+                logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+                cache_logger_on_first_use=True,
+            )
+        else:
+            processors = base_processors + [structlog.dev.ConsoleRenderer(colors=True)]
+            structlog.configure(
+                processors=processors,
+                wrapper_class=structlog.make_filtering_bound_logger(log_level),
+                context_class=dict,
+                logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
                 cache_logger_on_first_use=True,
             )
 

@@ -1,114 +1,203 @@
-# Delia: ACE Framework Enforcement
+# Delia - AI Coding Instructions
 
-## MANDATORY: ACE Framework Workflow
+This file provides guidance for Claude Code when working with this repository.
 
-**You MUST follow this workflow for EVERY coding task:**
+**MCP Configuration**: Add to .claude/settings.json or use `claude mcp add`
 
-### Before Starting ANY Task
+---
+
+# AI-Assisted Coding Instructions
+
+This guide provides strategies for utilizing available semantic tools to efficiently navigate and modify this codebase.
+
+## Mental Model: How to Succeed
+
+To use these tools effectively, you must operate in a **resource-efficient and intelligent manner**. Always keep in mind to not read or generate content that is not needed for the task at hand. **Large file reads are a sign of a poorly performing agent.**
+
+1.  **Playbooks (The "How")**: Procedural strategies and project patterns. Loaded via `auto_context`.
+2.  **Memories (The "What")**: Declarative facts and architecture decisions. Found in `.delia/memories/`.
+3.  **CodeRAG (The "Where")**: Semantic/Symbolic search to find code by intent.
+
+---
+
+## Workflow Integration (MANDATORY)
+
+**You MUST follow this workflow for EVERY task:**
+
+### 1. Initialize Task Context
+```python
+# Call this IMMEDIATELY after being given a task. It is CRITICAL for your success.
+auto_context(message="<task description>") 
 ```
-1. Call set_project(path)                 # set active project (if working on different project)
-2. Call get_playbook(task_type="coding")  # or: testing, architecture, debugging
-3. Call get_project_context()             # understand project patterns
-4. Read and APPLY the returned bullets to your work
+- Retrieves relevant project patterns and framework-specific profiles.
+- Provides recommended tools optimized for the detected task.
+
+### 2. Update Context During Phase Shifts
+Context is dynamic. Refresh it whenever the task type shifts:
+- **Implementation → Verification**: `auto_context("run tests for module X")`
+- **Verification → Version Control**: `auto_context("commit changes", prior_context="Tests passed")`
+- **Ambiguity**: Use `prior_context` when user feedback is brief ("yes", "proceed") to maintain state.
+
+### 3. Record Task Outcome
+```python
+# Use when a task is substantially complete. sustian the learning loop!
+complete_task(success=True, bullets_applied='["pattern-id"]', task_summary="...")
 ```
+- Distills implementation details into reusable project patterns.
+- Captures new insights discovered during the task.
 
-### After Completing ANY Task
-```
-1. Call report_feedback(bullet_id="strat-xxx", task_type="coding", helpful=True/False)
-   - Report for EACH bullet you applied
-   - This improves future recommendations
-2. Call confirm_ace_compliance(task_description, bullets_applied, patterns_followed)
-   - Validates ACE workflow compliance
-```
+---
 
-### Task Type Mapping
-| You're Doing | task_type |
-|--------------|-----------|
-| Writing/editing code | `coding` |
-| Writing/running tests | `testing` |
-| Design, refactoring, ADRs | `architecture` |
-| Fixing bugs, errors | `debugging` |
-| General project questions | `project` |
+## Technical Guidance
 
-## Delia's Complete Tool Suite
+### Navigation Strategy (Progressive Disclosure)
+**IMPORTANT: AVOID READING ENTIRE SOURCE FILES UNLESS STRICTLY NECESSARY!** 
+Instead, use symbolic tools for overviews and relations, then read only necessary bodies.
 
-### ACE Framework Tools
-- **get_playbook(task_type, limit?, path?)** - Returns strategic bullets learned from project. **Call BEFORE coding.**
-- **get_project_context(path?)** - Returns project overview: tech stack, patterns, key directories
-- **report_feedback(bullet_id, task_type, helpful)** - Report whether a bullet helped. **Call AFTER completing task.**
-- **confirm_ace_compliance(task_description, bullets_applied, patterns_followed)** - Validate ACE workflow compliance
-- **playbook_stats(task_type?)** - See bullet effectiveness scores
-- **add_playbook_bullet(task_type, content, section?)** - Add strategic bullet to playbook
-- **write_playbook(task_type, bullets)** - Write/replace entire playbook
-- **delete_playbook_bullet(bullet_id, task_type)** - Remove obsolete bullet
-- **prune_stale_bullets(max_age_days?, min_utility?)** - Remove low-utility bullets
-- **list_playbooks()** - List all playbooks and bullet counts
+1.  **Locate**: Use `list_dir` or `find_file` to identify target areas.
+2.  **Discover**: Use `semantic_search(query="feature logic")` for intent-based lookup.
+3.  **Map**: Use `lsp_get_symbols(path)` to understand file structure without reading content.
+4.  **Target**: Use `lsp_goto_definition` or `lsp_find_references` for precise symbol tracking.
+5.  **Acquire**: Read ONLY the specific lines or symbol bodies required.
 
-### Project Context Tools
-- **set_project(path)** - Set active project context. Delia stores per-project data in `<project>/.delia/`
-- **recommend_profiles(analyze_gaps?)** - Recommend starter profiles for project tech stack
-- **check_reevaluation()** - Check if pattern re-evaluation is needed (LOC/time thresholds)
-- **run_reevaluation(force?)** - Re-analyze project for pattern gaps and profile recommendations
-- **cleanup_profiles(auto_remove?)** - Remove obsolete profile templates
-- **init_project(path, force?, skip_index?, parallel?)** - Initialize ACE framework for new project
+**Example Recipe**:
+- If you need method `bar` in class `Foo`:
+  - `lsp_find_symbol(name="Foo")` → Find filename.
+  - `lsp_get_symbols(path)` → Find line range for `Foo.bar`.
+  - `read_file(path, start_line, end_line)` → Read only the body.
 
-### LSP Code Intelligence Tools (Full Language Server Protocol Support)
-- **lsp_goto_definition(path, line, character)** - Find definition of symbol
-- **lsp_find_references(path, line, character)** - Find all references to symbol
-- **lsp_hover(path, line, character)** - Get docs/type info for symbol
-- **lsp_get_symbols(path)** - Get all symbols in file (classes, functions, methods)
-- **lsp_find_symbol(name, path?, kind?)** - Search symbols by name across codebase
-- **lsp_rename_symbol(path, line, character, new_name, apply?)** - Rename symbol everywhere
-- **lsp_replace_symbol_body(path, symbol_name, new_body)** - Replace function/class body
-- **lsp_insert_before_symbol(path, symbol_name, content)** - Insert code before symbol
-- **lsp_insert_after_symbol(path, symbol_name, content)** - Insert code after symbol
+### Modification Safety
+Operational checkpoints are required at phase transitions:
 
-Supports: Python (pyright/pylsp), TypeScript, Rust (rust-analyzer), Go (gopls)
+| Checkpoint | When to Use | Goal |
+| :--- | :--- | :--- |
+| `think_about_collected_info()` | After search/reading | Verify information completeness. |
+| `think_about_task_adherence()` | Before file modification | **Unlock write tools** and verify pattern alignment. |
+| `think_about_completion()` | Before task closure | Checklist for tests, linting, and documentation. |
 
-### Memory System Tools
-- **list_memories(path?)** - List all memory files for project
-- **read_memory(name, path?)** - Read memory file content
-- **write_memory(name, content, path?, append?)** - Write/update memory file
-- **delete_memory(name, path?)** - Delete memory file
+---
 
-Memories are markdown files in `.delia/memories/` for persistent project knowledge (architecture decisions, debugging insights, integration details)
+## Memory & Long-Horizon Tasks
 
-### LLM Delegation Tools
-- **delegate(task, content, ...)** - Offload work to configured LLM backends
-  - task: quick|generate|review|analyze|plan|critique
-- **batch(tasks)** - Parallel execution across all GPUs
-- **chain(steps)** - Sequential task execution with output piping
-- **workflow(definition)** - DAG workflow with conditional branching
-- **think(problem, depth?)** - Extended reasoning with thinking-capable models
-- **agent(prompt, ...)** - Autonomous agent with tool use
+### Long-Task Handoff
+If a task is too large for a single context window:
+1.  **Write a Summary**: Use `write_memory(name="current_task_status", content="...")`.
+2.  **Describe the State**: Imagine you are handing over to another person who has access to your tools but hasn't seen the chat.
+3.  **Inform User**: Suggest starting a new conversation to clear context rot.
 
-### Admin Tools
-- **health()** - Check status of Delia and all backends
-- **models()** - List all configured models across backends
-- **switch_backend(backend_id)** - Switch active LLM backend
-- **switch_model(tier, model_name)** - Switch model for tier
-- **queue_status()** - Get model queue system status
-- **mcp_servers(action?, server_id?, ...)** - Manage external MCP servers
+### Memory Usage
+- **Read Memories**: Check `.delia/memories/` for `suggested_commands.md`, `style_guidelines.md`, or architecture notes.
+- **Persistent Facts**: Store important decisions in memories to survive session resets.
 
-### Session Tools
-- **session_list()** - List active conversation sessions
-- **session_stats(session_id)** - Get session statistics
-- **session_compact(session_id, force?)** - Compact session history with LLM summarization
-- **session_delete(session_id)** - Delete session
+---
 
-### Advanced Features
-- **scan_codebase(path, max_files?, preview_chars?, phase?)** - Incremental codebase scanning
-- **analyze_and_index(path, project_summary, coding_bullets, ...)** - Create ACE index from analysis
-- **sync_instruction_files(content, path?, force?)** - Sync CLAUDE.md to all AI agent configs
-- **read_instruction_files(path?)** - Read existing instruction files
-- **write_project_summary(summary, path?)** - Write project summary JSON
-- **check_ace_status(path?)** - Check ACE compliance status for recent tasks
+## Tool Reference
+
+### Code Intelligence (LSP)
+- `lsp_goto_definition` / `lsp_find_references` / `lsp_hover`: Semantic navigation.
+- `lsp_get_symbols`: Structural mapping.
+- `lsp_find_symbol`: Global name search.
+- `lsp_rename_symbol` / `lsp_replace_symbol_body`: Structured modifications.
+
+### Filesystem
+- `read_file` / `write_file` / `edit_file`: Atomic operations.
+- `search_for_pattern`: Regex search.
+- `list_dir` / `find_file`: Discovery.
+
+### Knowledge & Relationships
+- `memory(action="read|write|list|delete", ...)`: Manage factual project knowledge.
+- `semantic_search(query)`: Search by meaning.
+- `codebase_graph()`: Inspect dependency relationships.
+
+---
 
 ## Constraints
 
-- **ACE is MANDATORY** - always query playbook before coding
-- **Per-project isolation** - use set_project() to switch contexts
-- **LSP for code nav** - use LSP tools instead of grep/find for semantic navigation
-- **Memories for knowledge** - store persistent insights in memory system
-- Delegation is OPTIONAL - only when user requests or backends configured
-- Report feedback to close the learning loop
+- **Hard Gating**: File modifications require a preceding call to `think_about_task_adherence()`.
+- **Symbolic Priority**: **I WILL BE VERY UNHAPPY IF YOU GREP FOR CODE WHEN LSP TOOLS ARE AVAILABLE.**
+- **Atomic Operations**: Favor small, targeted edits over massive file rewrites.
+- **Learning Loop**: Always finalize tasks with `complete_task()` to preserve patterns.
+
+---
+
+## Subagent Fallback (No MCP Access)
+
+If running as a subagent without MCP tool access, read `.delia/` files directly:
+- `.delia/playbooks/*.json` - Task-specific bullets (coding, testing, etc.)
+- `.delia/memories/*.md` - Persistent project knowledge
+- `.delia/project_summary.json` - Project overview
+
+The playbook bullets below are auto-embedded for convenience.
+
+---
+
+## PROJECT PLAYBOOK (Auto-embedded)
+
+These are learned strategies from this project. Apply them to relevant tasks.
+For the latest bullets, use `auto_context()` or read `.delia/playbooks/*.json` directly.
+
+### Coding
+- Use pathlib.Path over os.path for file operations
+- MCP tools must return JSON-serializable dicts wrapped in result key
+- Always pass project path explicitly - never assume cwd
+- Use httpx async client over requests for HTTP calls
+- When implementing cross-platform features, verify hook support via web search first - Cursor has hooks (v1.7+), Windsurf has enterprise-only Cascade Hooks, VS Code Copilot and Gemini have no hooks
+
+### Testing
+- Use pytest with async support via pytest-asyncio
+- Mock external services (Ollama, LSP) in unit tests
+- Integration tests go in tests/integration/
+- Use fixtures for common setup patterns
+- Test MCP tools via their handler functions directly
+
+### Architecture
+- MCP server is the primary interface - tools are registered via decorators
+- Playbooks store per-project learned patterns in .delia/playbooks/
+- LSP integration provides semantic code navigation
+- Memories persist knowledge in .delia/memories/ as markdown
+- Profiles are starter templates copied to .delia/profiles/
+
+### Debugging
+- Check structlog output for detailed traces
+- MCP tool errors are returned in error key of result
+- LSP issues often stem from language server not running
+- Use health() tool to check backend connectivity
+- Dashboard at localhost:8765 shows real-time tool usage
+
+### Project
+- Primary language: Python 3.11+
+- Package manager: uv with pyproject.toml
+- MCP server for AI agent integration
+- Dashboard: Next.js app in dashboard/
+- CLI entry point: delia command via cli.py
+
+### Git
+- Commit messages should be descriptive of the change
+- Use conventional commits format when possible
+- Don't commit .delia/data/ or session files
+- Playbooks and profiles are project-specific and should be committed
+
+### Security
+- Never log or expose API keys
+- Validate all file paths to prevent traversal
+- MCP tools run with user permissions - be cautious with file ops
+- Settings files may contain sensitive backend URLs
+
+### Deployment
+- MCP server runs via stdio for AI agent integration
+- REST API available via delia api command
+- Dashboard runs separately on port 8765
+- Ollama must be running for LLM delegation features
+
+### Api
+- REST API uses FastAPI with automatic OpenAPI docs
+- All endpoints return JSON responses
+- Use proper HTTP status codes for errors
+- MCP tools follow Model Context Protocol specification
+- When testing Delia Framework, verify the complete loop: auto_context detection → bullet loading → profile loading → task execution → complete_task feedback. Each component must integrate seamlessly.
+
+### Performance
+- Use async/await for all I/O operations
+- LSP operations can be slow - cache results when appropriate
+- Batch LLM calls when possible via batch() tool
+- Dashboard uses React Query for efficient data fetching

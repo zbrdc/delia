@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """
-Melon Savings Display System 🍈
+Melon Savings Display System
 
 Melons represent REAL SAVINGS - money you've saved by using local models
 instead of expensive cloud APIs.
@@ -97,7 +97,7 @@ class MelonStats:
             self.golden_melons += 1
             earned_golden = True
             log.info(
-                "🏆 GOLDEN MELON EARNED!",
+                "golden_melon_earned",
                 model=self.model_id,
                 task=self.task_type,
                 total_golden=self.golden_melons,
@@ -173,7 +173,7 @@ class MelonTracker:
         earned_golden = stats.record_savings(savings_usd)
 
         log.debug(
-            "🍈 savings_recorded",
+            "savings_recorded",
             model=model_id,
             task=task_type,
             saved_usd=f"${savings_usd:.4f}",
@@ -244,13 +244,13 @@ class MelonTracker:
             reverse=True,
         )
 
-        medals = ["🥇", "🥈", "🥉"]
+        medals = ["1st", "2nd", "3rd"]
 
         # Build leaderboard lines
         board_lines = []
         for i, (model_id, totals) in enumerate(sorted_models[:10]):
             medal = medals[i] if i < 3 else f"{i+1:>2}."
-            golden = f"🏆×{totals['golden']}" if totals["golden"] else "     "
+            golden = f"G×{totals['golden']}" if totals["golden"] else "    "
             savings = totals["savings"]
             calls = totals["calls"]
             board_lines.append(
@@ -263,15 +263,15 @@ class MelonTracker:
 
         board_text = "\n".join(board_lines) if board_lines else "No savings yet - make some LLM calls!"
 
-        return f"""🍈 SAVINGS LEADERBOARD
+        return f"""SAVINGS LEADERBOARD
 ══════════════════════════════════════════════════════
 Total Saved: ${total_savings:.2f}  ({total_melons:,} melons + {total_golden} golden)
 Total Calls: {total_calls:,}
 
 {board_text}
 
-💡 1 melon = $0.001 saved vs cloud API pricing
-🏆 Golden melon = $0.50 milestone"""
+1 melon = $0.001 saved vs cloud API pricing
+Golden melon = $0.50 milestone"""
     
     def _load(self) -> None:
         """Load melon stats from disk."""
@@ -363,7 +363,7 @@ class RewardCollector:
             self.output_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.output_file, "a") as f:
                 f.write(json.dumps(data) + "\n")
-            log.info("🏆 interaction_recorded_for_training", model=model_id, quality=quality_score)
+            log.info("interaction_recorded_for_training", model=model_id, quality=quality_score)
         except Exception as e:
             log.warning("failed_to_record_reward", error=str(e))
 

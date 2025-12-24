@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """
-Automatic Context Detection for ACE Framework.
+Automatic Context Detection for Delia Framework.
 
 Detects task type from user messages and automatically loads relevant
 playbooks and profiles without requiring explicit tool calls.
@@ -904,6 +904,42 @@ class LearnedPattern:
         return cls(**data)
 
 
+@dataclass
+class NegativePattern:
+    """
+    A pattern that should NOT trigger a task type.
+
+    Used to learn from false positives like "injection suite" triggering "security"
+    when it should be "project" or "architecture".
+    """
+    trigger_word: str  # The word that caused false positive (e.g., "injection")
+    context_pattern: str  # Pattern that distinguishes false positive (e.g., "injection.*suite|suite.*injection")
+    wrong_task: TaskType  # The task that was wrongly detected
+    correct_task: TaskType  # The task it should have been
+    penalty: int = 3  # Score penalty when context matches
+    occurrences: int = 1  # How many times this was seen
+    created_at: str = ""
+
+    def __post_init__(self):
+        if not self.created_at:
+            self.created_at = datetime.now().isoformat()
+
+    def to_dict(self) -> dict:
+        return {
+            "trigger_word": self.trigger_word,
+            "context_pattern": self.context_pattern,
+            "wrong_task": self.wrong_task,
+            "correct_task": self.correct_task,
+            "penalty": self.penalty,
+            "occurrences": self.occurrences,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "NegativePattern":
+        return cls(**data)
+
+
 class PatternLearner:
     """
     Learns and adapts detection patterns based on feedback.
@@ -915,7 +951,9 @@ class PatternLearner:
     def __init__(self, project_path: Path | None = None):
         self.project_path = project_path or Path.cwd()
         self._patterns: list[LearnedPattern] = []
+        self._negative_patterns: list[NegativePattern] = []
         self._compiled: dict[TaskType, list[tuple[re.Pattern, int]]] = {}
+        self._compiled_negative: dict[TaskType, list[tuple[re.Pattern, int]]] = {}
         self._loaded = False
 
     def _get_patterns_path(self) -> Path:
@@ -930,8 +968,16 @@ class PatternLearner:
                 with open(path) as f:
                     data = json.load(f)
                 self._patterns = [LearnedPattern.from_dict(p) for p in data.get("patterns", [])]
+                self._negative_patterns = [
+                    NegativePattern.from_dict(p) for p in data.get("negative_patterns", [])
+                ]
                 self._compile_patterns()
-                log.debug("learned_patterns_loaded", count=len(self._patterns))
+                self._compile_negative_patterns()
+                log.debug(
+                    "learned_patterns_loaded",
+                    positive=len(self._patterns),
+                    negative=len(self._negative_patterns),
+                )
             except Exception as e:
                 log.warning("learned_patterns_load_failed", error=str(e))
         self._loaded = True
@@ -943,11 +989,16 @@ class PatternLearner:
         try:
             with open(path, "w") as f:
                 json.dump({
-                    "version": 1,
+                    "version": 2,
                     "patterns": [p.to_dict() for p in self._patterns],
+                    "negative_patterns": [p.to_dict() for p in self._negative_patterns],
                     "updated_at": datetime.now().isoformat(),
                 }, f, indent=2)
-            log.debug("learned_patterns_saved", count=len(self._patterns))
+            log.debug(
+                "learned_patterns_saved",
+                positive=len(self._patterns),
+                negative=len(self._negative_patterns),
+            )
         except Exception as e:
             log.warning("learned_patterns_save_failed", error=str(e))
 
@@ -962,6 +1013,72 @@ class PatternLearner:
                 self._compiled[pattern.task_type].append((compiled, pattern.weight))
             except re.error:
                 log.warning("invalid_learned_pattern", pattern=pattern.pattern)
+
+    def _compile_negative_patterns(self) -> None:
+        """Compile negative patterns for efficient matching."""
+        self._compiled_negative.clear()
+        for neg in self._negative_patterns:
+            if neg.wrong_task not in self._compiled_negative:
+                self._compiled_negative[neg.wrong_task] = []
+            try:
+                compiled = re.compile(neg.context_pattern, re.IGNORECASE)
+                self._compiled_negative[neg.wrong_task].append((compiled, neg.penalty))
+            except re.error:
+                log.warning("invalid_negative_pattern", pattern=neg.context_pattern)
+
+    def add_negative_pattern(
+        self,
+        trigger_word: str,
+        context_pattern: str,
+        wrong_task: TaskType,
+        correct_task: TaskType,
+    ) -> NegativePattern:
+        """
+        Add a negative pattern to prevent false positives.
+
+        When trigger_word causes wrong_task detection but context_pattern matches,
+        apply a penalty to wrong_task score.
+        """
+        if not self._loaded:
+            self.load()
+
+        # Check for existing pattern with same context
+        for existing in self._negative_patterns:
+            if (existing.context_pattern == context_pattern and
+                existing.wrong_task == wrong_task):
+                existing.occurrences += 1
+                self.save()
+                return existing
+
+        new_neg = NegativePattern(
+            trigger_word=trigger_word,
+            context_pattern=context_pattern,
+            wrong_task=wrong_task,
+            correct_task=correct_task,
+        )
+        self._negative_patterns.append(new_neg)
+        self._compile_negative_patterns()
+        self.save()
+
+        log.info(
+            "negative_pattern_added",
+            trigger=trigger_word,
+            context=context_pattern,
+            wrong_task=wrong_task,
+            correct_task=correct_task,
+        )
+        return new_neg
+
+    def get_negative_penalty(self, message: str, task_type: TaskType) -> int:
+        """Get total penalty for a task type based on negative pattern matches."""
+        if not self._loaded:
+            self.load()
+
+        total_penalty = 0
+        for compiled, penalty in self._compiled_negative.get(task_type, []):
+            if compiled.search(message):
+                total_penalty += penalty
+        return total_penalty
 
     def add_pattern(
         self,
@@ -1044,6 +1161,64 @@ class PatternLearner:
                             result["patterns_updated"] += 1
                     except re.error:
                         pass
+
+            # =================================================================
+            # NEGATIVE PATTERN LEARNING
+            # =================================================================
+            # Identify which base patterns caused the false positive and learn
+            # context patterns that distinguish them.
+            # Example: "injection" triggers "security", but "injection suite"
+            # should not. Learn that "injection.*suite" → NOT security.
+            # =================================================================
+            result["negative_patterns_added"] = 0
+            trigger_words = []
+
+            # Find which base patterns matched and caused the wrong detection
+            for pattern_str, weight in TASK_PATTERNS_WEIGHTED.get(detected_task, []):
+                try:
+                    match = re.search(pattern_str, message, re.IGNORECASE)
+                    if match:
+                        # Extract the actual matched word
+                        matched_text = match.group(0).lower()
+                        trigger_words.append(matched_text)
+                except re.error:
+                    pass
+
+            # For each trigger word, find neighboring context words
+            message_lower = message.lower()
+            words = re.findall(r'\b[a-zA-Z]{3,}\b', message_lower)
+
+            for trigger in trigger_words[:2]:  # Limit to top 2 triggers
+                # Find words that appear near the trigger
+                try:
+                    trigger_idx = None
+                    for i, w in enumerate(words):
+                        if trigger in w or w in trigger:
+                            trigger_idx = i
+                            break
+
+                    if trigger_idx is not None:
+                        # Get neighboring words (within 3 positions)
+                        neighbors = []
+                        for offset in range(-3, 4):
+                            idx = trigger_idx + offset
+                            if 0 <= idx < len(words) and idx != trigger_idx:
+                                neighbors.append(words[idx])
+
+                        # Create context pattern: trigger + neighbor
+                        for neighbor in neighbors[:2]:
+                            if len(neighbor) > 2:
+                                # Pattern matches trigger near neighbor
+                                context_pattern = rf"\b{re.escape(trigger)}\b.*\b{re.escape(neighbor)}\b|\b{re.escape(neighbor)}\b.*\b{re.escape(trigger)}\b"
+                                self.add_negative_pattern(
+                                    trigger_word=trigger,
+                                    context_pattern=context_pattern,
+                                    wrong_task=detected_task,
+                                    correct_task=correct_task,
+                                )
+                                result["negative_patterns_added"] += 1
+                except Exception:
+                    pass
 
             # Extract words from message that might indicate correct task
             # Simple approach: learn any unique words not in common words
@@ -1154,10 +1329,20 @@ class PatternLearner:
 
         return {
             "total_patterns": len(self._patterns),
+            "total_negative_patterns": len(self._negative_patterns),
             "by_task_type": by_task,
             "top_patterns": [
                 {"pattern": p.pattern, "task_type": p.task_type, "effectiveness": p.effectiveness}
                 for p in sorted(self._patterns, key=lambda x: x.effectiveness, reverse=True)[:10]
+            ],
+            "negative_patterns": [
+                {
+                    "trigger": n.trigger_word,
+                    "wrong_task": n.wrong_task,
+                    "correct_task": n.correct_task,
+                    "occurrences": n.occurrences,
+                }
+                for n in self._negative_patterns[:10]
             ],
         }
 
@@ -1206,6 +1391,19 @@ def detect_with_learning(message: str, project_path: Path | None = None) -> Dete
                         scores[task] = scores.get(task, 0) + boost
                 except re.error:
                     pass
+
+        # Apply negative pattern penalties
+        # These reduce scores for tasks that matched due to ambiguous words
+        for task in list(scores.keys()):
+            penalty = learner.get_negative_penalty(message, task)
+            if penalty > 0:
+                scores[task] = max(0, scores[task] - penalty)
+                log.debug(
+                    "negative_pattern_penalty_applied",
+                    task=task,
+                    penalty=penalty,
+                    new_score=scores[task],
+                )
 
         # Re-determine primary if learned patterns boosted another type
         if scores:

@@ -116,7 +116,7 @@ class OrchestrationExecutor:
 
             if result.success and result.model_used:
                 self._award_melons(result, intent)
-                # ACE Framework: Record playbook feedback to close the learning loop
+                # Delia Framework: Record playbook feedback to close the learning loop
                 asyncio.create_task(self._record_playbook_feedback(intent.task_type, result.quality_score))
 
             if not result.success or (result.quality_score is not None and result.quality_score < 0.4):
@@ -601,8 +601,8 @@ class OrchestrationExecutor:
         from ..melons import get_melon_tracker
         tracker = get_melon_tracker()
         leaderboard = tracker.get_leaderboard()
-        board = "\n".join([f"{i+1}. {s.model_id}: {s.melons} 🍈" for i, s in enumerate(leaderboard[:10])])
-        return OrchestrationResult(response=f"🍈 **Leaderboard**\n\n{board or 'Empty garden.'}", success=True, model_used="system")
+        board = "\n".join([f"{i+1}. {s.model_id}: {s.melons} melons" for i, s in enumerate(leaderboard[:10])])
+        return OrchestrationResult(response=f"**Leaderboard**\n\n{board or 'Empty garden.'}", success=True, model_used="system")
 
     async def _execute_deep_thinking(self, intent: DetectedIntent, message: str, backend_type: str | None, model_override: str | None, messages: list[dict[str, Any]] | None = None) -> OrchestrationResult:
         selected_model = model_override or await select_model(task_type="moe", content_size=len(message), content=message)
@@ -648,7 +648,7 @@ class OrchestrationExecutor:
     ) -> OrchestrationResult:
         """
         Meta-orchestration: Execute multiple orchestration modes in parallel,
-        critic picks best, ACE learns from outcome.
+        critic picks best, Delia learns from outcome.
 
         ADR-008 Optimizations:
         - Early stopping: If first branch has high confidence, skip remaining
@@ -793,8 +793,8 @@ class OrchestrationExecutor:
         # 7. Get winning result
         winner_mode, winner_result = successful_branches[evaluation.winner_index]
 
-        # 8. Feed to meta-learner (ACE learns about orchestration)
-        await self._ace_meta_learn(
+        # 8. Feed to meta-learner (Delia learns about orchestration)
+        await self._meta_learn(
             message=message,
             branch_results=branch_results,
             winner_mode=winner_mode,
@@ -841,7 +841,7 @@ class OrchestrationExecutor:
             },
         )
 
-    async def _ace_meta_learn(
+    async def _meta_learn(
         self,
         message: str,
         branch_results: list[tuple[OrchestrationMode, OrchestrationResult]],
@@ -850,9 +850,9 @@ class OrchestrationExecutor:
         intent: DetectedIntent,
     ) -> None:
         """
-        ACE Framework meta-learning: Learn ABOUT orchestration from ToT outcome.
+        Delia Framework meta-learning: Learn ABOUT orchestration from ToT outcome.
 
-        This is distinct from regular ACE reflection which learns about task strategies.
+        This is distinct from regular Delia reflection which learns about task strategies.
         Here we learn which orchestration MODE works for which task PATTERN.
         """
         from .meta_learning import get_orchestration_learner
@@ -873,18 +873,20 @@ class OrchestrationExecutor:
                 # P4: Use curator to ensure semantic deduplication
                 lesson = f"For {intent.task_type} tasks: prefer {winner_mode.value} - {evaluation.insights}"
                 try:
-                    from ..ace.curator import Curator
+                    from ..learning.curator import Curator
                     curator = Curator(playbook_manager=playbook_manager)
-                    await curator.add_bullet(
+                    add_result = await curator.add_bullet(
                         task_type="orchestration",
                         content=lesson,
                         section="mode_selection",
                     )
+                    if add_result.get("quality_rejected"):
+                        log.debug("meta_learning_quality_rejected", reason=add_result.get("reason"))
                 except Exception as e:
                     log.warning("curator_add_failed_meta_learning", error=str(e))
 
                 log.info(
-                    "ace_meta_learning_complete",
+                    "meta_learning_complete",
                     task_type=intent.task_type,
                     winner_mode=winner_mode.value,
                     insight_len=len(evaluation.insights),
@@ -892,7 +894,7 @@ class OrchestrationExecutor:
 
         except Exception as e:
             # Meta-learning should never break the main flow
-            log.error("ace_meta_learning_failed", error=str(e))
+            log.error("meta_learning_failed", error=str(e))
 
     def _award_melons(self, result: OrchestrationResult, intent: DetectedIntent) -> None:
         from ..melons import award_melons_for_quality
@@ -915,7 +917,7 @@ class OrchestrationExecutor:
         """
         Record feedback for playbook bullets used in this task.
 
-        Called after task completion to close the ACE learning loop.
+        Called after task completion to close the Delia learning loop.
         Bullets with quality >= 0.7 are marked helpful, < 0.4 harmful.
 
         This enables the playbook to learn which strategies actually work.
@@ -1009,7 +1011,7 @@ class OrchestrationExecutor:
 
     async def _reflect_on_failure(self, task_type: str, message: str, response: str, error: str | None = None, backend_obj: Any | None = None) -> None:
         """
-        Use the ACE Reflector → Curator pipeline to learn from failures.
+        Use the Delia Reflector → Curator pipeline to learn from failures.
 
         NOTE: Delegates to LearningCoordinator (P3 refactoring).
         """
