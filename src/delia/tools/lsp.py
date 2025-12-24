@@ -284,6 +284,10 @@ def register_lsp_tools(mcp: FastMCP):
     mcp.tool(name="lsp_move_symbol")(lsp_move_symbol)
     mcp.tool(name="lsp_extract_method")(lsp_extract_method)
     mcp.tool(name="lsp_batch")(lsp_batch)
+    mcp.tool(name="lsp_organize_imports")(lsp_organize_imports)
+    mcp.tool(name="lsp_get_dependencies")(lsp_get_dependencies)
+    mcp.tool(name="lsp_batch_history")(lsp_batch_history)
+    mcp.tool(name="lsp_batch_undo")(lsp_batch_undo)
     
     # These have gating, so we wrap them to include the check
     @mcp.tool()
@@ -1416,6 +1420,7 @@ async def lsp_move_symbol_impl(
     symbol_name: str,
     dest_path: str,
     update_imports: bool = True,
+    cleanup_imports: bool = True,
     *,
     workspace: Workspace | None = None,
 ) -> str:
@@ -1429,6 +1434,7 @@ async def lsp_move_symbol_impl(
         symbol_name: Name of the symbol to move
         dest_path: Path to the destination file
         update_imports: Whether to update imports in referencing files (default True)
+        cleanup_imports: Whether to remove unused imports from source file (default True)
         workspace: Workspace context
 
     Returns:
@@ -1468,6 +1474,11 @@ async def lsp_move_symbol_impl(
     del source_lines[start_line:end_line + 1]
     source_abs.write_text("".join(source_lines))
 
+    # 3b. Clean up unused imports in source file
+    cleanup_result = None
+    if cleanup_imports:
+        cleanup_result = await _cleanup_imports(source_abs, organize=True)
+
     # 4. Insert symbol into destination file
     dest_abs = root / dest_path
     if dest_abs.exists():
@@ -1499,6 +1510,14 @@ async def lsp_move_symbol_impl(
         f"  Removed from lines {start_line + 1}-{end_line + 1} in source",
         f"  Inserted at line {insert_at + 1} in destination",
     ]
+
+    # Report import cleanup results
+    if cleanup_result and cleanup_result.get("cleaned"):
+        removed = cleanup_result.get("removed_imports", 0)
+        if removed > 0:
+            result_lines.append(f"  Cleaned up {removed} unused import(s) from source")
+        if cleanup_result.get("organized"):
+            result_lines.append(f"  Organized imports in source file")
 
     # 5. Update imports if requested
     if update_imports:
@@ -1617,8 +1636,272 @@ def _update_import_statement(
     return content
 
 
+async def _cleanup_imports(file_path: Path, organize: bool = True) -> dict:
+    """Clean up unused imports and optionally organize imports using Ruff.
+    
+    Args:
+        file_path: Path to the Python file to clean up
+        organize: Whether to also organize/sort imports
+        
+    Returns:
+        Dict with cleanup results
+    """
+    import subprocess
+    
+    if not file_path.exists() or not file_path.suffix == ".py":
+        return {"cleaned": False, "reason": "Not a Python file"}
+    
+    result = {"cleaned": False, "removed_imports": 0, "organized": False}
+    
+    try:
+        # Step 1: Remove unused imports (F401)
+        proc = subprocess.run(
+            ["ruff", "check", "--fix", "--select", "F401", str(file_path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if "Fixed" in proc.stdout or proc.returncode == 0:
+            # Count fixed issues from output
+            import re
+            match = re.search(r"(\d+) fixed", proc.stdout)
+            if match:
+                result["removed_imports"] = int(match.group(1))
+                result["cleaned"] = True
+        
+        # Step 2: Organize imports (I001, I002) if requested
+        if organize:
+            proc = subprocess.run(
+                ["ruff", "check", "--fix", "--select", "I", str(file_path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if proc.returncode == 0:
+                result["organized"] = True
+                
+    except FileNotFoundError:
+        result["reason"] = "ruff not installed"
+    except subprocess.TimeoutExpired:
+        result["reason"] = "ruff timed out"
+    except Exception as e:
+        result["reason"] = str(e)
+    
+    return result
+
+
 # Expose as public function  
 lsp_move_symbol = lsp_move_symbol_impl
+
+
+async def lsp_organize_imports_impl(
+    path: str,
+    remove_unused: bool = True,
+    sort_imports: bool = True,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Organize imports in a Python file using Ruff.
+    
+    Removes unused imports and sorts remaining imports according to PEP 8.
+    
+    Args:
+        path: Path to the Python file
+        remove_unused: Remove unused imports (default True)
+        sort_imports: Sort and organize imports (default True)
+        workspace: Workspace context
+        
+    Returns:
+        Summary of changes made
+    """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+    root = workspace.root if workspace else Path.cwd()
+    
+    file_path = root / path
+    if not file_path.exists():
+        return f"File not found: {path}"
+    
+    if not path.endswith(".py"):
+        return f"Not a Python file: {path}"
+    
+    import subprocess
+    
+    results = []
+    
+    try:
+        # Remove unused imports
+        if remove_unused:
+            proc = subprocess.run(
+                ["ruff", "check", "--fix", "--select", "F401", str(file_path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            import re
+            match = re.search(r"(\d+) fixed", proc.stdout)
+            if match:
+                count = int(match.group(1))
+                results.append(f"Removed {count} unused import(s)")
+        
+        # Sort imports
+        if sort_imports:
+            proc = subprocess.run(
+                ["ruff", "check", "--fix", "--select", "I", str(file_path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if proc.returncode == 0:
+                results.append("Organized import order")
+                
+    except FileNotFoundError:
+        return "Error: ruff not installed. Install with: uv add --dev ruff"
+    except subprocess.TimeoutExpired:
+        return "Error: ruff timed out"
+    except Exception as e:
+        return f"Error: {e}"
+    
+    if results:
+        return f"Import cleanup for {path}:\n  " + "\n  ".join(results)
+    return f"No import changes needed for {path}"
+
+
+# Expose as public function
+lsp_organize_imports = lsp_organize_imports_impl
+
+
+async def lsp_get_dependencies_impl(
+    path: str,
+    include_symbols: bool = True,
+    max_depth: int = 2,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Visualize cross-file symbol dependencies for a file.
+    
+    Shows what the file exports, what it imports, and who depends on it.
+    
+    Args:
+        path: Path to the file to analyze
+        include_symbols: Include per-symbol dependency details (default True)
+        max_depth: How many levels of dependencies to show (default 2)
+        workspace: Workspace context
+        
+    Returns:
+        Formatted dependency visualization
+    """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+    root = workspace.root if workspace else Path.cwd()
+    client = lsp_client.get_lsp_client(root)
+    
+    file_abs = root / path
+    if not file_abs.exists():
+        return f"File not found: {path}"
+    
+    # Get symbols in this file
+    symbols = await client.document_symbols(path)
+    
+    # Build output
+    lines = [f"# Dependency Analysis: {path}", ""]
+    
+    # 1. Exported symbols
+    if include_symbols and symbols:
+        lines.append("## Exported Symbols")
+        for sym in symbols:
+            kind = sym.get("kind", "unknown")
+            name = sym.get("name", "?")
+            line = sym.get("range", {}).get("start_line", "?")
+            lines.append(f"  - {kind}: {name} (line {line})")
+        lines.append("")
+    
+    # 2. Analyze imports (what this file depends on)
+    content = file_abs.read_text()
+    import re
+    
+    imports = []
+    for line in content.splitlines():
+        if line.strip().startswith(("import ", "from ")):
+            imports.append(line.strip())
+    
+    if imports:
+        lines.append("## Imports (dependencies)")
+        for imp in imports[:20]:  # Limit to 20
+            lines.append(f"  {imp}")
+        if len(imports) > 20:
+            lines.append(f"  ... and {len(imports) - 20} more")
+        lines.append("")
+    
+    # 3. Find who depends on this file (reverse dependencies)
+    lines.append("## Dependents (who imports this)")
+    
+    # Search for files that import from this module
+    module_name = path.replace("src/", "").replace("/", ".").replace(".py", "")
+    
+    dependents = []
+    for py_file in root.rglob("*.py"):
+        if py_file == file_abs:
+            continue
+        try:
+            file_content = py_file.read_text()
+            # Check various import patterns
+            patterns = [
+                f"from {module_name} import",
+                f"import {module_name}",
+                f"from .{module_name.split('.')[-1]} import",
+            ]
+            for pattern in patterns:
+                if pattern in file_content:
+                    rel_path = str(py_file.relative_to(root))
+                    if rel_path not in dependents:
+                        dependents.append(rel_path)
+                    break
+        except Exception:
+            continue
+    
+    if dependents:
+        for dep in dependents[:15]:  # Limit to 15
+            lines.append(f"  - {dep}")
+        if len(dependents) > 15:
+            lines.append(f"  ... and {len(dependents) - 15} more")
+    else:
+        lines.append("  (no dependents found)")
+    lines.append("")
+    
+    # 4. Symbol-level dependencies (who uses each exported symbol)
+    if include_symbols and symbols:
+        lines.append("## Symbol Usage (who references each symbol)")
+        for sym in symbols[:10]:  # Limit to 10 symbols
+            name = sym.get("name", "?")
+            range_info = sym.get("range", {})
+            line_num = range_info.get("start_line", 1)
+            
+            # Find references to this symbol
+            try:
+                refs = await client.find_references(path, line_num, 0)
+                # Filter to external files only
+                external_refs = [r for r in refs if r.get("path", "") != path]
+                
+                if external_refs:
+                    unique_files = list(set(r.get("path", "") for r in external_refs))
+                    lines.append(f"  {name}: used in {len(unique_files)} file(s)")
+                    for f in unique_files[:3]:
+                        lines.append(f"    - {f}")
+                    if len(unique_files) > 3:
+                        lines.append(f"    ... and {len(unique_files) - 3} more")
+                else:
+                    lines.append(f"  {name}: (no external references)")
+            except Exception:
+                lines.append(f"  {name}: (could not analyze)")
+    
+    return "\n".join(lines)
+
+
+# Expose as public function
+lsp_get_dependencies = lsp_get_dependencies_impl
 
 
 async def lsp_extract_method_impl(
@@ -1840,6 +2123,56 @@ def _find_method_insert_position(lines: list[str], extraction_line: int) -> int:
 lsp_extract_method = lsp_extract_method_impl
 
 
+# Batch history storage for undo support
+_BATCH_HISTORY_DIR = Path.home() / ".delia" / "batch_history"
+_MODIFYING_OPS = {"rename", "replace_body", "insert_before", "insert_after", "move", "extract_method"}
+
+
+def _save_batch_snapshot(batch_id: str, files: dict[str, str], root: Path) -> None:
+    """Save file states before a batch operation for undo support."""
+    import json as json_module
+    
+    _BATCH_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    
+    snapshot = {
+        "batch_id": batch_id,
+        "timestamp": __import__("time").time(),
+        "root": str(root),
+        "files": files,  # path -> content
+    }
+    
+    snapshot_path = _BATCH_HISTORY_DIR / f"{batch_id}.json"
+    snapshot_path.write_text(json_module.dumps(snapshot, indent=2))
+    
+    # Keep only last 10 snapshots
+    snapshots = sorted(_BATCH_HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old_snapshot in snapshots[10:]:
+        old_snapshot.unlink()
+
+
+def _get_batch_history() -> list[dict]:
+    """Get list of batch snapshots available for undo."""
+    import json as json_module
+    
+    if not _BATCH_HISTORY_DIR.exists():
+        return []
+    
+    history = []
+    for snapshot_path in sorted(_BATCH_HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json_module.loads(snapshot_path.read_text())
+            history.append({
+                "batch_id": data["batch_id"],
+                "timestamp": data["timestamp"],
+                "files_count": len(data.get("files", {})),
+                "root": data.get("root", ""),
+            })
+        except Exception:
+            continue
+    
+    return history
+
+
 async def lsp_batch_impl(
     operations: str,
     *,
@@ -1849,6 +2182,9 @@ async def lsp_batch_impl(
 
     Runs a batch of LSP operations and tracks the sequence for learning.
     Useful for complex refactoring that requires multiple steps.
+    
+    Modifying operations are automatically saved for undo support.
+    Use lsp_batch_history() to see recent batches and lsp_batch_undo() to revert.
 
     Args:
         operations: JSON array of operations, each with:
@@ -1867,6 +2203,7 @@ async def lsp_batch_impl(
         Combined results of all operations with sequence summary
     """
     import json as json_module
+    import uuid
     
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
@@ -1881,6 +2218,41 @@ async def lsp_batch_impl(
 
     if not isinstance(ops, list):
         return "Operations must be a JSON array"
+
+    # Check if any operations are modifying
+    has_modifying_ops = any(op.get("op") in _MODIFYING_OPS for op in ops)
+    
+    # Collect files that will be modified for snapshot
+    batch_id = None
+    if has_modifying_ops:
+        batch_id = str(uuid.uuid4())[:8]
+        files_to_backup = set()
+        
+        for op_spec in ops:
+            op_name = op_spec.get("op", "")
+            args = op_spec.get("args", {})
+            
+            if op_name in _MODIFYING_OPS:
+                # Extract paths from different operation types
+                if "path" in args:
+                    files_to_backup.add(args["path"])
+                if "source_path" in args:
+                    files_to_backup.add(args["source_path"])
+                if "dest_path" in args:
+                    files_to_backup.add(args["dest_path"])
+        
+        # Save current content of all affected files
+        file_contents = {}
+        for rel_path in files_to_backup:
+            abs_path = root / rel_path
+            if abs_path.exists():
+                try:
+                    file_contents[rel_path] = abs_path.read_text()
+                except Exception:
+                    pass
+        
+        if file_contents:
+            _save_batch_snapshot(batch_id, file_contents, root)
 
     results = []
     sequence = []  # Track for learning
@@ -1937,7 +2309,102 @@ async def lsp_batch_impl(
         except Exception:
             pass  # Playbook recording is optional
 
+    # Add undo hint if we saved a snapshot
+    if batch_id:
+        output_lines.append(f"\n💾 Batch ID: {batch_id} (use lsp_batch_undo to revert)")
+
     return "\n".join(output_lines)
+
+
+async def lsp_batch_history_impl(
+    limit: int = 10,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """List recent batch operations available for undo.
+    
+    Args:
+        limit: Maximum number of entries to show (default 10)
+        workspace: Workspace context
+        
+    Returns:
+        List of recent batch operations with their IDs
+    """
+    import time
+    
+    history = _get_batch_history()[:limit]
+    
+    if not history:
+        return "No batch history available."
+    
+    lines = ["Recent batch operations:"]
+    for entry in history:
+        timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(entry["timestamp"]))
+        lines.append(f"  {entry['batch_id']}: {entry['files_count']} file(s) @ {timestamp}")
+    
+    lines.append("\nUse lsp_batch_undo(batch_id='...') to revert a batch.")
+    return "\n".join(lines)
+
+
+async def lsp_batch_undo_impl(
+    batch_id: str | None = None,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Undo a batch operation by restoring files to their previous state.
+    
+    Args:
+        batch_id: ID of the batch to undo (default: most recent)
+        workspace: Workspace context
+        
+    Returns:
+        Summary of restored files
+    """
+    import json as json_module
+    
+    if not _BATCH_HISTORY_DIR.exists():
+        return "No batch history available."
+    
+    # Find the snapshot to restore
+    if batch_id:
+        snapshot_path = _BATCH_HISTORY_DIR / f"{batch_id}.json"
+        if not snapshot_path.exists():
+            return f"Batch {batch_id} not found. Use lsp_batch_history() to see available batches."
+    else:
+        # Get most recent
+        snapshots = sorted(_BATCH_HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not snapshots:
+            return "No batch history available."
+        snapshot_path = snapshots[0]
+    
+    # Load and restore
+    try:
+        data = json_module.loads(snapshot_path.read_text())
+        root = Path(data.get("root", "."))
+        files = data.get("files", {})
+        
+        restored = []
+        for rel_path, content in files.items():
+            abs_path = root / rel_path
+            try:
+                abs_path.write_text(content)
+                restored.append(rel_path)
+            except Exception as e:
+                log.warning("batch_restore_failed", path=rel_path, error=str(e))
+        
+        # Remove the snapshot after successful restore
+        snapshot_path.unlink()
+        
+        batch_id_used = data.get("batch_id", "unknown")
+        return f"Restored {len(restored)} file(s) from batch {batch_id_used}:\n  " + "\n  ".join(restored)
+        
+    except Exception as e:
+        return f"Failed to restore batch: {e}"
+
+
+# Expose as public functions
+lsp_batch_history = lsp_batch_history_impl
+lsp_batch_undo = lsp_batch_undo_impl
 
 
 async def _execute_lsp_operation(op_name: str, args: dict, root: Path) -> str:
