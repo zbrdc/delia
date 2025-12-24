@@ -1280,12 +1280,11 @@ def _generate_claude_md(project_name: str, tech_stack: dict[str, Any], project_r
     frameworks = tech_stack.get("frameworks", [])
     test_framework = tech_stack.get("test_framework", "pytest" if lang == "Python" else "Jest")
     pkg_manager = tech_stack.get("package_manager", "uv" if lang == "Python" else "npm")
-    is_async = tech_stack.get("is_async", False)
 
     # Build framework list
     framework_str = ", ".join(frameworks) if frameworks else "Standard library"
 
-    # Generate test command
+    # Generate commands
     if lang == "Python":
         test_cmd = "uv run pytest" if pkg_manager == "uv" else "pytest"
         lint_cmd = "ruff check" if pkg_manager == "uv" else "ruff check"
@@ -1296,80 +1295,14 @@ def _generate_claude_md(project_name: str, tech_stack: dict[str, Any], project_r
     # Build the CLAUDE.md content
     content = f'''# {project_name} Development Instructions
 
-This file provides guidance to AI coding assistants when working with code in this repository.
-
----
-
-## Delia Framework: Playbook-Controlled Learning
-
-Delia manages project-specific playbooks that provide learned strategies, patterns, and guidance.
-Instead of reading static profile files, query Delia for dynamic, feedback-refined guidance.
-
-### Getting Playbook Guidance
-
-**Before starting a task**, query Delia for relevant playbook bullets:
-
-```python
-# Get task-specific guidance
-get_playbook(task_type="coding")  # or: testing, architecture, debugging, project
-
-# Get project context (tech stack, patterns, conventions)
-get_project_context()
-```
-
-The playbooks contain strategic bullets with:
-- **Learned lessons** from past tasks
-- **Project-specific patterns** (detected from codebase analysis via `delia index --summarize`)
-- **Utility scores** - bullets that helped more rank higher
-
-### Applying Guidance
-
-Use the bullet content to guide your work. Each bullet has an ID for feedback:
-
-```json
-{{
-  "id": "strat-a1b2c3d4",
-  "content": "This project uses async/await patterns. Prefer async def for I/O operations.",
-  "utility_score": 0.85
-}}
-```
-
-### Closing the Learning Loop
-
-**After completing a task**, report whether the guidance helped:
-
-```python
-# If the bullet helped complete the task successfully
-report_feedback(bullet_id="strat-a1b2c3d4", task_type="coding", helpful=True)
-
-# If the bullet was misleading or irrelevant
-report_feedback(bullet_id="strat-a1b2c3d4", task_type="coding", helpful=False)
-```
-
-This feedback updates bullet utility scores, improving future recommendations.
-
-### Task Type Mapping
-
-| Task Type | Keywords | Playbook |
-|-----------|----------|----------|
-| coding | implement, add, create, write | `coding` |
-| testing | test, {test_framework.lower() if test_framework else "test"}, coverage, assert | `testing` |
-| architecture | design, ADR, refactor, pattern | `architecture` |
-| debugging | error, bug, fix, stack trace | `debugging` |
-| project | general project context | `project` |
-
----
+This file provides guidance for AI coding assistants working in this repository.
 
 ## Project Overview
-
-**Project:** {project_name}
-**Language:** {lang}
-**Frameworks:** {framework_str}
-
----
+- **Language:** {lang}
+- **Frameworks:** {framework_str}
+- **Primary Tooling:** {pkg_manager}
 
 ## Build & Development Commands
-
 ```bash
 # Install dependencies
 {pkg_manager} {"sync" if pkg_manager == "uv" else "install"}
@@ -1381,121 +1314,21 @@ This feedback updates bullet utility scores, improving future recommendations.
 {lint_cmd}
 ```
 
----
+## Repository Patterns & Rules
+- **Search First**: Before creating new code, search the codebase for similar patterns (DRY).
+- **Type Safety**: {"No 'any' types, use Zod for validation" if lang == "TypeScript" else "Use type hints and Pydantic models where applicable"}.
+- **Checkpoints**: Use available semantic tools to validate understanding before making modifications.
+- **Atomic Commits**: Use descriptive commit messages: `type(scope): description`.
 
-## INLINED CRITICAL RULES
-
-These rules are mandatory for all work in this project:
-
-### From core.md - Universal Rules
-```
-ALWAYS:
-- Search codebase for similar patterns before creating new code (DRY)
-- Check existing utilities before creating new ones
-- Run tests before committing
-- Complete Integration: No placeholders, remove old code
-- Type safety: {"No TypeScript 'any', use Zod validation" if lang == "TypeScript" else "Use type hints and Pydantic models"}
-```
-
-### From coding.md - Before Writing Code
-```
-PRE-IMPLEMENTATION CHECKLIST (Cannot skip):
-[] Query Delia playbook for guidance
-[] Search codebase for similar patterns (DRY)
-[] Check existing utilities before creating new ones
-[] Verify function signatures match project style
-[] Run tests before committing
-```
-
-### From git.md - Git Operations
-```
-BRANCH DECISION:
-- Multi-file changes? -> Create branch: feature/, fix/, refactor/
-- Single-file trivial fix? -> Commit directly to main
-- Experimental? -> Always branch
-
-COMMIT FORMAT:
-type(scope): description
-Examples: feat(core):, fix(api):, refactor(utils):
-
-NEVER:
-- Force-push to main
-- Skip tests before push
-- Leave branches hanging
-```
-
-### From debugging.md - Fixing Issues
-```
-DEBUG ORDER:
-1. Error stack trace -> exact file/line
-2. Recent commits -> what changed?
-3. Test output -> which test failing?
-4. Logs -> structured log events
-
-FIX STRATEGY:
-- Small bug (<10 lines): Direct to main
-- Complex bug (>10 lines): Create fix/ branch
-- ALWAYS add regression test
-```
-
----
-
-## Anti-Patterns (NEVER DO)
-
-```
-Code:
-- Placeholder delegations -> Actually extract and integrate
-- Duplicate state (old + new module) -> Remove old, use new
-- {"TypeScript 'any'" if lang == "TypeScript" else "Untyped functions"} -> Proper types{"" if lang == "TypeScript" else " and type hints"}
-- Create abstractions for one-time use -> Keep it simple
-
-Process:
-- Commit without running tests -> NEVER
-- Force-push to main -> NEVER
-- Leave dead code "just in case" -> DELETE it
-- Skip playbook guidance -> ALWAYS query Delia
-```
-
----
-
-## Validation Checklist (Before Marking Complete)
-
-```
-[] Playbook bullets queried and applied (get_playbook)
-[] Feedback reported for useful bullets (report_feedback)
-[] Code passes: {lint_cmd}
-[] Tests pass: {test_cmd}
-[] No placeholder delegations
-[] Old code removed if extracting
-[] Tests updated to match new implementation
-```
-
----
-
-**All projects use Delia for dynamic playbook guidance.**
+## Validation Checklist
+- [ ] Code passes `{lint_cmd}`
+- [ ] Tests pass `{test_cmd}`
+- [ ] No placeholder implementations or temporary code left behind
+- [ ] Documentation updated if public interfaces changed
 '''
-
-    # Add async-specific content if detected
-    if is_async and lang == "Python":
-        async_section = '''
-## Async Patterns
-
-This project uses async/await. Follow these patterns:
-
-```python
-# DO: Use async def for I/O operations
-async def fetch_data(url: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        return response.json()
-
-# DO: Use asyncio.gather for parallel operations
-results = await asyncio.gather(task1(), task2(), task3())
-```
-'''
-        content = content.replace("---\n\n**All projects", f"---\n{async_section}\n---\n\n**All projects")
 
     return content
+
 
 
 @app.command()

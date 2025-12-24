@@ -1217,6 +1217,125 @@ def register_tool_handlers(mcp: FastMCP):
         }, indent=2)
 
     @mcp.tool()
+    async def snapshot_context(
+        task_summary: str,
+        pending_items: str,
+        key_decisions: str | None = None,
+        files_modified: str | None = None,
+        next_steps: str | None = None,
+        path: str | None = None,
+    ) -> str:
+        """
+        Capture current task state for continuation in a new conversation.
+
+        Use this tool when a task is too large for the current context window,
+        or when you need to preserve state before the user starts a new session.
+        This creates a persistent memory file that future agents can read.
+
+        Args:
+            task_summary: Brief description of the overall task and current progress
+            pending_items: JSON array of remaining work items (e.g., '["Fix tests", "Update docs"]')
+            key_decisions: Optional JSON object of important decisions made (e.g., '{"auth": "JWT over sessions"}')
+            files_modified: Optional JSON array of files changed so far
+            next_steps: Optional guidance for the next agent on how to proceed
+            path: Optional project path (defaults to current project)
+
+        Returns:
+            Confirmation with path to the snapshot file
+
+        Example:
+            snapshot_context(
+                task_summary="Implementing user authentication - 60% complete",
+                pending_items='["Add password reset", "Write integration tests"]',
+                key_decisions='{"auth_method": "JWT", "token_expiry": "24h"}',
+                files_modified='["src/auth.py", "src/models/user.py"]',
+                next_steps="Start with password reset flow. Test fixtures are in tests/conftest.py"
+            )
+        """
+        from datetime import datetime
+        from ..playbook import get_playbook_manager
+
+        pm = get_playbook_manager()
+        if path:
+            project_path = Path(path).resolve()
+        elif pm.playbook_dir.exists():
+            project_path = pm.playbook_dir.parent.parent
+        else:
+            project_path = Path.cwd()
+
+        memories_dir = project_path / ".delia" / "memories"
+        memories_dir.mkdir(parents=True, exist_ok=True)
+
+        # Parse JSON inputs
+        try:
+            pending_list = json.loads(pending_items) if pending_items else []
+        except json.JSONDecodeError:
+            pending_list = [pending_items]  # Treat as single item if not valid JSON
+
+        try:
+            decisions_dict = json.loads(key_decisions) if key_decisions else {}
+        except json.JSONDecodeError:
+            decisions_dict = {"note": key_decisions} if key_decisions else {}
+
+        try:
+            files_list = json.loads(files_modified) if files_modified else []
+        except json.JSONDecodeError:
+            files_list = [files_modified] if files_modified else []
+
+        # Build snapshot content
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            "# Task Snapshot",
+            "",
+            f"*Captured: {timestamp}*",
+            "",
+            "## Summary",
+            task_summary,
+            "",
+            "## Pending Items",
+        ]
+
+        for item in pending_list:
+            lines.append(f"- [ ] {item}")
+        lines.append("")
+
+        if decisions_dict:
+            lines.append("## Key Decisions")
+            for key, value in decisions_dict.items():
+                lines.append(f"- **{key}**: {value}")
+            lines.append("")
+
+        if files_list:
+            lines.append("## Files Modified")
+            for f in files_list:
+                lines.append(f"- `{f}`")
+            lines.append("")
+
+        if next_steps:
+            lines.append("## Next Steps")
+            lines.append(next_steps)
+            lines.append("")
+
+        lines.extend([
+            "---",
+            "*To continue: Read this file at the start of your next session.*",
+        ])
+
+        content = "\n".join(lines)
+        snapshot_path = memories_dir / "task_snapshot.md"
+        snapshot_path.write_text(content)
+
+        return json.dumps({
+            "status": "snapshot_saved",
+            "path": str(snapshot_path.relative_to(project_path)),
+            "message": (
+                "Task state captured. Suggest user start a new conversation. "
+                "The next agent should call read_memory(name='task_snapshot') to resume."
+            ),
+            "pending_count": len(pending_list),
+        }, indent=2)
+
+    @mcp.tool()
     async def read_initial_instructions() -> str:
         """
         Get the Delia Framework instructions manual.
@@ -1545,8 +1664,9 @@ def register_tool_handlers(mcp: FastMCP):
         """
         from .registry import TOOL_CATEGORIES
 
-        # Get all MCP tools from the server
-        tools_info = mcp.list_tools()
+        # Get all MCP tools from the server (async, returns dict of name -> Tool)
+        tools_dict = await mcp.get_tools()
+        tools_info = list(tools_dict.values())
 
         # Group by category (for now, we'll categorize based on name patterns)
         categorized: dict[str, list[dict]] = {cat: [] for cat in TOOL_CATEGORIES}
@@ -1568,7 +1688,7 @@ def register_tool_handlers(mcp: FastMCP):
 
         for tool in tools_info:
             tool_name = tool.name if hasattr(tool, 'name') else str(tool)
-            tool_desc = tool.description if hasattr(tool, 'description') else ""
+            tool_desc = getattr(tool, 'description', None) or ""
 
             assigned = False
             for cat, patterns in category_patterns.items():
@@ -1625,16 +1745,15 @@ def register_tool_handlers(mcp: FastMCP):
         Returns:
             Full tool description with parameters and examples
         """
-        tools_info = mcp.list_tools()
+        tools_dict = await mcp.get_tools()
 
-        for tool in tools_info:
-            tool_name = tool.name if hasattr(tool, 'name') else str(tool)
-            if tool_name == name:
-                return json.dumps({
-                    "name": tool_name,
-                    "description": tool.description if hasattr(tool, 'description') else "",
-                    "parameters": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
-                }, indent=2)
+        if name in tools_dict:
+            tool = tools_dict[name]
+            return json.dumps({
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.parameters if hasattr(tool, 'parameters') else {},
+            }, indent=2)
 
         return json.dumps({"error": f"Tool not found: {name}"})
 
