@@ -52,7 +52,8 @@ class DeliaLSPClient:
                 log.info("lsp_server_starting", language=language_id, cmd=cmd)
                 await client.start_io(*cmd)
                 
-                # Initialize
+                # Initialize with minimal capabilities to avoid slow workspace analysis
+                # (Full capabilities like workspace_folders=True cause Pyright to hang)
                 params = lsp.InitializeParams(
                     root_uri=self.root_path.as_uri(),
                     capabilities=lsp.ClientCapabilities(),
@@ -60,7 +61,11 @@ class DeliaLSPClient:
                 )
                 await client.initialize_async(params)
                 client.initialized(lsp.InitializedParams())
-                
+
+                # Give the language server time to start indexing
+                # This is especially important for workspace/symbol queries
+                await asyncio.sleep(1.0)
+
                 self.clients[language_id] = client
                 log.info("lsp_server_ready", language=language_id)
                 return client
@@ -152,7 +157,10 @@ class DeliaLSPClient:
         if not abs_path.exists():
             return []
 
-        # Open the document first (required by LSP)
+        # Ensure workspace is indexed for cross-file references (Pyright issue #10086)
+        await self._ensure_workspace_indexed(client, lang_id)
+        
+        # Open the target document
         await self._open_document(client, abs_path, lang_id)
 
         params = lsp.ReferenceParams(
@@ -230,6 +238,80 @@ class DeliaLSPClient:
             log.error("lsp_symbols_failed", error=str(e))
             return {"error": f"LSP error: {str(e)}"}
 
+    async def workspace_symbol(self, query: str, language_id: str = "python") -> List[dict] | dict:
+        """Search for symbols across the entire workspace.
+
+        Uses LSP workspace/symbol request which is much faster than
+        file-by-file document symbol scanning.
+
+        Args:
+            query: Symbol name pattern to search for
+            language_id: Language server to use (default: python)
+
+        Returns:
+            List of matching symbols with name, kind, location, and container info.
+            Returns a dict with 'error' key on failure.
+        """
+        client = await self.get_client(language_id)
+        if not client:
+            return {"error": f"No language server for '{language_id}'. Install pyright: uv add pyright"}
+
+        params = lsp.WorkspaceSymbolParams(query=query)
+
+        try:
+            result = await client.workspace_symbol_async(params)
+            return self._format_workspace_symbols(result)
+        except Exception as e:
+            log.error("lsp_workspace_symbol_failed", error=str(e), query=query)
+            return {"error": f"LSP error: {str(e)}"}
+
+    def _format_workspace_symbols(self, result: Any) -> List[dict]:
+        """Format workspace symbol results into a consistent structure."""
+        if not result:
+            return []
+
+        symbols = []
+        for item in result:
+            # Handle both SymbolInformation and WorkspaceSymbol
+            if hasattr(item, "location"):
+                # SymbolInformation format
+                loc = item.location
+                uri = loc.uri if hasattr(loc, "uri") else str(loc)
+                path = uri.replace("file://", "") if uri.startswith("file://") else uri
+                if os.name == "nt" and path.startswith("/"):
+                    path = path[1:]
+                # Make path relative to root
+                try:
+                    path = str(Path(path).relative_to(self.root_path))
+                except ValueError:
+                    pass  # Keep absolute if not under root
+
+                sym = {
+                    "name": item.name,
+                    "kind": self._symbol_kind_name(item.kind),
+                    "file": path,
+                    "range": {
+                        "start_line": loc.range.start.line + 1,
+                        "start_char": loc.range.start.character,
+                        "end_line": loc.range.end.line + 1,
+                        "end_char": loc.range.end.character,
+                    },
+                }
+                if hasattr(item, "container_name") and item.container_name:
+                    sym["container"] = item.container_name
+                symbols.append(sym)
+            elif hasattr(item, "name"):
+                # WorkspaceSymbol format (lazy resolution)
+                sym = {
+                    "name": item.name,
+                    "kind": self._symbol_kind_name(item.kind) if hasattr(item, "kind") else "unknown",
+                }
+                if hasattr(item, "container_name") and item.container_name:
+                    sym["container"] = item.container_name
+                symbols.append(sym)
+
+        return symbols
+
     async def _open_document(self, client: LanguageClient, abs_path: Path, lang_id: str) -> None:
         """Open a document in the language server if not already open."""
         uri = abs_path.as_uri()
@@ -251,10 +333,71 @@ class DeliaLSPClient:
             )
             client.text_document_did_open(params)
             self._opened_docs.add(uri)
-            # Give pyright a moment to process the file
-            await asyncio.sleep(0.1)
+            # Minimal delay - Pyright queues these internally
+            await asyncio.sleep(0.01)
         except Exception as e:
             log.warning("lsp_open_failed", path=str(abs_path), error=str(e))
+
+    async def _ensure_workspace_indexed(self, client: LanguageClient, lang_id: str) -> None:
+        """Open all workspace files to ensure Pyright indexes them for references.
+        
+        This is a workaround for Pyright issue #10086 where find_references only
+        returns results from files that have been explicitly opened with didOpen.
+        """
+        if not hasattr(self, '_workspace_indexed'):
+            self._workspace_indexed: set[str] = set()
+        
+        if lang_id in self._workspace_indexed:
+            return
+        
+        # Find all files of this language type in the workspace
+        extensions = {
+            'python': ['.py'],
+            'typescript': ['.ts', '.tsx'],
+            'javascript': ['.js', '.jsx'],
+            'rust': ['.rs'],
+            'go': ['.go'],
+        }
+        
+        exts = extensions.get(lang_id, [])
+        if not exts:
+            return
+        
+        # Collect files, limiting to src/ and tests/ to avoid opening too many
+        files_to_open: list[Path] = []
+        search_dirs = ['src', 'tests', 'lib', 'app']
+        
+        for search_dir in search_dirs:
+            search_path = self.root_path / search_dir
+            if search_path.exists():
+                for ext in exts:
+                    files_to_open.extend(search_path.rglob(f'*{ext}'))
+        
+        # Limit to reasonable number of files
+        MAX_FILES = 200
+        if len(files_to_open) > MAX_FILES:
+            log.warning("lsp_workspace_too_large", 
+                       count=len(files_to_open), 
+                       limit=MAX_FILES,
+                       msg="Limiting workspace indexing to first 200 files")
+            files_to_open = files_to_open[:MAX_FILES]
+        
+        log.info("lsp_workspace_indexing", language=lang_id, file_count=len(files_to_open))
+        
+        # Open files in batches - Pyright processes these quickly
+        BATCH_SIZE = 50
+        for i in range(0, len(files_to_open), BATCH_SIZE):
+            batch = files_to_open[i:i + BATCH_SIZE]
+            for file_path in batch:
+                await self._open_document(client, file_path, lang_id)
+            # Brief pause between batches
+            await asyncio.sleep(0.1)
+        
+        self._workspace_indexed.add(lang_id)
+        log.info("lsp_workspace_indexed", language=lang_id, file_count=len(files_to_open))
+        
+        # Give Pyright time to process all opened files before querying
+        await asyncio.sleep(1.0)
 
     async def rename_symbol(
         self, file_path: str, line: int, character: int, new_name: str
@@ -478,21 +621,34 @@ class DeliaLSPClient:
         locations = []
         if isinstance(result, lsp.Location):
             locations = [result]
-        elif isinstance(result, list):
-            locations = result
+        elif isinstance(result, (list, tuple)):
+            locations = list(result)
 
         formatted = []
         for loc in locations:
+            uri = None
+            range_obj = None
+            
             if isinstance(loc, lsp.Location):
                 uri = loc.uri
+                range_obj = loc.range
+            elif isinstance(loc, lsp.LocationLink):
+                uri = loc.target_uri
+                range_obj = loc.target_range
+            elif hasattr(loc, 'uri') and hasattr(loc, 'range'):
+                # Generic fallback for Location-like objects
+                uri = loc.uri
+                range_obj = loc.range
+            
+            if uri and range_obj:
                 path = uri.replace("file://", "")
-                if os.name == 'NT' and path.startswith('/'):
+                if os.name == 'nt' and path.startswith('/'):
                     path = path[1:]
                 
                 formatted.append({
                     "path": os.path.relpath(path, self.root_path),
-                    "line": loc.range.start.line + 1,
-                    "character": loc.range.start.character
+                    "line": range_obj.start.line + 1,
+                    "character": range_obj.start.character
                 })
         return formatted
 

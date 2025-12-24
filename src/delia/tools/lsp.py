@@ -23,6 +23,155 @@ from .. import lsp_client
 log = structlog.get_logger()
 
 
+def parse_name_path(name: str) -> tuple[str, list[str]]:
+    """Parse a name path like 'Foo.bar.baz' into (leaf_name, container_path).
+
+    Examples:
+        'Foo' -> ('Foo', [])
+        'Foo.bar' -> ('bar', ['Foo'])
+        'Foo.bar.baz' -> ('baz', ['Foo', 'bar'])
+        'module::Class::method' -> ('method', ['module', 'Class'])  # Rust style
+
+    Returns:
+        Tuple of (leaf symbol name, list of container names from outermost to innermost)
+    """
+    # Handle Rust-style :: separator
+    if "::" in name:
+        parts = name.split("::")
+    else:
+        parts = name.split(".")
+
+    # Filter out empty parts
+    parts = [p.strip() for p in parts if p.strip()]
+
+    if len(parts) == 0:
+        return ("", [])
+    elif len(parts) == 1:
+        return (parts[0], [])
+    else:
+        return (parts[-1], parts[:-1])
+
+
+def find_symbol_end(lines: list[str], start_idx: int) -> int:
+    """Find the end of a Python symbol (function/class) by indentation.
+
+    Looks for the next line at the same or lower indentation level,
+    or end of file.
+
+    Args:
+        lines: All lines in the file
+        start_idx: 0-indexed line number of the symbol definition
+
+    Returns:
+        0-indexed line number of the last line of the symbol
+    """
+    if start_idx >= len(lines):
+        return start_idx
+
+    # Get the indentation of the definition line
+    first_line = lines[start_idx]
+    base_indent = len(first_line) - len(first_line.lstrip())
+
+    # Scan forward to find end
+    end_idx = start_idx
+    for i in range(start_idx + 1, len(lines)):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Skip empty lines and comments
+        if not stripped or stripped.startswith("#"):
+            end_idx = i
+            continue
+
+        # Check indentation
+        current_indent = len(line) - len(line.lstrip())
+        if current_indent <= base_indent:
+            # Found a line at same or lower indent - symbol ended
+            break
+        end_idx = i
+
+    return end_idx
+
+
+def read_symbol_body(file_path: Path, start_line: int, end_line: int | None = None, max_lines: int = 50) -> str:
+    """Read the source code body of a symbol from a file.
+
+    Args:
+        file_path: Absolute path to the file
+        start_line: Starting line number (1-indexed)
+        end_line: Ending line number (1-indexed), or None to auto-detect for Python
+        max_lines: Maximum lines to return (truncate if larger)
+
+    Returns:
+        The source code of the symbol, possibly truncated
+    """
+    try:
+        content = file_path.read_text()
+        lines = content.splitlines()
+
+        # Convert to 0-indexed
+        start_idx = max(0, start_line - 1)
+
+        # Auto-detect end for Python if not provided or same as start
+        if end_line is None or end_line == start_line:
+            end_idx = find_symbol_end(lines, start_idx) + 1
+        else:
+            end_idx = min(len(lines), end_line)
+
+        # Extract the body lines
+        body_lines = lines[start_idx:end_idx]
+
+        # Truncate if too long
+        if len(body_lines) > max_lines:
+            body_lines = body_lines[:max_lines]
+            remaining = end_idx - start_idx - max_lines
+            body_lines.append(f"    # ... ({remaining} more lines)")
+
+        return "\n".join(body_lines)
+    except Exception:
+        return "# Error reading file"
+
+
+def matches_container_path(symbol: dict, container_path: list[str]) -> bool:
+    """Check if a symbol's container matches the expected path.
+
+    Args:
+        symbol: Symbol dict with optional 'container' key
+        container_path: List of expected container names, outermost first
+
+    Returns:
+        True if the symbol is contained within the specified path
+    """
+    if not container_path:
+        return True
+
+    container = symbol.get("container", "")
+    if not container:
+        return False
+
+    # The container name from workspace/symbol is typically "OuterClass.InnerClass"
+    # or just "ClassName" for methods
+    container_parts = container.replace("::", ".").split(".")
+
+    # Check if the expected path matches the end of the container chain
+    # e.g., for Foo.bar searching 'bar', container would be 'Foo'
+    if len(container_path) == 1:
+        # Simple case: just check if any part matches
+        return container_path[0] in container_parts or container_path[0] == container
+
+    # For deeper paths, check if all parts are present in order
+    # The container path should be a suffix of container_parts
+    if len(container_path) > len(container_parts):
+        return False
+
+    # Check if container_path matches the container_parts
+    for expected in container_path:
+        if expected not in container_parts:
+            return False
+
+    return True
+
+
 def register_lsp_tools(mcp: FastMCP):
     """Register LSP tools with FastMCP."""
 
@@ -32,6 +181,7 @@ def register_lsp_tools(mcp: FastMCP):
     mcp.tool(name="lsp_hover")(lsp_hover)
     mcp.tool(name="lsp_get_symbols")(lsp_get_symbols)
     mcp.tool(name="lsp_find_symbol")(lsp_find_symbol)
+    mcp.tool(name="lsp_find_referencing_symbols")(lsp_find_referencing_symbols)
     
     # These have gating, so we wrap them to include the check
     @mcp.tool()
@@ -241,6 +391,10 @@ async def lsp_goto_definition(
     Returns:
         File path and line number where the symbol is defined
     """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+    
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
     
@@ -274,9 +428,13 @@ async def lsp_find_references(
     Returns:
         List of locations where the symbol is used
     """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
-    
+
     results = await client.find_references(path, line, character)
     if not results:
         return "No references found."
@@ -308,6 +466,10 @@ async def lsp_hover(
     Returns:
         Documentation and type info in markdown format
     """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
@@ -336,6 +498,10 @@ async def lsp_get_symbols(
     Returns:
         Hierarchical list of symbols with their types and line ranges
     """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
@@ -446,74 +612,335 @@ async def lsp_find_symbol_impl(
     name: str,
     path: str | None = None,
     kind: str | None = None,
+    kinds: List[str] | None = None,
+    depth: int | None = None,
+    include_body: bool = False,
     *,
     workspace: Workspace | None = None,
 ) -> str:
+    """Find symbols by name with support for name path syntax.
+
+    Name path syntax allows searching for nested symbols:
+        - 'Foo' - find class/function named Foo
+        - 'Foo.bar' - find 'bar' inside 'Foo' (e.g., method bar in class Foo)
+        - 'Foo.bar.baz' - find 'baz' inside 'Foo.bar'
+        - 'module::Class::method' - Rust-style path syntax
+
+    Args:
+        name: Symbol name or path (e.g., 'MyClass.my_method')
+        path: Optional file path to search within
+        kind: Optional single kind filter ('function', 'class', 'method', etc.)
+        kinds: Optional list of kinds to include (e.g., ['function', 'method'])
+        depth: Optional depth filter (0=top-level, 1=nested once, etc.)
+        include_body: If True, include the source code body of each symbol
+        workspace: Workspace context
+
+    Returns:
+        Formatted string with matching symbols
+    """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
+
+    # Parse name path to get leaf name and container path
+    leaf_name, container_path = parse_name_path(name)
+    if not leaf_name:
+        return "Invalid symbol name."
+
+    # Build kind filter set (combine kind and kinds)
+    kind_filter: set[str] | None = None
+    if kind or kinds:
+        kind_filter = set()
+        if kind:
+            kind_filter.add(kind.lower())
+        if kinds:
+            kind_filter.update(k.lower() for k in kinds)
+
+    def matches_filters(sym: dict) -> bool:
+        """Check if a symbol passes all filters."""
+        # Kind filter
+        if kind_filter:
+            sym_kind = sym.get("kind", "").lower()
+            if sym_kind not in kind_filter:
+                return False
+
+        # Depth filter (only available from document_symbols)
+        if depth is not None:
+            sym_depth = sym.get("depth")
+            if sym_depth is not None and sym_depth != depth:
+                return False
+
+        # Container path filter
+        if container_path and not matches_container_path(sym, container_path):
+            return False
+
+        return True
 
     matches = []
     last_error = None
 
     if path:
-        # Search in specific file
+        # Search in specific file using document_symbols
         result = await client.document_symbols(path)
         if isinstance(result, dict) and "error" in result:
             return f"LSP Error: {result['error']}"
+
+        # For document symbols, search with container awareness
         for sym in result:
-            if name.lower() in sym.get("name", "").lower():
-                if kind is None or sym.get("kind", "").lower() == kind.lower():
+            sym_name = sym.get("name", "")
+            if leaf_name.lower() in sym_name.lower():
+                if matches_filters(sym):
                     sym["file"] = path
                     matches.append(sym)
     else:
-        # Search across common source files
-        from pathlib import Path as P
-        code_extensions = { ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs"}
-        src_dirs = ["src", "app", "lib", "."]
+        # Use workspace/symbol for fast project-wide search
+        # Detect primary language from project markers (check python first)
+        lang_id = "python"
+        if (root / "pyproject.toml").exists() or (root / "setup.py").exists():
+            lang_id = "python"
+        elif (root / "Cargo.toml").exists():
+            lang_id = "rust"
+        elif (root / "go.mod").exists():
+            lang_id = "go"
+        elif (root / "package.json").exists():
+            lang_id = "typescript"
 
-        for src_dir in src_dirs:
-            src_path = root / src_dir
-            if not src_path.exists():
-                continue
-            for code_file in src_path.rglob("*"):
-                if code_file.is_file() and code_file.suffix in code_extensions:
-                    rel_path = str(code_file.relative_to(root))
-                    result = await client.document_symbols(rel_path)
-                    # Check for error on first file to give feedback
-                    if isinstance(result, dict) and "error" in result:
-                        last_error = result["error"]
-                        continue
-                    for sym in result:
-                        if name.lower() in sym.get("name", "").lower():
-                            if kind is None or sym.get("kind", "").lower() == kind.lower():
-                                sym["file"] = rel_path
-                                matches.append(sym)
-            if matches:
-                break  # Found matches in first src dir
+        # Search for the leaf symbol name
+        result = await client.workspace_symbol(leaf_name, language_id=lang_id)
+
+        if isinstance(result, dict) and "error" in result:
+            last_error = result["error"]
+        else:
+            for sym in result:
+                if matches_filters(sym):
+                    matches.append(sym)
 
     if not matches:
         if last_error:
             return f"No symbols matching '{name}' found. LSP Error: {last_error}"
         return f"No symbols matching '{name}' found."
 
+    # When include_body=True, limit to fewer results since bodies are verbose
+    max_results = 5 if include_body else 20
+
     lines = [f"Found {len(matches)} symbol(s) matching '{name}':"]
-    for sym in matches[:20]:  # Limit to 20
+    for sym in matches[:max_results]:
         kind_str = sym.get("kind", "?")
         name_str = sym.get("name", "?")
         file_str = sym.get("file", "?")
-        if "range" in sym:
-            line = sym["range"]["start_line"]
-            lines.append(f"  {kind_str}: {name_str} in {file_str}:{line}")
-        else:
-            lines.append(f"  {kind_str}: {name_str} in {file_str}")
+        container = sym.get("container", "")
+        container_str = f" ({container})" if container else ""
 
-    if len(matches) > 20:
-        lines.append(f"  ... and {len(matches) - 20} more")
+        if "range" in sym:
+            start_line = sym["range"]["start_line"]
+            end_line = sym["range"].get("end_line", start_line)
+            lines.append(f"  {kind_str}: {name_str}{container_str} in {file_str}:{start_line}")
+
+            # Include body if requested and we have valid range
+            if include_body and file_str != "?":
+                file_path = Path(file_str)
+                if not file_path.is_absolute():
+                    file_path = root / file_path
+
+                # Pass None for end_line if only point location (let read_symbol_body auto-detect)
+                body_end = None if start_line == end_line else end_line
+                body = read_symbol_body(file_path, start_line, body_end)
+                lines.append("  ```")
+                for body_line in body.splitlines():
+                    lines.append(f"  {body_line}")
+                lines.append("  ```")
+        else:
+            lines.append(f"  {kind_str}: {name_str}{container_str} in {file_str}")
+
+    if len(matches) > max_results:
+        lines.append(f"  ... and {len(matches) - max_results} more")
 
     return "\n".join(lines)
 
 # Expose lsp_find_symbol as public function
 lsp_find_symbol = lsp_find_symbol_impl
+
+
+async def lsp_find_referencing_symbols_impl(
+    path: str,
+    line: int,
+    character: int,
+    kinds: List[str] | None = None,
+    include_body: bool = False,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Find symbols that reference the symbol at the given position.
+
+    Unlike lsp_find_references which returns raw locations, this returns
+    the containing symbols (functions, classes, methods) that contain
+    each reference, providing better context for understanding usage.
+
+    Args:
+        path: Path to the file containing the symbol
+        line: Line number (1-indexed)
+        character: Character position (0-indexed)
+        kinds: Optional filter for containing symbol kinds (e.g., ['function', 'method'])
+        include_body: If True, include source code of containing symbols
+        workspace: Workspace context
+
+    Returns:
+        Formatted string with symbols that reference the target
+    """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+    
+    root = workspace.root if workspace else Path.cwd()
+    client = lsp_client.get_lsp_client(root)
+
+    # Build kind filter set
+    kind_filter: set[str] | None = None
+    if kinds:
+        kind_filter = {k.lower() for k in kinds}
+
+    # Get all references to the symbol
+    references = await client.find_references(path, line, character)
+    if not references:
+        return "No references found."
+
+    # Group references by file for efficient document_symbols lookup
+    refs_by_file: dict[str, list[dict]] = {}
+    for ref in references:
+        ref_path = ref.get("path", "")
+        if ref_path not in refs_by_file:
+            refs_by_file[ref_path] = []
+        refs_by_file[ref_path].append(ref)
+
+    # Find containing symbols for each reference
+    containing_symbols: list[dict] = []
+    seen_symbols: set[str] = set()  # Dedupe by (file, name, line)
+
+    for file_path, file_refs in refs_by_file.items():
+        # Get all symbols in this file
+        doc_symbols = await client.document_symbols(file_path)
+        if isinstance(doc_symbols, dict) and "error" in doc_symbols:
+            continue
+
+        for ref in file_refs:
+            ref_line = ref.get("line", 0)
+
+            # Find the smallest symbol that contains this reference
+            best_match: dict | None = None
+            best_size = float("inf")
+
+            for sym in doc_symbols:
+                sym_name = sym.get("name", "")
+                sym_kind = sym.get("kind", "").lower()
+
+                # Apply kind filter
+                if kind_filter and sym_kind not in kind_filter:
+                    continue
+
+                # Check if symbol contains the reference line
+                # For symbols with location (not range), check if ref is after the symbol start
+                if "location" in sym:
+                    sym_line = sym["location"].get("line", 0)
+                    # Approximate: symbol contains ref if ref is after symbol start
+                    # This is a heuristic since we don't have end line
+                    if ref_line >= sym_line:
+                        # Prefer symbols closer to the reference
+                        distance = ref_line - sym_line
+                        if distance < best_size:
+                            best_size = distance
+                            best_match = sym
+                elif "range" in sym:
+                    start = sym["range"].get("start_line", 0)
+                    end = sym["range"].get("end_line", start)
+                    if start <= ref_line <= end:
+                        size = end - start
+                        if size < best_size:
+                            best_size = size
+                            best_match = sym
+
+            if best_match:
+                # Create unique key for deduplication
+                sym_key = (
+                    file_path,
+                    best_match.get("name", ""),
+                    best_match.get("location", {}).get("line")
+                    or best_match.get("range", {}).get("start_line", 0),
+                )
+                if sym_key not in seen_symbols:
+                    seen_symbols.add(sym_key)
+                    best_match["file"] = file_path
+                    best_match["ref_count"] = 1
+                    containing_symbols.append(best_match)
+                else:
+                    # Increment ref count for existing symbol
+                    for sym in containing_symbols:
+                        if (
+                            sym.get("file") == file_path
+                            and sym.get("name") == best_match.get("name")
+                        ):
+                            sym["ref_count"] = sym.get("ref_count", 1) + 1
+                            break
+
+    if not containing_symbols:
+        return "No containing symbols found for references."
+
+    # Sort by ref_count descending
+    containing_symbols.sort(key=lambda s: s.get("ref_count", 1), reverse=True)
+
+    # Format output
+    max_results = 5 if include_body else 15
+    lines = [f"Found {len(containing_symbols)} symbol(s) referencing the target:"]
+
+    for sym in containing_symbols[:max_results]:
+        kind_str = sym.get("kind", "?")
+        name_str = sym.get("name", "?")
+        file_str = sym.get("file", "?")
+        ref_count = sym.get("ref_count", 1)
+        ref_info = f" ({ref_count} refs)" if ref_count > 1 else ""
+
+        # Get line number
+        if "location" in sym:
+            sym_line = sym["location"].get("line", "?")
+        elif "range" in sym:
+            sym_line = sym["range"].get("start_line", "?")
+        else:
+            sym_line = "?"
+
+        lines.append(f"  {kind_str}: {name_str}{ref_info} in {file_str}:{sym_line}")
+
+        # Include body if requested
+        if include_body and file_str != "?":
+            file_path_obj = Path(file_str)
+            if not file_path_obj.is_absolute():
+                file_path_obj = root / file_path_obj
+
+            if "location" in sym:
+                start = sym["location"].get("line", 1)
+                body = read_symbol_body(file_path_obj, start, None)
+            elif "range" in sym:
+                start = sym["range"].get("start_line", 1)
+                end = sym["range"].get("end_line", start)
+                body_end = None if start == end else end
+                body = read_symbol_body(file_path_obj, start, body_end)
+            else:
+                body = "# Cannot read body"
+
+            lines.append("  ```")
+            for body_line in body.splitlines():
+                lines.append(f"  {body_line}")
+            lines.append("  ```")
+
+    if len(containing_symbols) > max_results:
+        lines.append(f"  ... and {len(containing_symbols) - max_results} more")
+
+    return "\n".join(lines)
+
+
+# Expose as public function
+lsp_find_referencing_symbols = lsp_find_referencing_symbols_impl
 
 
 async def lsp_replace_symbol_body_impl(
@@ -523,6 +950,10 @@ async def lsp_replace_symbol_body_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
@@ -575,6 +1006,10 @@ async def lsp_insert_before_symbol_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 
@@ -619,6 +1054,9 @@ async def lsp_insert_after_symbol_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
     root = workspace.root if workspace else Path.cwd()
     client = lsp_client.get_lsp_client(root)
 

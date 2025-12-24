@@ -89,3 +89,20 @@ async def test_lsp_tools_with_workspace():
             
             await lsp_goto_definition("test.py", 1, 1, workspace=workspace)
             mock_get_client.assert_called_once_with(Path(tmpdir))
+
+
+@pytest.mark.asyncio
+async def test_lsp_tools_with_dict_workspace():
+    """Test LSP tools handle dict workspace (MCP compatibility)."""
+    from delia.tools.lsp import lsp_goto_definition
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # MCP serializes Workspace to dict - test that conversion works
+        workspace_dict = {"root": tmpdir}
+        
+        with patch("delia.lsp_client.get_lsp_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_get_client.return_value = mock_client
+            mock_client.goto_definition.return_value = []
+            
+            await lsp_goto_definition("test.py", 1, 1, workspace=workspace_dict)
+            mock_get_client.assert_called_once_with(Path(tmpdir))

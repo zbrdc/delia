@@ -116,7 +116,12 @@ async def playbook_tool(
             except json.JSONDecodeError as e:
                 return json.dumps({"error": f"Invalid bullets JSON: {e}"})
 
-        playbook_manager.write_playbook(task_type, bullets)
+        # Convert list of strings to PlaybookBullet objects
+        from ..playbook import PlaybookBullet
+        bullet_objects = []
+        for content in bullets:
+            bullet_objects.append(PlaybookBullet(content=content))
+        playbook_manager.save_playbook(task_type, bullet_objects)
         return json.dumps({
             "status": "written",
             "task_type": task_type,
