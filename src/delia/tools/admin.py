@@ -467,9 +467,18 @@ async def switch_backend_impl(backend_id: str) -> str:
 
 async def get_model_info_impl(model_name: str) -> str:
     """Get detailed information about a specific model."""
-    from ..mcp_server import get_model_info
-    info = get_model_info(model_name)
-    return json.dumps(info, indent=2)
+    from ..config import parse_model_name, detect_model_tier
+    info = parse_model_name(model_name)
+    tier = detect_model_tier(model_name)
+    return json.dumps({
+        "model": model_name,
+        "tier": tier,
+        "params_b": info.params_b,
+        "family": info.family,
+        "is_coder": info.is_coder,
+        "is_moe": info.is_moe,
+        "is_instruct": info.is_instruct,
+    }, indent=2)
 
 
 async def init_project(
@@ -1100,10 +1109,7 @@ def register_admin_tools(mcp: FastMCP):
         """List all configured models across all GPU backends."""
         return await models_impl()
 
-    @mcp.tool()
-    async def switch_backend(backend_id: str) -> str:
-        """Switch the active LLM backend."""
-        return await switch_backend_impl(backend_id)
+    # switch_backend removed - use admin(action="switch_model") instead
 
     @mcp.tool()
     async def get_model_info_tool(model_name: str) -> str:

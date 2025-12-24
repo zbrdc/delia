@@ -34,43 +34,7 @@ def register_mcp_management_tools(mcp: FastMCP):
         name: str | None = None,
         env: str | None = None,
     ) -> str:
-        """
-        Manage external MCP servers for tool passthrough.
-
-        This enables Delia to use tools from any MCP server.
-        Configure servers in settings.json under "mcp_servers" array.
-
-        WHEN TO USE:
-        - Check status of connected MCP servers
-        - Start/stop MCP servers dynamically
-        - Add/remove MCP server configurations
-        - List available tools from external servers
-
-        Args:
-            action: Action to perform:
-                - "status" - Show all configured servers and their status (default)
-                - "start" - Start a specific server (requires server_id)
-                - "stop" - Stop a specific server (requires server_id)
-                - "start_all" - Start all enabled servers
-                - "stop_all" - Stop all running servers
-                - "add" - Add a new server configuration (requires command, name optional)
-                - "remove" - Remove a server configuration (requires server_id)
-                - "tools" - List all available tools from running servers
-            server_id: Server ID for start/stop/remove actions
-            command: JSON array of command args for 'add' action (e.g., '["npx", "mcp-server"]')
-            name: Human-readable name for 'add' action
-            env: JSON object of environment variables for 'add' action
-
-        Returns:
-            JSON with action result and server status
-
-        Examples:
-            mcp_servers()  # Show status
-            mcp_servers(action="start_all")  # Start all enabled servers
-            mcp_servers(action="tools")  # List all available tools
-            mcp_servers(action="add", command='["npx", "@anthropic/mcp-server-filesystem", "/home"]', name="Filesystem")
-            mcp_servers(action="start", server_id="filesystem")
-        """
+        """Manage external MCP servers. Actions: status, start, stop, start_all, stop_all, add, remove, tools."""
         if action == "status":
             status = mcp_client_manager.get_status()
             return json.dumps(status, indent=2)

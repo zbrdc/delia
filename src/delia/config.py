@@ -366,6 +366,25 @@ class Config:
     )
 
     # ============================================================
+    # WORKFLOW ENFORCEMENT
+    # ============================================================
+
+    # Enable/disable strict workflow enforcement (auto_context/checkpoints)
+    # Set to False to allow direct tool usage without "paperwork"
+    # Defaults to True for strict framework compliance
+    strict_mode: bool = field(
+        default_factory=lambda: os.getenv("DELIA_STRICT_MODE", "true").lower() in ("true", "1", "yes")
+    )
+
+    # Tool profile: minimal (core only), standard (default), full (all tools)
+    # minimal: ~15 tools - file ops, basic LSP, delegate
+    # standard: ~35 tools - adds framework, git, search
+    # full: ~67 tools - everything including legacy
+    tool_profile: str = field(
+        default_factory=lambda: os.getenv("DELIA_TOOLS", "standard").lower()
+    )
+
+    # ============================================================
     # CONCURRENCY CONTROL
     # ============================================================
 

@@ -29,8 +29,17 @@ from unittest.mock import MagicMock, patch, AsyncMock
 import pytest
 
 
+# Disable enforcement for all tests in this module
 @pytest.fixture(autouse=True)
-def setup_test_environment(tmp_path):
+def disable_enforcement():
+    """Disable Delia Framework enforcement for all tests."""
+    from unittest.mock import patch
+    with patch("delia.tools.handlers_orchestration.check_context_gate", return_value=None):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def setup_test_environment(tmp_path, disable_enforcement):
     """Use a temp directory for test data."""
     os.environ["DELIA_DATA_DIR"] = str(tmp_path)
 
@@ -157,12 +166,13 @@ class TestDryRunFunction:
     async def test_dry_run_returns_json(self):
         """dry_run=True should return JSON with estimation signals."""
         from delia.tools.handlers import delegate_tool_impl as delegate_tool
-    
-        result = await delegate_tool(
-            task="review",
-            content="def hello(): pass",
-            dry_run=True
-        )
+
+        with patch("delia.tools.handlers_orchestration.check_context_gate", return_value=None):
+            result = await delegate_tool(
+                task="review",
+                content="def hello(): pass",
+                dry_run=True
+            )
         
         # Should be valid JSON
         data = json.loads(result)

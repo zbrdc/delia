@@ -95,7 +95,7 @@ class TestBackendConnectionErrors:
 
         # This should not raise an unhandled exception
         try:
-            result = await mcp_server.delegate.fn(
+            result = await mcp_server.delegate(
                 task="quick",
                 content="Test question"
             )
@@ -130,7 +130,7 @@ class TestInvalidInputHandling:
 
         # When no backend is configured, should raise RuntimeError
         with pytest.raises(RuntimeError, match="No backend configured"):
-            await mcp_server.delegate.fn(
+            await mcp_server.delegate(
                 task="summarize",
                 content=""
             )
@@ -142,7 +142,7 @@ class TestInvalidInputHandling:
 
         # When no backend is configured, should raise RuntimeError
         with pytest.raises(RuntimeError, match="No backend configured"):
-            await mcp_server.delegate.fn(
+            await mcp_server.delegate(
                 task="invalid_task_type_that_does_not_exist",
                 content="Some content"
             )
@@ -154,7 +154,7 @@ class TestInvalidInputHandling:
 
         # When no backend is configured, should raise RuntimeError
         with pytest.raises(RuntimeError, match="No backend configured"):
-            await mcp_server.think.fn(
+            await mcp_server.think(
                 problem="",
                 depth="quick"
             )
@@ -164,7 +164,7 @@ class TestInvalidInputHandling:
         """switch_model() should handle empty model name."""
         from delia import mcp_server
 
-        result = await mcp_server.switch_model.fn(
+        result = await mcp_server.switch_model(
             tier="quick",
             model_name=""
         )
@@ -416,7 +416,7 @@ class TestGracefulDegradation:
 
         # Should raise RuntimeError telling user to configure via settings.json
         with pytest.raises(RuntimeError, match="No backend configured"):
-            await mcp_server.delegate.fn(
+            await mcp_server.delegate(
                 task="quick",
                 content="Test"
             )
@@ -438,7 +438,7 @@ class TestGracefulDegradation:
         from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
-        result = await mcp_server.health.fn()
+        result = await mcp_server.health()
 
         assert result is not None
         # Should return valid status even with no backends

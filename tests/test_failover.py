@@ -418,7 +418,7 @@ class TestDelegateFailover:
 
         # Should raise RuntimeError telling user to configure via settings.json
         with pytest.raises(RuntimeError, match="No backend configured"):
-            await mcp_server.delegate.fn(
+            await mcp_server.delegate(
                 task="quick",
                 content="Test question"
             )

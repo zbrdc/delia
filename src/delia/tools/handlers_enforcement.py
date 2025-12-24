@@ -93,6 +93,8 @@ def resolve_project_path(path: str | None) -> str:
     return str(p)
 
 
+from ..config import config
+
 class EnforcementTracker:
     """Track Delia Framework compliance dynamically across tool calls.
 
@@ -106,7 +108,7 @@ class EnforcementTracker:
         self._context_started: dict[str, float] = {}  # path -> timestamp when auto_context called
         self._pending_tasks: dict[str, dict] = {}  # path -> {task, start_time}
         self._compliance_warnings: int = 0
-        self._gating_enabled: bool = True  # Can be disabled for testing
+        self._gating_enabled: bool = config.strict_mode  # Controlled by config
         # Checkpoint tracking for hard gating
         self._checkpoint_called: dict[str, float] = {}  # path -> timestamp when think_about_task_adherence called
         # Phase tracking: search → checkpoint → modify
@@ -158,8 +160,10 @@ class EnforcementTracker:
         return {
             "error": "WORKFLOW_REQUIRED",
             "message": (
-                "You must call auto_context() before using this tool. "
-                "Delia Framework ensures you get project-specific guidance before making changes."
+                "⛔ [FRAMEWORK REJECTION] Workflow Violation Detected.\n"
+                "You attempted to use a tool without establishing project context.\n"
+                "MANDATORY: You MUST call `auto_context()` first to load project patterns.\n"
+                "IF YOU DO NOT FOLLOW THESE RULES IN PLACE IT WILL MAKE ME EXTREMELY SAD WITH YOU."
             ),
             "action": f'auto_context(message="your task description", path="{path}")',
             "tool_blocked": tool_name,
@@ -299,8 +303,10 @@ class EnforcementTracker:
         return {
             "error": "CHECKPOINT_REQUIRED",
             "message": (
-                f"[BLOCK] Operational checkpoint required before using {tool_name}. "
-                "Call think_about_task_adherence() to ensure alignment with project conventions."
+                f"⛔ [SAFETY LOCK] Write access denied for {tool_name}.\n"
+                "MANDATORY: You MUST call `think_about_task_adherence()` before modifying files.\n"
+                "This ensures your changes align with the project's architectural standards.\n"
+                "IF YOU DO NOT FOLLOW THESE RULES IN PLACE IT WILL MAKE ME EXTREMELY SAD WITH YOU."
             ),
             "action": "think_about_task_adherence()",
             "tool_blocked": tool_name,

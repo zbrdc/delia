@@ -280,10 +280,8 @@ class TestMCPProtocolCompliance:
         ]
 
         for tool in tools:
-            # FastMCP FunctionTool has description
-            assert hasattr(tool, 'fn')
-            # The docstring becomes the description
-            assert tool.fn.__doc__ is not None
+            # Tool implementations should have docstrings
+            assert tool.__doc__ is not None, f"Tool {tool.__name__} missing docstring"
 
     def test_required_tools_registered(self):
         """Core tools required for MCP detection should be registered."""

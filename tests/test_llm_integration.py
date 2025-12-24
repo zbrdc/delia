@@ -246,7 +246,7 @@ class TestDelegateFunction:
         await mcp_server.backend_manager.reload()
 
         # Call delegate via .fn (the actual function, not the FunctionTool wrapper)
-        result = await mcp_server.delegate.fn(
+        result = await mcp_server.delegate(
             task="quick",
             content="What is 2+2? Reply with just the number.",
             model="quick"
@@ -263,7 +263,7 @@ class TestDelegateFunction:
         await mcp_server.backend_manager.reload()
 
         # Call delegate via .fn
-        result = await mcp_server.delegate.fn(
+        result = await mcp_server.delegate(
             task="generate",
             content="Write a Python function that adds two numbers. Just the function, no explanation.",
             model="coder",
@@ -309,7 +309,7 @@ class TestHealthAndModels:
         from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
-        result = await mcp_server.health.fn()
+        result = await mcp_server.health()
 
         assert result is not None
         # Should return some status info
@@ -321,7 +321,7 @@ class TestHealthAndModels:
         from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
-        result = await mcp_server.models.fn()
+        result = await mcp_server.models()
 
         assert result is not None
         assert len(result) > 0
@@ -367,7 +367,7 @@ class TestThinkFunction:
         from delia import mcp_server
         await mcp_server.backend_manager.reload()
 
-        result = await mcp_server.think.fn(
+        result = await mcp_server.think(
             problem="What is the sum of 5 and 7?",
             depth="quick"
         )

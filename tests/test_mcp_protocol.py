@@ -80,28 +80,28 @@ class TestMCPToolsExport:
         """MCP should have tools registered."""
         from delia import mcp_server
 
-        # Check that key tool functions exist
+        # Check that key tool implementation functions exist (backward compat re-exports)
         assert hasattr(mcp_server, 'delegate')
         assert hasattr(mcp_server, 'think')
         assert hasattr(mcp_server, 'batch')
         assert hasattr(mcp_server, 'health')
-        assert hasattr(mcp_server, 'models')
-        assert hasattr(mcp_server, 'queue_status')
         assert hasattr(mcp_server, 'switch_backend')
         assert hasattr(mcp_server, 'switch_model')
-        assert hasattr(mcp_server, 'get_model_info_tool')
+        assert hasattr(mcp_server, 'get_model_info')
 
-    def test_tools_are_callable_via_fn(self):
-        """MCP tools should be callable via .fn attribute."""
+        # These are registered on the mcp object itself
+        assert mcp_server.mcp is not None
+
+    def test_tools_are_callable(self):
+        """Tool implementations should be callable async functions."""
         from delia import mcp_server
+        import asyncio
 
-        # FastMCP decorates functions as FunctionTool objects
-        # The actual function is accessible via .fn
-        assert hasattr(mcp_server.delegate, 'fn')
-        assert callable(mcp_server.delegate.fn)
-
-        assert hasattr(mcp_server.health, 'fn')
-        assert callable(mcp_server.health.fn)
+        # Tool implementations are async functions, directly callable
+        assert callable(mcp_server.delegate)
+        assert callable(mcp_server.health)
+        assert asyncio.iscoroutinefunction(mcp_server.delegate)
+        assert asyncio.iscoroutinefunction(mcp_server.health)
 
 
 class TestMCPToolSignatures:
@@ -112,7 +112,7 @@ class TestMCPToolSignatures:
         from delia import mcp_server
         import inspect
 
-        sig = inspect.signature(mcp_server.delegate.fn)
+        sig = inspect.signature(mcp_server.delegate)
         params = list(sig.parameters.keys())
 
         # Required parameters
@@ -127,7 +127,7 @@ class TestMCPToolSignatures:
         from delia import mcp_server
         import inspect
 
-        sig = inspect.signature(mcp_server.think.fn)
+        sig = inspect.signature(mcp_server.think)
         params = list(sig.parameters.keys())
 
         assert 'problem' in params
@@ -138,7 +138,7 @@ class TestMCPToolSignatures:
         from delia import mcp_server
         import inspect
 
-        sig = inspect.signature(mcp_server.batch.fn)
+        sig = inspect.signature(mcp_server.batch)
         params = list(sig.parameters.keys())
 
         assert 'tasks' in params
@@ -148,7 +148,7 @@ class TestMCPToolSignatures:
         from delia import mcp_server
         import inspect
 
-        sig = inspect.signature(mcp_server.switch_backend.fn)
+        sig = inspect.signature(mcp_server.switch_backend)
         params = list(sig.parameters.keys())
 
         assert 'backend_id' in params
@@ -158,7 +158,7 @@ class TestMCPToolSignatures:
         from delia import mcp_server
         import inspect
 
-        sig = inspect.signature(mcp_server.switch_model.fn)
+        sig = inspect.signature(mcp_server.switch_model)
         params = list(sig.parameters.keys())
 
         assert 'tier' in params
@@ -173,7 +173,7 @@ class TestMCPToolResponses:
         """health() should return a string."""
         from delia import mcp_server
 
-        result = await mcp_server.health.fn()
+        result = await mcp_server.health()
 
         assert result is not None
         assert isinstance(result, str)
@@ -183,7 +183,7 @@ class TestMCPToolResponses:
         """models() should return a string."""
         from delia import mcp_server
 
-        result = await mcp_server.models.fn()
+        result = await mcp_server.models()
 
         assert result is not None
         assert isinstance(result, str)
@@ -193,17 +193,17 @@ class TestMCPToolResponses:
         """queue_status() should return a string."""
         from delia import mcp_server
 
-        result = await mcp_server.queue_status.fn()
+        result = await mcp_server.queue_status()
 
         assert result is not None
         assert isinstance(result, str)
 
     @pytest.mark.asyncio
     async def test_get_model_info_returns_string(self):
-        """get_model_info_tool() should return a string."""
+        """get_model_info() should return a string."""
         from delia import mcp_server
 
-        result = await mcp_server.get_model_info_tool.fn(model_name="llama-3-8b")
+        result = await mcp_server.get_model_info(model_name="llama-3-8b")
 
         assert result is not None
         assert isinstance(result, str)
@@ -342,7 +342,7 @@ class TestMCPToolCallFlow:
         """Setup mock environment for MCP tests."""
         from delia.backend_manager import BackendConfig
         from unittest.mock import MagicMock, patch
-        
+
         # Mock backend
         mock_backend = BackendConfig(
             id="test-backend",
@@ -357,12 +357,13 @@ class TestMCPToolCallFlow:
                 "thinking": "qwen-think"
             }
         )
-        
+
         with patch("delia.backend_manager.BackendManager.get_active_backend", return_value=mock_backend), \
              patch("delia.backend_manager.BackendManager.get_enabled_backends", return_value=[mock_backend]), \
              patch("delia.routing.BackendScorer.score", return_value=1.0), \
              patch("delia.routing.get_backend_metrics", return_value=MagicMock(total_requests=0)), \
-             patch("delia.routing.get_backend_health", return_value=MagicMock(is_available=lambda: True)):
+             patch("delia.routing.get_backend_health", return_value=MagicMock(is_available=lambda: True)), \
+             patch("delia.tools.handlers_orchestration.check_context_gate", return_value=None):
             yield mock_backend
 
     @pytest.mark.asyncio
@@ -373,7 +374,7 @@ class TestMCPToolCallFlow:
         # Simulate MCP tool call
         with patch("delia.orchestration.executor.call_llm", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = {"success": True, "response": "Summary text", "model": "test"}
-            result = await mcp_server.delegate.fn(
+            result = await mcp_server.delegate(
                 task="summarize",
                 content="This is a test document that needs summarization."
             )
@@ -390,7 +391,7 @@ class TestMCPToolCallFlow:
 
         with patch("delia.orchestration.executor.call_llm", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = {"success": True, "response": "Thinking result", "model": "test"}
-            result = await mcp_server.think.fn(
+            result = await mcp_server.think(
                 problem="What is 2 + 2?",
                 depth="quick"
             )
@@ -411,7 +412,7 @@ class TestMCPToolCallFlow:
 
         with patch("delia.orchestration.executor.call_llm", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = {"success": True, "response": "Python is a language.", "model": "test"}
-            result = await mcp_server.batch.fn(tasks=tasks)
+            result = await mcp_server.batch(tasks=tasks)
 
         assert result is not None
         assert isinstance(result, str)
@@ -426,7 +427,7 @@ class TestMCPErrorHandling:
         """Invalid task should return error, not crash."""
         from delia import mcp_server
 
-        result = await mcp_server.delegate.fn(
+        result = await mcp_server.delegate(
             task="",  # Empty task
             content="Test"
         )
@@ -439,7 +440,7 @@ class TestMCPErrorHandling:
         """Invalid JSON in batch should return error."""
         from delia import mcp_server
 
-        result = await mcp_server.batch.fn(tasks="not valid json")
+        result = await mcp_server.batch(tasks="not valid json")
 
         assert result is not None
         # Should indicate error
