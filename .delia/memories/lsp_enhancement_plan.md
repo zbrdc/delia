@@ -30,62 +30,43 @@ Upgrade Delia's LSP tooling to be more powerful than Claude's standard tools. Le
 - Added `depth: int | None = None` - filter by symbol nesting level (0=top-level)
 - Added `kinds: List[str] | None = None` - filter by multiple kinds at once
 - Added `matches_filters` helper that combines all filter checks
-- Note: depth filter requires LSP server to return DocumentSymbol format (pyright returns flat SymbolInformation)
 
 #### 5. lsp_find_referencing_symbols (2024-12-24)
 - Returns containing symbols that reference a target, not just raw locations
 - Uses `find_references` + `document_symbols` to map locations → symbols
 - Fixed Pyright Issue #10086: Added `_ensure_workspace_indexed()` to open all files via didOpen
 - Fixed `_format_locations` to handle tuples and LocationLink types
-- Added dict-to-Workspace conversion for MCP compatibility in all LSP functions
-- Successfully finds 15 references for `get_lsp_client` across 3 files
+- Added dict-to-Workspace conversion for MCP compatibility
+
+#### 6. lsp_find_symbol_semantic (2024-12-24)
+- CodeRAG + LSP fusion for meaning-based symbol search
+- Uses semantic embeddings to find relevant files, then LSP for precise symbols
+- Parameters: `query`, `top_k`, `kinds`, `include_body`, `boost_recent`
+- Integrates recency scoring when `boost_recent=True` (70% relevance + 30% recency)
+
+#### 7. Hot File Awareness (2024-12-24)
+- Added `get_hot_files()` method to SymbolGraph - returns recently modified files
+- Added `get_file_recency_score()` - exponential decay based on modification time
+- New MCP tool `lsp_get_hot_files` - lists files modified in last N hours
+- `lsp_find_symbol_semantic` boosts recent files in ranking by default
+
+#### 8. Profile-Aware Warnings (2024-12-24)
+- Added pattern matching for security, testing, and API files/symbols
+- `get_profile_warnings()` - checks paths and symbol names against patterns
+- `get_profile_context_for_warnings()` - formats warning messages
+- Integrated into `lsp_replace_symbol_body`, `lsp_insert_before_symbol`, `lsp_insert_after_symbol`
+- Warns when modifying auth, security, test, or API code
 
 ### 🔄 In Progress
 
 None currently.
 
-### 📋 Pending
+### 📋 Pending (Advanced Features)
 
 #### Refactoring (Delia-Enhanced)
 - [ ] `lsp_move_symbol` with import convention learning
 - [ ] `lsp_extract_method` with LLM-assisted naming
 - [ ] `lsp_batch` with sequence learning
-
-#### Delia-Original Features
-- [ ] `lsp_find_symbol_semantic` - CodeRAG + LSP fusion
-- [ ] Profile-aware warnings (security, testing profiles)
-- [ ] Hot file awareness (prioritize recent files)
-
----
-
-## What Makes Delia's LSP Unique
-
-### 1. **Playbook-Aware Operations**
-LSP tools that learn and remember patterns via the playbook system.
-
-### 2. **Semantic + Symbolic Fusion**
-Combine LSP with CodeRAG embeddings for meaning-based search:
-```python
-lsp_find_symbol_semantic(query="authentication logic")
-# Finds auth-related symbols even if not named "auth"
-```
-
-### 3. **Profile-Guided Context**
-- Security profile: Warn when touching sensitive symbols
-- Testing profile: Prioritize test file symbols, suggest test locations
-- Debugging profile: Show call hierarchy, find error handlers
-
-### 4. **LLM-Assisted Refactoring**
-Use Delia's delegation for complex analysis (parameter/return detection, name suggestions).
-
-### 5. **Learning Sequences**
-Track common refactoring patterns and suggest follow-up operations.
-
-### 6. **Hot File Awareness**
-Prioritize symbols from recently edited files.
-
-### 7. **Import Convention Learning**
-Learn project's import style from playbook.
 
 ---
 
@@ -93,45 +74,41 @@ Learn project's import style from playbook.
 
 - `src/delia/lsp_client.py` - Core LSP client methods + workspace indexing workaround
 - `src/delia/tools/lsp.py` - MCP tool wrappers with all enhancements
-- `src/delia/tools/handlers_enforcement.py` - Checkpoint gating
+- `src/delia/orchestration/graph.py` - Hot file awareness methods
 - `tests/test_lsp.py` - LSP tests including dict workspace compatibility
 
 ## Usage Examples
 
 ```python
-# Basic symbol search
-lsp_find_symbol(name="MyClass")
+# Semantic symbol search (CodeRAG + LSP fusion)
+lsp_find_symbol_semantic(query="authentication logic", top_k=10)
 
-# Name path syntax for nested symbols
-lsp_find_symbol(name="MyClass.my_method")
+# With recency boost disabled
+lsp_find_symbol_semantic(query="database connection", boost_recent=False)
 
-# Include source code body
-lsp_find_symbol(name="parse_name_path", include_body=True)
+# Get hot files
+lsp_get_hot_files(limit=10, since_hours=24)
 
-# Filter by multiple kinds
-lsp_find_symbol(name="get", kinds=["function", "method"])
-
-# Filter by depth (0=top-level)
-lsp_find_symbol(name="lsp", path="src/delia/tools/lsp.py", depth=0, kinds=["function"])
-
-# Find symbols that reference a target
-lsp_find_referencing_symbols(path="src/delia/lsp_client.py", line=669, character=4)
-# Returns: 15 symbols referencing get_lsp_client across context.py and lsp.py
+# Editing with profile warnings (automatic)
+lsp_replace_symbol_body(path="src/auth.py", symbol_name="login", new_body="...")
+# Returns: "Replaced function 'login'...
+#          ⚠️ Profile-aware context:
+#            • security.md: File path contains 'auth'"
 ```
 
-## Key Fixes Applied
+## Current Tool List
 
-### Pyright find_references Issue #10086
-Pyright requires `textDocument/didOpen` for all files to return cross-file references.
-**Solution**: `_ensure_workspace_indexed()` opens up to 200 Python files in batches of 50.
-
-### MCP Dict-to-Workspace Conversion
-MCP serializes Workspace objects to dicts. All LSP functions now convert:
-```python
-if isinstance(workspace, dict):
-    workspace = Workspace(**workspace)
-```
-
-### _format_locations Tuple/LocationLink Handling
-LSP can return tuples (not lists) and LocationLink (not Location).
-Fixed with `isinstance(result, (list, tuple))` and LocationLink support.
+| Tool | Description |
+|------|-------------|
+| `lsp_goto_definition` | Jump to symbol definition |
+| `lsp_find_references` | Find all usages of symbol |
+| `lsp_hover` | Get documentation/type info |
+| `lsp_get_symbols` | List symbols in file |
+| `lsp_find_symbol` | Search symbols with filters |
+| `lsp_find_referencing_symbols` | Find symbols that reference target |
+| `lsp_find_symbol_semantic` | Semantic search with LSP |
+| `lsp_get_hot_files` | List recently modified files |
+| `lsp_rename_symbol` | Rename across codebase |
+| `lsp_replace_symbol_body` | Replace symbol code |
+| `lsp_insert_before_symbol` | Insert code before symbol |
+| `lsp_insert_after_symbol` | Insert code after symbol |

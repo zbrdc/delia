@@ -23,6 +23,103 @@ from .. import lsp_client
 log = structlog.get_logger()
 
 
+# Profile-aware warning patterns
+SECURITY_PATTERNS = {
+    "paths": ["auth", "security", "password", "secret", "credential", "token", "jwt", "oauth", "encrypt", "crypto"],
+    "symbols": ["authenticate", "authorize", "login", "logout", "hash_password", "verify_token", "decrypt", "encrypt"],
+    "profile": "security.md",
+}
+
+TESTING_PATTERNS = {
+    "paths": ["test", "tests", "spec", "specs", "mock", "fixture"],
+    "symbols": ["test_", "mock_", "fixture", "assert", "expect"],
+    "profile": "testing.md",
+}
+
+API_PATTERNS = {
+    "paths": ["api", "route", "endpoint", "handler", "controller"],
+    "symbols": ["get_", "post_", "put_", "delete_", "patch_", "handle_"],
+    "profile": "api.md",
+}
+
+PROFILE_PATTERN_SETS = [SECURITY_PATTERNS, TESTING_PATTERNS, API_PATTERNS]
+
+
+def get_profile_warnings(file_path: str, symbol_name: str | None = None) -> list[dict]:
+    """Check if file/symbol matches profile patterns and return warnings.
+    
+    Args:
+        file_path: Path to the file being worked on
+        symbol_name: Optional symbol name being modified
+        
+    Returns:
+        List of warnings with profile names and reasons
+    """
+    warnings = []
+    path_lower = file_path.lower()
+    sym_lower = (symbol_name or "").lower()
+    
+    for pattern_set in PROFILE_PATTERN_SETS:
+        matched = False
+        reason = None
+        
+        # Check path patterns
+        for pattern in pattern_set["paths"]:
+            if pattern in path_lower:
+                matched = True
+                reason = f"File path contains '{pattern}'"
+                break
+        
+        # Check symbol patterns
+        if not matched and symbol_name:
+            for pattern in pattern_set["symbols"]:
+                if pattern in sym_lower:
+                    matched = True
+                    reason = f"Symbol name matches '{pattern}'"
+                    break
+        
+        if matched:
+            warnings.append({
+                "profile": pattern_set["profile"],
+                "reason": reason,
+                "severity": "info",
+            })
+    
+    return warnings
+
+
+async def get_profile_context_for_warnings(warnings: list[dict], project_path: Path | None = None) -> str:
+    """Get relevant profile content for warnings.
+    
+    Args:
+        warnings: List of profile warnings
+        project_path: Optional project path for profile lookup
+        
+    Returns:
+        Formatted profile context string
+    """
+    if not warnings:
+        return ""
+    
+    from ..playbook import get_playbook_manager
+    
+    pm = get_playbook_manager()
+    if project_path:
+        pm.set_project(project_path)
+    
+    lines = ["", "⚠️ Profile-aware context:"]
+    
+    for warning in warnings:
+        profile_name = warning["profile"]
+        reason = warning["reason"]
+        lines.append(f"  • {profile_name}: {reason}")
+    
+    lines.append("")
+    lines.append("Consider reviewing the relevant profiles with get_profile() before making changes.")
+    
+    return "\n".join(lines)
+
+
 def parse_name_path(name: str) -> tuple[str, list[str]]:
     """Parse a name path like 'Foo.bar.baz' into (leaf_name, container_path).
 
@@ -182,6 +279,8 @@ def register_lsp_tools(mcp: FastMCP):
     mcp.tool(name="lsp_get_symbols")(lsp_get_symbols)
     mcp.tool(name="lsp_find_symbol")(lsp_find_symbol)
     mcp.tool(name="lsp_find_referencing_symbols")(lsp_find_referencing_symbols)
+    mcp.tool(name="lsp_find_symbol_semantic")(lsp_find_symbol_semantic)
+    mcp.tool(name="lsp_get_hot_files")(lsp_get_hot_files)
     
     # These have gating, so we wrap them to include the check
     @mcp.tool()
@@ -943,6 +1042,192 @@ async def lsp_find_referencing_symbols_impl(
 lsp_find_referencing_symbols = lsp_find_referencing_symbols_impl
 
 
+async def lsp_find_symbol_semantic_impl(
+    query: str,
+    top_k: int = 10,
+    kinds: list[str] | None = None,
+    include_body: bool = False,
+    boost_recent: bool = True,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Find symbols semantically using CodeRAG + LSP fusion.
+
+    Combines semantic search (embeddings) with LSP symbol resolution.
+    Use natural language queries like "authentication logic" or "database connection".
+
+    Args:
+        query: Natural language search query
+        top_k: Maximum number of results (default 10)
+        kinds: Filter by symbol kinds (e.g., ["function", "class", "method"])
+        include_body: Include source code of matched symbols
+        boost_recent: Boost recently modified files in ranking (default True)
+        workspace: Workspace context
+
+    Returns:
+        Structured list of symbols ranked by semantic relevance
+    """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+    root = workspace.root if workspace else Path.cwd()
+
+    # 1. Use semantic search to find relevant files
+    from ..orchestration.summarizer import get_summarizer
+    from ..orchestration.graph import get_symbol_graph
+
+    summarizer = get_summarizer()
+    await summarizer.initialize()
+    
+    # Get symbol graph for recency scores if boosting
+    graph = get_symbol_graph() if boost_recent else None
+
+    file_results = await summarizer.search(query, top_k=top_k)
+
+    if not file_results:
+        return f"No files found matching '{query}'"
+
+    # 2. Get LSP client and extract symbols from matched files
+    client = lsp_client.get_lsp_client(root)
+
+    all_symbols = []
+    for file_result in file_results:
+        file_path = file_result.get("path", "")
+        relevance_score = file_result.get("score", 0)
+
+        try:
+            symbols = await client.document_symbols(file_path)
+            for sym in symbols:
+                # Filter by kinds if specified
+                if kinds:
+                    sym_kind = sym.get("kind", "").lower()
+                    if sym_kind not in [k.lower() for k in kinds]:
+                        continue
+
+                sym["file"] = file_path
+                sym["relevance_score"] = relevance_score
+                all_symbols.append(sym)
+        except Exception as e:
+            log.debug("lsp_symbols_failed", file=file_path, error=str(e))
+            continue
+
+    if not all_symbols:
+        return f"No symbols found in files matching '{query}'"
+
+    # 3. Calculate combined scores with optional recency boost
+    for sym in all_symbols:
+        relevance = sym.get("relevance_score", 0)
+        recency = 0.0
+        
+        if graph and boost_recent:
+            file_path = sym.get("file", "")
+            recency = graph.get_file_recency_score(file_path, decay_hours=24.0)
+            sym["recency_score"] = recency
+        
+        # Combined score: 70% relevance + 30% recency when boosting
+        if boost_recent and recency > 0:
+            sym["combined_score"] = 0.7 * relevance + 0.3 * recency
+        else:
+            sym["combined_score"] = relevance
+
+    # Sort by combined score (higher = more relevant)
+    all_symbols.sort(key=lambda s: s.get("combined_score", 0), reverse=True)
+
+    # Limit results
+    all_symbols = all_symbols[:top_k]
+
+    # 4. Optionally include symbol bodies
+    if include_body:
+        for sym in all_symbols[:5]:  # Limit body reads to top 5
+            file_path = sym.get("file", "")
+            abs_path = root / file_path
+            if abs_path.exists() and "range" in sym:
+                try:
+                    content = abs_path.read_text()
+                    lines = content.splitlines()
+                    start = sym["range"].get("start_line", 1) - 1
+                    end = sym["range"].get("end_line", start + 1)
+                    # Limit to 50 lines
+                    end = min(end, start + 50)
+                    sym["body"] = "\n".join(lines[start:end])
+                except Exception:
+                    pass
+
+    # 5. Format output
+    lines = [f"Found {len(all_symbols)} symbol(s) matching '{query}':"]
+    for sym in all_symbols:
+        name = sym.get("name", "unknown")
+        kind = sym.get("kind", "symbol")
+        file_path = sym.get("file", "")
+        line = sym.get("location", {}).get("line") or sym.get("range", {}).get("start_line", 0)
+        score = sym.get("relevance_score", 0)
+
+        lines.append(f"  {kind}: {name} in {file_path}:{line} (relevance: {score:.2f})")
+
+        if include_body and "body" in sym:
+            # Indent body
+            body_lines = sym["body"].split("\n")[:10]  # Show first 10 lines
+            for bl in body_lines:
+                lines.append(f"    | {bl}")
+            if len(sym["body"].split("\n")) > 10:
+                lines.append("    | ...")
+
+    return "\n".join(lines)
+
+
+# Expose as public function
+lsp_find_symbol_semantic = lsp_find_symbol_semantic_impl
+
+
+async def lsp_get_hot_files_impl(
+    limit: int = 10,
+    since_hours: float = 24.0,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Get recently modified files (hot files).
+
+    Returns files that have been recently modified, useful for focusing
+    on actively worked-on code areas.
+
+    Args:
+        limit: Maximum number of files to return (default 10)
+        since_hours: Only include files modified within this many hours (default 24)
+        workspace: Workspace context
+
+    Returns:
+        List of recently modified files with modification times
+    """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+    root = workspace.root if workspace else Path.cwd()
+
+    from ..orchestration.graph import get_symbol_graph
+    import datetime
+
+    graph = get_symbol_graph()
+    await graph.sync(root)  # Ensure graph is up to date
+
+    hot_files = graph.get_hot_files(limit=limit, since_hours=since_hours)
+
+    if not hot_files:
+        return f"No files modified in the last {since_hours} hours."
+
+    lines = [f"Hot files (modified in last {since_hours}h):"]
+    for file_path, mtime in hot_files:
+        dt = datetime.datetime.fromtimestamp(mtime)
+        age_hours = (datetime.datetime.now().timestamp() - mtime) / 3600
+        age_str = f"{age_hours:.1f}h ago" if age_hours < 1 else f"{int(age_hours)}h ago"
+        lines.append(f"  {file_path} ({age_str})")
+
+    return "\n".join(lines)
+
+
+# Expose as public function
+lsp_get_hot_files = lsp_get_hot_files_impl
+
+
 async def lsp_replace_symbol_body_impl(
     path: str,
     symbol_name: str,
@@ -996,7 +1281,15 @@ async def lsp_replace_symbol_body_impl(
     # Write back
     abs_path.write_text("".join(lines))
 
-    return f"Replaced {target['kind']} '{symbol_name}' (lines {start_line + 1}-{end_line + 1}) in {path}"
+    result = f"Replaced {target['kind']} '{symbol_name}' (lines {start_line + 1}-{end_line + 1}) in {path}"
+    
+    # Add profile-aware warnings if applicable
+    warnings = get_profile_warnings(path, symbol_name)
+    if warnings:
+        warning_context = await get_profile_context_for_warnings(warnings, root)
+        result += warning_context
+    
+    return result
 
 
 async def lsp_insert_before_symbol_impl(
@@ -1044,7 +1337,15 @@ async def lsp_insert_before_symbol_impl(
     # Write back
     abs_path.write_text("".join(lines))
 
-    return f"Inserted content before {target['kind']} '{symbol_name}' at line {insert_line + 1} in {path}"
+    result = f"Inserted content before {target['kind']} '{symbol_name}' at line {insert_line + 1} in {path}"
+    
+    # Add profile-aware warnings if applicable
+    warnings = get_profile_warnings(path, symbol_name)
+    if warnings:
+        warning_context = await get_profile_context_for_warnings(warnings, root)
+        result += warning_context
+    
+    return result
 
 
 async def lsp_insert_after_symbol_impl(
@@ -1096,4 +1397,12 @@ async def lsp_insert_after_symbol_impl(
     # Write back
     abs_path.write_text("".join(lines))
 
-    return f"Inserted content after {target['kind']} '{symbol_name}' at line {insert_line + 1} in {path}"
+    result = f"Inserted content after {target['kind']} '{symbol_name}' at line {insert_line + 1} in {path}"
+    
+    # Add profile-aware warnings if applicable
+    warnings = get_profile_warnings(path, symbol_name)
+    if warnings:
+        warning_context = await get_profile_context_for_warnings(warnings, root)
+        result += warning_context
+    
+    return result

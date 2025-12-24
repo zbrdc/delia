@@ -247,6 +247,51 @@ Output ONE short sentence of architectural context."""
                 
         return results[:20] # Cap total symbols returned
 
+    def get_hot_files(self, limit: int = 10, since_hours: float = 24.0) -> list[tuple[str, float]]:
+        """Get recently modified files sorted by modification time.
+        
+        Args:
+            limit: Maximum number of files to return
+            since_hours: Only include files modified within this many hours
+            
+        Returns:
+            List of (file_path, mtime) tuples, most recent first
+        """
+        import time
+        cutoff = time.time() - (since_hours * 3600)
+        
+        recent = [
+            (path, node.mtime) 
+            for path, node in self.nodes.items()
+            if node.mtime > cutoff
+        ]
+        recent.sort(key=lambda x: x[1], reverse=True)
+        return recent[:limit]
+
+    def get_file_recency_score(self, file_path: str, decay_hours: float = 24.0) -> float:
+        """Get a recency score for a file (1.0 = just modified, 0.0 = old).
+        
+        Uses exponential decay based on how recently the file was modified.
+        
+        Args:
+            file_path: Path to check
+            decay_hours: Hours until score drops to ~37% (1/e)
+            
+        Returns:
+            Float from 0.0 to 1.0 indicating recency
+        """
+        import time
+        import math
+        
+        if file_path not in self.nodes:
+            return 0.0
+            
+        mtime = self.nodes[file_path].mtime
+        age_hours = (time.time() - mtime) / 3600
+        
+        # Exponential decay: score = e^(-age/decay)
+        return math.exp(-age_hours / decay_hours)
+
     def _parse_file(self, rel_path: str, full_path: Path, mtime: float) -> bool:
         """Parse symbols and imports from a file based on its extension."""
         content, error = read_file_safe(str(full_path))
