@@ -169,7 +169,12 @@ class HybridRetriever:
         return (helpful + 1) / (helpful + harmful + 2)
 
     def compute_recency_score(self, bullet: "PlaybookBullet") -> float:
-        """Compute recency score with exponential decay."""
+        """Compute recency score with exponential half-life decay.
+
+        Uses true half-life formula: score = 0.5^(days/half_life)
+        At t=RECENCY_HALF_LIFE (30 days), score = 0.5
+        At t=2*RECENCY_HALF_LIFE (60 days), score = 0.25
+        """
         last_used = getattr(bullet, "last_used", None)
         if not last_used:
             last_used = getattr(bullet, "created_at", None)
@@ -183,7 +188,8 @@ class HybridRetriever:
             else:
                 last_date = last_used
             days_since = (datetime.now() - last_date).days
-            return math.exp(-days_since / self.RECENCY_HALF_LIFE)
+            # True half-life: value = 0.5 at t = RECENCY_HALF_LIFE
+            return math.pow(0.5, days_since / self.RECENCY_HALF_LIFE)
         except Exception:
             return 0.5
 
