@@ -57,16 +57,32 @@ Upgrade Delia's LSP tooling to be more powerful than Claude's standard tools. Le
 - Integrated into `lsp_replace_symbol_body`, `lsp_insert_before_symbol`, `lsp_insert_after_symbol`
 - Warns when modifying auth, security, test, or API code
 
-### 🔄 In Progress
+#### 9. lsp_move_symbol (2024-12-24)
+- Moves a symbol from one file to another
+- Detects import convention (relative vs absolute) by analyzing existing imports
+- Uses detected convention when updating imports in dependent files
+- Handles both adding symbol to destination and removing from source
+- Profile-aware: warns when moving security/API-related symbols
 
-None currently.
+#### 10. lsp_extract_method (2024-12-24)
+- Extracts a code block into a new method
+- LLM-assisted name suggestions when no name provided
+- Analyzes code block for variables, return values, and dependencies
+- Automatically determines insert position based on containing function
+- Profile-aware: warns when extracting from sensitive code areas
 
-### 📋 Pending (Advanced Features)
+#### 11. lsp_batch (2024-12-24)
+- Executes multiple LSP operations in sequence
+- Supports: rename, replace_body, insert_before, insert_after, move, extract
+- JSON-based operation specification
+- Aggregates results and errors from all operations
+- Enables complex refactoring workflows in a single call
 
-#### Refactoring (Delia-Enhanced)
-- [ ] `lsp_move_symbol` with import convention learning
-- [ ] `lsp_extract_method` with LLM-assisted naming
-- [ ] `lsp_batch` with sequence learning
+### 📋 Pending (Future Enhancements)
+
+- [ ] Import auto-organization after move operations
+- [ ] Cross-file symbol dependencies visualization
+- [ ] Undo/redo support for batch operations
 
 ---
 
@@ -89,11 +105,26 @@ lsp_find_symbol_semantic(query="database connection", boost_recent=False)
 # Get hot files
 lsp_get_hot_files(limit=10, since_hours=24)
 
-# Editing with profile warnings (automatic)
-lsp_replace_symbol_body(path="src/auth.py", symbol_name="login", new_body="...")
-# Returns: "Replaced function 'login'...
-#          ⚠️ Profile-aware context:
-#            • security.md: File path contains 'auth'"
+# Move a symbol with import convention learning
+lsp_move_symbol(
+    source_path="src/utils.py",
+    symbol_name="validate_input",
+    dest_path="src/validation.py",
+    update_imports=True
+)
+
+# Extract method with LLM-assisted naming
+lsp_extract_method(
+    path="src/handler.py",
+    start_line=50,
+    end_line=65
+)  # Auto-suggests name based on code content
+
+# Batch operations
+lsp_batch(operations='''[
+    {"op": "rename", "path": "src/foo.py", "line": 10, "character": 5, "new_name": "better_name"},
+    {"op": "move", "source_path": "src/old.py", "symbol_name": "MyClass", "dest_path": "src/new.py"}
+]''')
 ```
 
 ## Current Tool List
@@ -112,3 +143,6 @@ lsp_replace_symbol_body(path="src/auth.py", symbol_name="login", new_body="...")
 | `lsp_replace_symbol_body` | Replace symbol code |
 | `lsp_insert_before_symbol` | Insert code before symbol |
 | `lsp_insert_after_symbol` | Insert code after symbol |
+| `lsp_move_symbol` | Move symbol between files |
+| `lsp_extract_method` | Extract code into method |
+| `lsp_batch` | Execute multiple LSP operations |

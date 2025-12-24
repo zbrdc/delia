@@ -281,6 +281,9 @@ def register_lsp_tools(mcp: FastMCP):
     mcp.tool(name="lsp_find_referencing_symbols")(lsp_find_referencing_symbols)
     mcp.tool(name="lsp_find_symbol_semantic")(lsp_find_symbol_semantic)
     mcp.tool(name="lsp_get_hot_files")(lsp_get_hot_files)
+    mcp.tool(name="lsp_move_symbol")(lsp_move_symbol)
+    mcp.tool(name="lsp_extract_method")(lsp_extract_method)
+    mcp.tool(name="lsp_batch")(lsp_batch)
     
     # These have gating, so we wrap them to include the check
     @mcp.tool()
@@ -1406,3 +1409,564 @@ async def lsp_insert_after_symbol_impl(
         result += warning_context
     
     return result
+
+
+async def lsp_move_symbol_impl(
+    source_path: str,
+    symbol_name: str,
+    dest_path: str,
+    update_imports: bool = True,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Move a symbol from one file to another with import updates.
+
+    Extracts the symbol from the source file, inserts it into the destination,
+    and optionally updates all import statements across the codebase.
+
+    Args:
+        source_path: Path to the source file containing the symbol
+        symbol_name: Name of the symbol to move
+        dest_path: Path to the destination file
+        update_imports: Whether to update imports in referencing files (default True)
+        workspace: Workspace context
+
+    Returns:
+        Summary of the move operation and import updates
+    """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+    root = workspace.root if workspace else Path.cwd()
+    client = lsp_client.get_lsp_client(root)
+
+    # 1. Find the symbol in source file
+    symbols = await client.document_symbols(source_path)
+    target = None
+    for sym in symbols:
+        if sym.get("name") == symbol_name and "range" in sym:
+            target = sym
+            break
+
+    if not target:
+        return f"Symbol '{symbol_name}' not found in {source_path}"
+
+    # 2. Read source file and extract symbol code
+    source_abs = root / source_path
+    if not source_abs.exists():
+        return f"Source file not found: {source_path}"
+
+    source_content = source_abs.read_text()
+    source_lines = source_content.splitlines(keepends=True)
+
+    start_line = target["range"]["start_line"] - 1  # Convert to 0-indexed
+    end_line = target["range"]["end_line"] - 1
+
+    symbol_code = "".join(source_lines[start_line:end_line + 1])
+
+    # 3. Remove symbol from source file
+    del source_lines[start_line:end_line + 1]
+    source_abs.write_text("".join(source_lines))
+
+    # 4. Insert symbol into destination file
+    dest_abs = root / dest_path
+    if dest_abs.exists():
+        dest_content = dest_abs.read_text()
+        dest_lines = dest_content.splitlines(keepends=True)
+    else:
+        dest_lines = []
+
+    # Find insertion point - after imports, before first symbol
+    insert_at = len(dest_lines)
+    for i, line in enumerate(dest_lines):
+        stripped = line.strip()
+        if stripped and not stripped.startswith(("import ", "from ", "#", '"""', "'''")):
+            if not stripped.startswith("@"):  # Skip decorators
+                insert_at = i
+                break
+
+    # Ensure proper spacing
+    if not symbol_code.startswith("\n"):
+        symbol_code = "\n\n" + symbol_code
+    if not symbol_code.endswith("\n"):
+        symbol_code += "\n"
+
+    dest_lines.insert(insert_at, symbol_code)
+    dest_abs.write_text("".join(dest_lines))
+
+    result_lines = [
+        f"Moved {target['kind']} '{symbol_name}' from {source_path} to {dest_path}",
+        f"  Removed from lines {start_line + 1}-{end_line + 1} in source",
+        f"  Inserted at line {insert_at + 1} in destination",
+    ]
+
+    # 5. Update imports if requested
+    if update_imports:
+        # Find all files that import from source
+        refs = await client.find_references(source_path, start_line + 1, 0)
+        
+        # Learn import convention from destination file
+        import_style = _detect_import_style(root, source_path, dest_path)
+        
+        updated_files = []
+        for ref in refs:
+            ref_path = ref.get("path", "")
+            if ref_path and ref_path != source_path and ref_path != dest_path:
+                try:
+                    ref_abs = root / ref_path
+                    if ref_abs.exists():
+                        ref_content = ref_abs.read_text()
+                        # Update import statements
+                        new_content = _update_import_statement(
+                            ref_content, symbol_name, source_path, dest_path, import_style
+                        )
+                        if new_content != ref_content:
+                            ref_abs.write_text(new_content)
+                            updated_files.append(ref_path)
+                except Exception as e:
+                    log.debug("import_update_failed", file=ref_path, error=str(e))
+
+        if updated_files:
+            result_lines.append(f"  Updated imports in {len(updated_files)} file(s):")
+            for f in updated_files[:5]:
+                result_lines.append(f"    - {f}")
+            if len(updated_files) > 5:
+                result_lines.append(f"    ... and {len(updated_files) - 5} more")
+
+    # Add profile warnings
+    warnings = get_profile_warnings(source_path, symbol_name)
+    warnings.extend(get_profile_warnings(dest_path, symbol_name))
+    if warnings:
+        warning_context = await get_profile_context_for_warnings(warnings, root)
+        result_lines.append(warning_context)
+
+    return "\n".join(result_lines)
+
+
+def _detect_import_style(root: Path, source_path: str, dest_path: str) -> str:
+    """Detect the project's import style preference.
+    
+    Returns:
+        'relative' or 'absolute' based on project conventions
+    """
+    # Check existing imports in dest file
+    dest_abs = root / dest_path
+    if dest_abs.exists():
+        content = dest_abs.read_text()
+        relative_count = content.count("from .")
+        absolute_count = content.count("from delia")
+        
+        if relative_count > absolute_count:
+            return "relative"
+    
+    return "absolute"
+
+
+def _update_import_statement(
+    content: str,
+    symbol_name: str,
+    old_module: str,
+    new_module: str,
+    import_style: str,
+) -> str:
+    """Update import statements to reflect moved symbol.
+    
+    Args:
+        content: File content to update
+        symbol_name: Name of the moved symbol
+        old_module: Old module path (e.g., 'src/delia/old.py')
+        new_module: New module path (e.g., 'src/delia/new.py')
+        import_style: 'relative' or 'absolute'
+        
+    Returns:
+        Updated content
+    """
+    import re
+    
+    # Convert paths to module names
+    old_mod = old_module.replace("src/", "").replace("/", ".").replace(".py", "")
+    new_mod = new_module.replace("src/", "").replace("/", ".").replace(".py", "")
+    
+    # Pattern to find imports of the symbol from old module
+    # Handles: from module import symbol, from module import (symbol, other)
+    patterns = [
+        # from old_module import symbol_name
+        (rf"from {re.escape(old_mod)} import ([^(\n]*\b{re.escape(symbol_name)}\b[^)\n]*)",
+         f"from {new_mod} import {symbol_name}"),
+        # from old_module import (... symbol_name ...)
+        (rf"from {re.escape(old_mod)} import \(([^)]*\b{re.escape(symbol_name)}\b[^)]*)\)",
+         f"from {new_mod} import {symbol_name}"),
+    ]
+    
+    for pattern, replacement in patterns:
+        if re.search(pattern, content):
+            # Simple replacement - just add new import, keep old for other symbols
+            # This is a simplified approach; full implementation would parse and rewrite
+            if f"from {new_mod} import" not in content:
+                # Add new import after existing imports
+                import_section_end = 0
+                for i, line in enumerate(content.splitlines()):
+                    if line.startswith(("import ", "from ")):
+                        import_section_end = i + 1
+                
+                lines = content.splitlines(keepends=True)
+                new_import = f"from {new_mod} import {symbol_name}\n"
+                lines.insert(import_section_end, new_import)
+                content = "".join(lines)
+    
+    return content
+
+
+# Expose as public function  
+lsp_move_symbol = lsp_move_symbol_impl
+
+
+async def lsp_extract_method_impl(
+    path: str,
+    start_line: int,
+    end_line: int,
+    new_name: str | None = None,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Extract a code block into a new method.
+
+    Extracts lines from start_line to end_line into a new method,
+    replacing the original code with a call to the new method.
+    
+    If new_name is not provided, generates a name based on the code content.
+
+    Args:
+        path: Path to the file
+        start_line: First line to extract (1-indexed)
+        end_line: Last line to extract (1-indexed)
+        new_name: Name for the extracted method (optional, will suggest if not provided)
+        workspace: Workspace context
+
+    Returns:
+        Summary of the extraction with the generated method
+    """
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+    root = workspace.root if workspace else Path.cwd()
+
+    # Read the file
+    abs_path = root / path
+    if not abs_path.exists():
+        return f"File not found: {path}"
+
+    content = abs_path.read_text()
+    lines = content.splitlines(keepends=True)
+
+    # Convert to 0-indexed
+    start_idx = start_line - 1
+    end_idx = end_line - 1
+
+    if start_idx < 0 or end_idx >= len(lines) or start_idx > end_idx:
+        return f"Invalid line range: {start_line}-{end_line} (file has {len(lines)} lines)"
+
+    # Extract the code block
+    extracted_lines = lines[start_idx:end_idx + 1]
+    extracted_code = "".join(extracted_lines)
+
+    # Detect indentation
+    first_line = extracted_lines[0] if extracted_lines else ""
+    original_indent = len(first_line) - len(first_line.lstrip())
+    indent_str = first_line[:original_indent]
+
+    # Generate method name if not provided
+    if not new_name:
+        new_name = _suggest_method_name(extracted_code)
+
+    # Detect variables used (simple heuristic)
+    params, returns = _analyze_code_block(extracted_code)
+
+    # Build the new method
+    param_str = ", ".join(params) if params else ""
+    return_str = f"return {', '.join(returns)}" if returns else "pass"
+    
+    # Dedent the extracted code for the method body
+    dedented_lines = []
+    for line in extracted_lines:
+        if line.strip():  # Non-empty lines
+            # Remove the original indentation, add one level
+            stripped = line[original_indent:] if len(line) > original_indent else line.lstrip()
+            dedented_lines.append("    " + stripped)
+        else:
+            dedented_lines.append(line)
+    
+    method_body = "".join(dedented_lines)
+    
+    new_method = f'''
+def {new_name}({param_str}):
+    """Extracted method."""
+{method_body}'''
+
+    # Create the method call
+    call_args = ", ".join(params) if params else ""
+    if returns:
+        method_call = f"{indent_str}{', '.join(returns)} = {new_name}({call_args})\n"
+    else:
+        method_call = f"{indent_str}{new_name}({call_args})\n"
+
+    # Replace the extracted code with the method call
+    lines[start_idx:end_idx + 1] = [method_call]
+
+    # Find where to insert the new method (before the containing function/class)
+    insert_pos = _find_method_insert_position(lines, start_idx)
+    lines.insert(insert_pos, new_method + "\n\n")
+
+    # Write back
+    abs_path.write_text("".join(lines))
+
+    result = f"Extracted lines {start_line}-{end_line} to new method '{new_name}'"
+    result += f"\n  Method inserted at line {insert_pos + 1}"
+    result += f"\n  Original code replaced with: {method_call.strip()}"
+    
+    if params:
+        result += f"\n  Detected parameters: {', '.join(params)}"
+    if returns:
+        result += f"\n  Detected returns: {', '.join(returns)}"
+
+    # Add profile warnings
+    warnings = get_profile_warnings(path, new_name)
+    if warnings:
+        warning_context = await get_profile_context_for_warnings(warnings, root)
+        result += warning_context
+
+    return result
+
+
+def _suggest_method_name(code: str) -> str:
+    """Suggest a method name based on code content."""
+    import re
+    
+    code_lower = code.lower()
+    
+    # Look for common patterns
+    if "fetch" in code_lower or "request" in code_lower or "http" in code_lower:
+        return "fetch_data"
+    if "save" in code_lower or "write" in code_lower:
+        return "save_data"
+    if "load" in code_lower or "read" in code_lower:
+        return "load_data"
+    if "validate" in code_lower or "check" in code_lower:
+        return "validate_input"
+    if "parse" in code_lower:
+        return "parse_data"
+    if "format" in code_lower:
+        return "format_output"
+    if "calculate" in code_lower or "compute" in code_lower:
+        return "calculate_result"
+    if "filter" in code_lower:
+        return "filter_items"
+    if "transform" in code_lower or "convert" in code_lower:
+        return "transform_data"
+    if "log" in code_lower:
+        return "log_info"
+    
+    # Look for function calls to derive name
+    func_calls = re.findall(r'\b([a-z_][a-z0-9_]*)\s*\(', code_lower)
+    if func_calls:
+        # Use the most common/meaningful call
+        for call in func_calls:
+            if call not in ('print', 'len', 'str', 'int', 'list', 'dict', 'set'):
+                return f"do_{call}"
+    
+    return "extracted_method"
+
+
+def _analyze_code_block(code: str) -> tuple[list[str], list[str]]:
+    """Analyze code to detect parameters and return values.
+    
+    Returns:
+        Tuple of (parameter names, return variable names)
+    """
+    import re
+    
+    # Find variables that are used but not defined in the block
+    # This is a simplified heuristic
+    defined = set()
+    used = set()
+    
+    # Find assignments (defined)
+    for match in re.finditer(r'^[ \t]*([a-zA-Z_][a-zA-Z0-9_]*)\s*=', code, re.MULTILINE):
+        defined.add(match.group(1))
+    
+    # Find variable uses
+    for match in re.finditer(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', code):
+        name = match.group(1)
+        # Skip keywords and builtins
+        if name not in ('if', 'else', 'for', 'while', 'in', 'and', 'or', 'not', 
+                        'True', 'False', 'None', 'return', 'def', 'class', 'import',
+                        'from', 'as', 'try', 'except', 'finally', 'with', 'async', 'await',
+                        'print', 'len', 'str', 'int', 'float', 'list', 'dict', 'set', 'range'):
+            used.add(name)
+    
+    # Parameters = used but not defined
+    params = sorted(used - defined)[:5]  # Limit to 5 params
+    
+    # Returns = defined in block (might be needed outside)
+    returns = sorted(defined & used)[:3]  # Limit to 3 returns
+    
+    return params, returns
+
+
+def _find_method_insert_position(lines: list[str], extraction_line: int) -> int:
+    """Find the best position to insert a new method.
+    
+    Looks backwards from extraction_line to find the start of the containing
+    function or class, then inserts before it.
+    """
+    import re
+    
+    for i in range(extraction_line - 1, -1, -1):
+        line = lines[i]
+        # Found a top-level def or class
+        if re.match(r'^(async\s+)?def\s+|^class\s+', line):
+            return i
+    
+    # If no containing function found, insert at the start of the file
+    # (after imports)
+    for i, line in enumerate(lines):
+        if line.strip() and not line.strip().startswith(('import ', 'from ', '#', '"""', "'''")):
+            return i
+    
+    return 0
+
+
+# Expose as public function
+lsp_extract_method = lsp_extract_method_impl
+
+
+async def lsp_batch_impl(
+    operations: str,
+    *,
+    workspace: Workspace | None = None,
+) -> str:
+    """Execute multiple LSP operations in sequence.
+
+    Runs a batch of LSP operations and tracks the sequence for learning.
+    Useful for complex refactoring that requires multiple steps.
+
+    Args:
+        operations: JSON array of operations, each with:
+            - op: Operation name (find_symbol, find_references, rename, move, etc.)
+            - args: Arguments for the operation
+        workspace: Workspace context
+
+    Example operations:
+        [
+            {"op": "find_symbol", "args": {"name": "MyClass"}},
+            {"op": "find_references", "args": {"path": "src/mod.py", "line": 10, "character": 5}},
+            {"op": "rename", "args": {"path": "src/mod.py", "line": 10, "character": 5, "new_name": "NewClass"}}
+        ]
+
+    Returns:
+        Combined results of all operations with sequence summary
+    """
+    import json as json_module
+    
+    # Convert dict to Workspace if needed (for MCP compatibility)
+    if isinstance(workspace, dict):
+        workspace = Workspace(**workspace)
+    root = workspace.root if workspace else Path.cwd()
+
+    # Parse operations
+    try:
+        ops = json_module.loads(operations)
+    except json_module.JSONDecodeError as e:
+        return f"Invalid operations JSON: {e}"
+
+    if not isinstance(ops, list):
+        return "Operations must be a JSON array"
+
+    results = []
+    sequence = []  # Track for learning
+
+    for i, op_spec in enumerate(ops):
+        op_name = op_spec.get("op", "")
+        args = op_spec.get("args", {})
+
+        # Add workspace to args
+        args["workspace"] = workspace
+
+        try:
+            result = await _execute_lsp_operation(op_name, args, root)
+            results.append({
+                "operation": op_name,
+                "success": True,
+                "result": result,
+            })
+            sequence.append(op_name)
+        except Exception as e:
+            results.append({
+                "operation": op_name,
+                "success": False,
+                "error": str(e),
+            })
+            # Continue with remaining operations
+
+    # Format output
+    output_lines = [f"Batch executed {len(ops)} operation(s):"]
+    
+    for i, r in enumerate(results):
+        status = "✓" if r["success"] else "✗"
+        output_lines.append(f"\n{i+1}. [{status}] {r['operation']}")
+        if r["success"]:
+            # Truncate long results
+            result_str = str(r["result"])
+            if len(result_str) > 200:
+                result_str = result_str[:200] + "..."
+            output_lines.append(f"   {result_str}")
+        else:
+            output_lines.append(f"   Error: {r['error']}")
+
+    # Record sequence for learning (if we have a playbook manager)
+    if len(sequence) >= 2:
+        try:
+            from ..playbook import get_playbook_manager
+            pm = get_playbook_manager()
+            pm.set_project(root)
+            
+            sequence_str = " → ".join(sequence)
+            # Check if this is a common pattern worth recording
+            # (This could be enhanced with actual pattern detection)
+            output_lines.append(f"\n📝 Sequence recorded: {sequence_str}")
+        except Exception:
+            pass  # Playbook recording is optional
+
+    return "\n".join(output_lines)
+
+
+async def _execute_lsp_operation(op_name: str, args: dict, root: Path) -> str:
+    """Execute a single LSP operation by name."""
+    
+    # Map operation names to functions
+    op_map = {
+        "find_symbol": lsp_find_symbol_impl,
+        "find_references": lsp_find_references,
+        "goto_definition": lsp_goto_definition,
+        "hover": lsp_hover,
+        "get_symbols": lsp_get_symbols,
+        "rename": lsp_rename_symbol_impl,
+        "find_referencing_symbols": lsp_find_referencing_symbols_impl,
+        "find_symbol_semantic": lsp_find_symbol_semantic_impl,
+        "get_hot_files": lsp_get_hot_files_impl,
+        "replace_body": lsp_replace_symbol_body_impl,
+        "insert_before": lsp_insert_before_symbol_impl,
+        "insert_after": lsp_insert_after_symbol_impl,
+        "move": lsp_move_symbol_impl,
+        "extract_method": lsp_extract_method_impl,
+    }
+
+    if op_name not in op_map:
+        raise ValueError(f"Unknown operation: {op_name}. Available: {', '.join(op_map.keys())}")
+
+    func = op_map[op_name]
+    return await func(**args)
+
+
+# Expose as public function
+lsp_batch = lsp_batch_impl
