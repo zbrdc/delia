@@ -23,7 +23,7 @@ log = structlog.get_logger()
 # =============================================================================
 
 async def playbook_tool(
-    action: Literal["add", "write", "delete", "prune", "list", "stats", "confirm"],
+    action: Literal["add", "write", "delete", "prune", "list", "stats", "confirm", "search", "index"],
     task_type: str | None = None,
     path: str | None = None,
     **kwargs
@@ -38,12 +38,14 @@ async def playbook_tool(
         list - List all playbooks and bullet counts
         stats - Get effectiveness scores
         confirm - Confirm framework compliance
+        search - Semantic search for relevant bullets via ChromaDB
+        index - Index all playbook bullets to ChromaDB
 
     Args:
         action: The operation to perform
         task_type: Task type (coding, testing, architecture, debugging, project)
         path: Optional project path (defaults to cwd)
-        **kwargs: Action-specific parameters
+        **kwargs: Action-specific parameters (query for search, limit for search)
 
     Returns:
         JSON string with operation result
@@ -72,10 +74,27 @@ async def playbook_tool(
             add_result = await curator.add_bullet(task_type, content, section)
 
             if add_result.get("added"):
+                bullet_id = add_result.get("bullet_id")
+
+                # Sync to ChromaDB for semantic search
+                try:
+                    from delia.learning.retrieval import get_retriever
+                    retriever = get_retriever()
+                    from ..playbook import PlaybookBullet
+                    bullet = PlaybookBullet(id=bullet_id, content=content, section=section)
+                    await retriever.index_bullets_to_chromadb(
+                        bullets=[bullet],
+                        task_type=task_type,
+                        project=project_path.name if project_path else "global",
+                        project_path=project_path,
+                    )
+                except Exception as e:
+                    log.debug("chromadb_sync_failed", error=str(e))
+
                 return json.dumps({
                     "status": "added",
                     "bullet": {
-                        "id": add_result.get("bullet_id"),
+                        "id": bullet_id,
                         "content": content,
                         "section": section,
                         "task_type": task_type
@@ -122,6 +141,21 @@ async def playbook_tool(
         for content in bullets:
             bullet_objects.append(PlaybookBullet(content=content))
         playbook_manager.save_playbook(task_type, bullet_objects)
+
+        # Sync to ChromaDB - re-index this task_type
+        project_path = Path(path) if path else Path.cwd()
+        try:
+            from delia.learning.retrieval import get_retriever
+            retriever = get_retriever()
+            await retriever.index_bullets_to_chromadb(
+                bullets=bullet_objects,
+                task_type=task_type,
+                project=project_path.name,
+                project_path=project_path,
+            )
+        except Exception as e:
+            log.debug("chromadb_sync_failed", error=str(e))
+
         return json.dumps({
             "status": "written",
             "task_type": task_type,
@@ -136,6 +170,17 @@ async def playbook_tool(
             return json.dumps({"error": "bullet_id and task_type required for delete action"})
 
         success = playbook_manager.delete_bullet(task_type, bullet_id)
+
+        # Also remove from ChromaDB
+        if success:
+            project_path = Path(path) if path else Path.cwd()
+            try:
+                from delia.orchestration.vector_store import get_vector_store
+                store = get_vector_store(project_path)
+                store.get_collection(store.COLLECTION_PLAYBOOK).delete(ids=[bullet_id])
+            except Exception as e:
+                log.debug("chromadb_delete_failed", error=str(e))
+
         return json.dumps({
             "status": "deleted" if success else "not_found",
             "bullet_id": bullet_id,
@@ -212,6 +257,88 @@ async def playbook_tool(
             "reminder": "Now call report_feedback() for each bullet that helped!"
         })
 
+    elif action == "search":
+        # Semantic search for playbook bullets via ChromaDB
+        query = kwargs.get("query", "")
+        if not query:
+            return json.dumps({"error": "query required for search action"})
+
+        limit = kwargs.get("limit", 5)
+        project_path = Path(path) if path else Path.cwd()
+
+        try:
+            from delia.learning.retrieval import get_retriever
+            retriever = get_retriever()
+
+            # Use project name (basename) for filtering, not full path
+            project_name = project_path.name
+            scored_bullets = await retriever.retrieve_from_chromadb(
+                query=query,
+                task_type=task_type,
+                project=project_name,
+                project_path=project_path,
+                limit=limit,
+            )
+
+            return json.dumps({
+                "query": query,
+                "task_type": task_type,
+                "results": [
+                    {
+                        "id": sb.bullet.id,
+                        "content": sb.bullet.content,
+                        "section": sb.bullet.section,
+                        "score": round(sb.final_score, 3),
+                        "relevance": round(sb.relevance_score, 3),
+                        "utility": round(sb.utility_score, 3),
+                    }
+                    for sb in scored_bullets
+                ],
+                "count": len(scored_bullets),
+            })
+
+        except Exception as e:
+            return json.dumps({"error": f"Search failed: {str(e)}"})
+
+    elif action == "index":
+        # Index all playbook bullets to ChromaDB
+        project_path = Path(path) if path else Path.cwd()
+
+        try:
+            from delia.learning.retrieval import get_retriever
+            retriever = get_retriever()
+
+            task_types = ["coding", "testing", "debugging", "security", "architecture",
+                         "deployment", "performance", "api", "git", "project"]
+
+            if task_type:
+                task_types = [task_type]
+
+            indexed_counts = {}
+            project_name = project_path.name  # Use basename for consistent filtering
+            for tt in task_types:
+                bullets = playbook_manager.load_playbook(tt)
+                if not bullets:
+                    continue
+
+                count = await retriever.index_bullets_to_chromadb(
+                    bullets=bullets,
+                    task_type=tt,
+                    project=project_name,
+                    project_path=project_path,
+                )
+                indexed_counts[tt] = count
+
+            return json.dumps({
+                "status": "indexed",
+                "by_task_type": indexed_counts,
+                "total": sum(indexed_counts.values()),
+                "project_path": str(project_path),
+            })
+
+        except Exception as e:
+            return json.dumps({"error": f"Indexing failed: {str(e)}"})
+
     else:
         return json.dumps({"error": f"Unknown action: {action}"})
 
@@ -221,7 +348,7 @@ async def playbook_tool(
 # =============================================================================
 
 async def memory_tool(
-    action: Literal["list", "read", "write", "delete"],
+    action: Literal["list", "read", "write", "delete", "search", "index"],
     name: str | None = None,
     path: str | None = None,
     **kwargs
@@ -233,12 +360,14 @@ async def memory_tool(
         read - Read memory file content
         write - Write/update memory file
         delete - Delete memory file
+        search - Semantic search across memories (query param)
+        index - Re-index all memories to ChromaDB
 
     Args:
         action: The operation to perform
         name: Memory name (without .md extension)
         path: Optional project path (defaults to cwd)
-        **kwargs: Action-specific parameters
+        **kwargs: Action-specific parameters (query for search)
 
     Returns:
         JSON string or markdown content
@@ -295,6 +424,26 @@ async def memory_tool(
 
         memory_file.write_text(content)
 
+        # Sync to ChromaDB for semantic search
+        try:
+            from delia.orchestration.vector_store import get_vector_store
+            from delia.embeddings import get_embeddings_client
+
+            client = await get_embeddings_client()
+            embedding = await client.embed(content)
+
+            if embedding is not None:
+                store = get_vector_store(project_path)
+                store.add_memory(
+                    memory_id=name,
+                    content=content,
+                    embedding=embedding.tolist(),
+                    name=name,
+                    project=project_path.name,
+                )
+        except Exception as e:
+            log.debug("chromadb_memory_sync_failed", error=str(e))
+
         return json.dumps({
             "status": "written",
             "name": name,
@@ -313,10 +462,109 @@ async def memory_tool(
 
         memory_file.unlink()
 
+        # Also remove from ChromaDB
+        try:
+            from delia.orchestration.vector_store import get_vector_store
+            store = get_vector_store(project_path)
+            store.delete_by_filter(
+                store.COLLECTION_MEMORIES,
+                where={"name": name}
+            )
+        except Exception:
+            pass  # ChromaDB cleanup is best-effort
+
         return json.dumps({
             "status": "deleted",
             "name": name
         })
+
+    elif action == "search":
+        query = kwargs.get("query", "")
+        if not query:
+            return json.dumps({"error": "query required for search action"})
+
+        try:
+            from delia.orchestration.vector_store import get_vector_store
+            from delia.embeddings import get_embeddings_client
+
+            # Get query embedding (uses singleton with query caching)
+            client = await get_embeddings_client()
+            query_embedding = await client.embed_query(query)
+
+            if query_embedding is None:
+                return json.dumps({"error": "Failed to generate query embedding"})
+
+            store = get_vector_store(project_path)
+            results = store.search_memories(
+                query_embedding=query_embedding.tolist(),
+                n_results=kwargs.get("limit", 5),
+            )
+
+            return json.dumps({
+                "query": query,
+                "results": [
+                    {
+                        "name": r["metadata"].get("name", r["id"]),
+                        "score": round(r["score"], 3),
+                        "preview": r["content"][:200] + "..." if len(r["content"]) > 200 else r["content"],
+                    }
+                    for r in results
+                ],
+                "count": len(results),
+            })
+
+        except Exception as e:
+            return json.dumps({"error": f"Search failed: {str(e)}"})
+
+    elif action == "index":
+        # Re-index all memories to ChromaDB using batch embeddings
+        try:
+            from delia.orchestration.vector_store import get_vector_store
+            from delia.embeddings import get_embeddings_client
+
+            client = await get_embeddings_client()
+            store = get_vector_store(project_path)
+
+            # Collect all memories for batch processing
+            memories = []
+            for file in memory_dir.glob("*.md"):
+                content = file.read_text()
+                memories.append((file.stem, content))
+
+            if not memories:
+                return json.dumps({
+                    "status": "indexed",
+                    "count": 0,
+                    "project": str(project_path),
+                })
+
+            # Batch embed all memories at once
+            contents = [m[1] for m in memories]
+            embeddings = await client.embed_batch(contents, input_type="document")
+
+            indexed = 0
+            for (name, content), embedding in zip(memories, embeddings):
+                # Skip zero vectors (failed embeddings)
+                if embedding is None or (hasattr(embedding, 'sum') and embedding.sum() == 0):
+                    continue
+
+                store.add_memory(
+                    memory_id=name,
+                    content=content,
+                    embedding=embedding.tolist(),
+                    name=name,
+                    project=project_path.name,
+                )
+                indexed += 1
+
+            return json.dumps({
+                "status": "indexed",
+                "count": indexed,
+                "project": str(project_path),
+            })
+
+        except Exception as e:
+            return json.dumps({"error": f"Indexing failed: {str(e)}"})
 
     else:
         return json.dumps({"error": f"Unknown action: {action}"})
@@ -640,7 +888,7 @@ async def project_tool(
 # =============================================================================
 
 async def admin_tool(
-    action: Literal["switch_model", "queue_status", "mcp_servers", "cleanup_legacy", "cleanup_project", "cleanup_all"],
+    action: Literal["switch_model", "queue_status", "mcp_servers", "cleanup_legacy", "cleanup_project", "cleanup_all", "vector_store"],
     **kwargs
 ) -> str:
     """Unified admin/system management tool.
@@ -652,6 +900,7 @@ async def admin_tool(
         cleanup_legacy - Remove old global sessions/memories/playbooks
         cleanup_project - Clean a project's .delia/ directory
         cleanup_all - Full cleanup of all legacy data
+        vector_store - Get ChromaDB vector store stats
 
     Args:
         action: The operation to perform
@@ -712,6 +961,19 @@ async def admin_tool(
         results = cleanup_all(dry_run=dry_run)
         return json.dumps(results, indent=2)
 
+    elif action == "vector_store":
+        # Get ChromaDB vector store statistics for current project
+        try:
+            from pathlib import Path
+            from ..orchestration.vector_store import get_vector_store
+            project_path = kwargs.get("path") or Path.cwd()
+            store = get_vector_store(project_path)
+            stats = store.get_stats()
+            stats["project"] = str(project_path)
+            return json.dumps(stats, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Vector store unavailable: {str(e)}"})
+
     else:
         return json.dumps({"error": f"Unknown action: {action}"})
 
@@ -730,7 +992,7 @@ def register_consolidated_tools(mcp):
 
     @mcp.tool()
     async def playbook(
-        action: Literal["add", "write", "delete", "prune", "list", "stats", "confirm"],
+        action: Literal["add", "write", "delete", "prune", "list", "stats", "confirm", "search", "index"],
         task_type: str | None = None,
         path: str | None = None,
         content: str | None = None,
@@ -742,15 +1004,19 @@ def register_consolidated_tools(mcp):
         task_description: str | None = None,
         bullets_applied: str | None = None,
         patterns_followed: str | None = None,
+        query: str | None = None,
+        limit: int = 5,
     ) -> str:
         """Unified playbook management (ADR-009).
 
-        Consolidates 7 operations: add, write, delete, prune, list, stats, confirm.
+        Consolidates 9 operations: add, write, delete, prune, list, stats, confirm, search, index.
 
         Examples:
             playbook(action="add", task_type="coding", content="Use async for I/O")
             playbook(action="list")
             playbook(action="stats", task_type="coding")
+            playbook(action="search", query="error handling patterns")
+            playbook(action="index")  # Index all playbooks to ChromaDB
         """
         return await playbook_tool(
             action=action,
@@ -765,25 +1031,32 @@ def register_consolidated_tools(mcp):
             task_description=task_description,
             bullets_applied=bullets_applied,
             patterns_followed=patterns_followed,
+            query=query,
+            limit=limit,
         )
 
     @mcp.tool()
     async def memory(
-        action: Literal["list", "read", "write", "delete"],
+        action: Literal["list", "read", "write", "delete", "search", "index"],
         name: str | None = None,
         path: str | None = None,
         content: str | None = None,
         append: bool = False,
+        query: str | None = None,
+        limit: int = 5,
     ) -> str:
         """Unified memory management (ADR-009).
 
-        Consolidates 4 operations: list, read, write, delete.
+        Consolidates 6 operations: list, read, write, delete, search, index.
         Manages markdown files in .delia/memories/ for persistent project knowledge.
+        ChromaDB-backed semantic search available via search action.
 
         Examples:
             memory(action="list")
             memory(action="read", name="architecture")
             memory(action="write", name="decisions", content="# Key Decisions...")
+            memory(action="search", query="authentication patterns")
+            memory(action="index")  # Re-index all memories to ChromaDB
         """
         return await memory_tool(
             action=action,
@@ -791,6 +1064,8 @@ def register_consolidated_tools(mcp):
             path=path,
             content=content,
             append=append,
+            query=query,
+            limit=limit,
         )
 
     @mcp.tool()
@@ -880,7 +1155,7 @@ def register_consolidated_tools(mcp):
 
     @mcp.tool()
     async def admin(
-        action: Literal["switch_model", "queue_status", "mcp_servers"],
+        action: Literal["switch_model", "queue_status", "mcp_servers", "vector_store"],
         tier: str | None = None,
         model_name: str | None = None,
         mcp_action: str = "status",
@@ -891,12 +1166,13 @@ def register_consolidated_tools(mcp):
     ) -> str:
         """Unified admin/system management (ADR-009).
 
-        Consolidates 3 operations: switch_model, queue_status, mcp_servers.
+        Consolidates 4 operations: switch_model, queue_status, mcp_servers, vector_store.
 
         Examples:
             admin(action="queue_status")
             admin(action="switch_model", tier="coder", model_name="deepcoder:14b")
             admin(action="mcp_servers", mcp_action="status")
+            admin(action="vector_store")  # Get ChromaDB stats
         """
         return await admin_tool(
             action=action,

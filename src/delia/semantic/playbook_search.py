@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import structlog
 
-from ..embeddings import HybridEmbeddingsClient, cosine_similarity
+from ..embeddings import get_embeddings_client, cosine_similarity
 from ..playbook import playbook_manager, PlaybookBullet
 
 log = structlog.get_logger()
@@ -27,12 +27,17 @@ class PlaybookVectorSearch:
     """
 
     def __init__(self):
-        self.client = HybridEmbeddingsClient()
+        self._client = None  # Lazy singleton
+
+    async def _get_client(self):
+        if self._client is None:
+            self._client = await get_embeddings_client()
+        return self._client
 
     async def find_relevant_strategies(
-        self, 
-        task_type: str, 
-        query: str, 
+        self,
+        task_type: str,
+        query: str,
         limit: int = 3,
         threshold: float = 0.5
     ) -> list[PlaybookBullet]:
@@ -40,15 +45,16 @@ class PlaybookVectorSearch:
         bullets = playbook_manager.load_playbook(task_type)
         if not bullets:
             return []
-            
+
         try:
-            query_vec = await self.client.embed(query)
-            
+            client = await self._get_client()
+            query_vec = await client.embed_query(query)  # Cached query embedding
+
             scored_bullets = []
             for bullet in bullets:
                 # We lazily embed bullets if they don't have one (hypothetically)
                 # For now we embed on the fly for search
-                bullet_vec = await self.client.embed(bullet.content)
+                bullet_vec = await client.embed(bullet.content)
                 score = cosine_similarity(query_vec, bullet_vec)
                 
                 if score >= threshold:

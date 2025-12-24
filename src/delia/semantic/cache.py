@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import structlog
 
-from ..embeddings import HybridEmbeddingsClient, cosine_similarity
+from ..embeddings import get_embeddings_client, cosine_similarity
 
 log = structlog.get_logger()
 
@@ -32,10 +32,15 @@ class SemanticCache:
 
     def __init__(self, threshold: float = 0.95):
         self.threshold = threshold
-        self.client = HybridEmbeddingsClient()
+        self._client = None  # Lazy singleton
         self.entries: list[dict[str, Any]] = []
         self._initialized = False
         self._lock = asyncio.Lock()
+
+    async def _get_client(self):
+        if self._client is None:
+            self._client = await get_embeddings_client()
+        return self._client
 
     async def initialize(self) -> None:
         async with self._lock:
@@ -58,21 +63,22 @@ class SemanticCache:
         if not self._initialized:
             await self.initialize()
 
-        query_vec = await self.client.embed(query)
-        
+        client = await self._get_client()
+        query_vec = await client.embed_query(query)  # Use cached query embedding
+
         best_score = 0.0
         best_response = None
-        
+
         for entry in self.entries:
             score = cosine_similarity(query_vec, entry["embedding"])
             if score > best_score:
                 best_score = score
                 best_response = entry["response"]
-        
+
         if best_score >= self.threshold:
             log.info("semantic_cache_hit", score=round(best_score, 3))
             return best_response
-        
+
         return None
 
     async def set(self, query: str, response: str) -> None:
@@ -80,7 +86,8 @@ class SemanticCache:
         if not self._initialized:
             await self.initialize()
 
-        query_vec = await self.client.embed(query)
+        client = await self._get_client()
+        query_vec = await client.embed(query)  # Store with regular embed
         
         async with self._lock:
             self.entries.append({

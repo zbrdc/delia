@@ -23,6 +23,14 @@ import httpx
 import numpy as np
 import structlog
 
+# Load ~/.delia/.env for API keys (Voyage, etc.)
+_delia_env = Path.home() / ".delia" / ".env"
+if _delia_env.exists():
+    for line in _delia_env.read_text().splitlines():
+        if "=" in line and not line.startswith("#"):
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
+
 # Optional dependencies for local fallback
 SENTENCE_TRANSFORMERS_AVAILABLE = False
 try:
@@ -238,9 +246,191 @@ class LocalEmbeddingsProvider:
         pass
 
 
+class VoyageEmbeddingsProvider:
+    """Provider using Voyage AI API for embeddings.
+
+    Voyage AI offers high-quality embeddings optimized for code and documentation.
+    Uses voyage-code-3 model by default (1024 dimensions).
+
+    Features:
+    - Batch embedding for efficiency (batch size 96)
+    - Query caching for repeated searches
+    - Retries with exponential backoff
+
+    Set DELIA_VOYAGE_API_KEY environment variable to enable.
+    """
+
+    VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings"
+    DEFAULT_MODEL = "voyage-code-3"
+    BATCH_SIZE = 96  # Voyage limit is ~120 texts or 320k tokens per batch
+    MAX_RETRIES = 3
+
+    # Query cache (class-level for sharing across instances)
+    _query_cache: dict[str, list[float]] = {}
+    _cache_max_size: int = 1000
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        timeout: float = 30.0,
+    ):
+        # Check multiple env var names for Voyage API key
+        self.api_key = api_key or os.getenv("DELIA_VOYAGE_API_KEY") or os.getenv("NEBNET_VOYAGE_API_KEY") or os.getenv("VOYAGE_API_KEY")
+        self.model = model or os.getenv("DELIA_VOYAGE_MODEL", self.DEFAULT_MODEL)
+        self.timeout = timeout
+        self._client: httpx.AsyncClient | None = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
+
+    def _sanitize_text(self, text: str) -> str:
+        """Sanitize text for embedding - limit length and clean control chars."""
+        import re
+        # Remove control characters
+        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+        # Normalize whitespace
+        text = re.sub(r'\s+', ' ', text)
+        return text[:8000].strip()
+
+    async def embed(self, text: str, input_type: str = "document") -> np.ndarray:
+        """Generate embedding using Voyage AI.
+
+        Args:
+            text: Text to embed
+            input_type: "query" for search queries, "document" for content
+        """
+        embeddings = await self.embed_batch([text], input_type=input_type)
+        return embeddings[0]
+
+    async def embed_batch(
+        self,
+        texts: list[str],
+        input_type: str = "document",
+    ) -> list[np.ndarray]:
+        """Generate embeddings for multiple texts efficiently.
+
+        Args:
+            texts: List of texts to embed
+            input_type: "query" for search queries, "document" for content
+
+        Returns:
+            List of embedding arrays in same order as input
+        """
+        if not self.api_key:
+            raise RuntimeError("DELIA_VOYAGE_API_KEY not set")
+
+        if not texts:
+            return []
+
+        client = await self._get_client()
+        sanitized_texts = [self._sanitize_text(t) for t in texts]
+        all_embeddings: list[np.ndarray] = []
+
+        # Process in batches
+        for i in range(0, len(sanitized_texts), self.BATCH_SIZE):
+            batch = sanitized_texts[i:i + self.BATCH_SIZE]
+
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    response = await client.post(
+                        self.VOYAGE_API_URL,
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": self.model,
+                            "input": batch,
+                            "input_type": input_type,
+                        },
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    batch_embeddings = [
+                        np.array(item["embedding"], dtype=np.float32)
+                        for item in data["data"]
+                    ]
+                    all_embeddings.extend(batch_embeddings)
+                    log.debug(
+                        "voyage_batch_complete",
+                        batch=i // self.BATCH_SIZE + 1,
+                        total=(len(sanitized_texts) - 1) // self.BATCH_SIZE + 1,
+                        count=len(batch),
+                    )
+                    break
+                except Exception as e:
+                    log.warning(
+                        "voyage_batch_failed",
+                        attempt=attempt + 1,
+                        error=str(e),
+                        batch_size=len(batch),
+                    )
+                    if attempt < self.MAX_RETRIES - 1:
+                        await asyncio.sleep(1.0 * (attempt + 1))  # Exponential backoff
+                    else:
+                        # All retries failed - return zeros for this batch
+                        log.error("voyage_batch_exhausted", batch_start=i)
+                        all_embeddings.extend([
+                            np.zeros(1024, dtype=np.float32) for _ in batch
+                        ])
+
+        return all_embeddings
+
+    async def embed_query(self, text: str) -> np.ndarray:
+        """Embed a query with caching (optimized for search matching)."""
+        cache_key = f"{self.model}:query:{text[:100]}"
+
+        # Check cache
+        if cache_key in self._query_cache:
+            return np.array(self._query_cache[cache_key], dtype=np.float32)
+
+        embedding = await self.embed(text, input_type="query")
+
+        # Cache (with size limit)
+        if len(self._query_cache) >= self._cache_max_size:
+            # Remove oldest entry
+            oldest_key = next(iter(self._query_cache))
+            del self._query_cache[oldest_key]
+        self._query_cache[cache_key] = embedding.tolist()
+
+        return embedding
+
+    async def embed_document(self, text: str) -> np.ndarray:
+        """Embed a document (optimized for content storage)."""
+        return await self.embed(text, input_type="document")
+
+    async def embed_documents_batch(self, texts: list[str]) -> list[np.ndarray]:
+        """Embed multiple documents efficiently."""
+        return await self.embed_batch(texts, input_type="document")
+
+    async def health_check(self) -> bool:
+        """Check if Voyage AI is available."""
+        if not self.api_key:
+            return False
+
+        # Try a minimal embedding to verify API key works
+        try:
+            await self.embed("test")
+            return True
+        except Exception:
+            return False
+
+    async def close(self) -> None:
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+
 class HybridEmbeddingsClient:
     """
-    Hybrid embeddings client that tries external API first, then falls back to local model.
+    Hybrid embeddings client with tiered fallback:
+    1. Voyage AI (if DELIA_VOYAGE_API_KEY set) - highest quality
+    2. External API (Ollama/llama.cpp)
+    3. Local sentence-transformers
+
     Implements the same interface as the old EmbeddingsClient for compatibility.
     """
 
@@ -257,6 +447,8 @@ class HybridEmbeddingsClient:
             use_gpu = os.getenv("DELIA_EMBEDDINGS_GPU", "").lower() in ("1", "true", "yes")
             force_cpu = not use_gpu  # Default: CPU (force_cpu=True)
 
+        # Provider priority: Voyage AI > External (Ollama) > Local
+        self.voyage_provider = VoyageEmbeddingsProvider(timeout=timeout)
         self.external_provider = ExternalEmbeddingsProvider(base_url, timeout)
         self.local_provider = LocalEmbeddingsProvider(local_model, force_cpu=force_cpu)
         self.active_provider: EmbeddingsProvider | None = None
@@ -269,7 +461,16 @@ class HybridEmbeddingsClient:
             if self.active_provider:
                 return True
 
-            # If external URL is not provided, try to detect from active backend
+            # Priority 1: Try Voyage AI if API key is set
+            if self.voyage_provider.api_key:
+                if await self.voyage_provider.health_check():
+                    self.active_provider = self.voyage_provider
+                    log.info("embeddings_client_using_voyage_ai", model=self.voyage_provider.model)
+                    return True
+                else:
+                    log.debug("voyage_ai_health_check_failed")
+
+            # Priority 2: Try external API (detect from active backend if not set)
             if not self.external_provider.base_url:
                 from .backend_manager import backend_manager
                 active = backend_manager.get_active_backend()
@@ -277,38 +478,105 @@ class HybridEmbeddingsClient:
                     self.external_provider.base_url = active.url.rstrip("/")
                     log.debug("embeddings_url_detected_from_backend", url=active.url)
 
-            # Determine best provider
             if await self.external_provider.health_check():
                 self.active_provider = self.external_provider
-                # Trigger auto-detection
                 await self.external_provider.detect_model()
                 log.info("embeddings_client_using_external_api", model=self.external_provider.detected_model)
                 return True
-            elif await self.local_provider.health_check():
+
+            # Priority 3: Fall back to local sentence-transformers
+            if await self.local_provider.health_check():
                 self.active_provider = self.local_provider
                 log.info("embeddings_client_using_local_fallback", model=SHARED_EMBEDDING_MODEL)
                 return True
-            else:
-                log.warning("embeddings_client_no_provider_available")
-                return False
+
+            log.warning("embeddings_client_no_provider_available")
+            return False
 
     async def embed(self, text: str) -> np.ndarray:
         """Get embedding vector for text."""
         if not self.active_provider:
             if not await self.initialize():
                 raise RuntimeError("No embeddings provider available")
-        
+
         try:
             return await self.active_provider.embed(text)
         except Exception as e:
-            # If external fails, try switching to local immediately
-            if self.active_provider == self.external_provider:
-                log.warning("external_embeddings_failed_during_call", error=str(e))
+            # Try fallback providers
+            log.warning("embeddings_failed_trying_fallback", error=str(e), provider=type(self.active_provider).__name__)
+
+            # If Voyage failed, try external
+            if self.active_provider == self.voyage_provider:
+                if await self.external_provider.health_check():
+                    self.active_provider = self.external_provider
+                    log.info("switched_to_external_fallback")
+                    return await self.active_provider.embed(text)
+
+            # If external failed, try local
+            if self.active_provider in (self.voyage_provider, self.external_provider):
                 if await self.local_provider.health_check():
                     self.active_provider = self.local_provider
                     log.info("switched_to_local_fallback")
                     return await self.active_provider.embed(text)
             raise
+
+    async def embed_batch(
+        self,
+        texts: list[str],
+        input_type: str = "document",
+    ) -> list[np.ndarray]:
+        """Batch embed multiple texts efficiently.
+
+        Uses Voyage AI's native batch API when available, otherwise
+        falls back to sequential embedding.
+
+        Args:
+            texts: List of texts to embed
+            input_type: "document" for storage, "query" for search
+
+        Returns:
+            List of embedding vectors
+        """
+        if not texts:
+            return []
+
+        if not self.active_provider:
+            if not await self.initialize():
+                raise RuntimeError("No embeddings provider available")
+
+        # Use Voyage AI's efficient batch API if available
+        if self.active_provider == self.voyage_provider:
+            return await self.voyage_provider.embed_batch(texts, input_type)
+
+        # Fallback: sequential embedding for other providers
+        embeddings = []
+        for text in texts:
+            embedding = await self.active_provider.embed(text)
+            embeddings.append(embedding)
+        return embeddings
+
+    async def embed_query(self, text: str) -> np.ndarray:
+        """Embed a query with caching (optimized for search).
+
+        Uses Voyage AI's query cache when available for repeated searches.
+        Queries use input_type="query" which is optimized for retrieval matching.
+
+        Args:
+            text: Query text to embed
+
+        Returns:
+            Embedding vector (cached if Voyage and seen before)
+        """
+        if not self.active_provider:
+            if not await self.initialize():
+                raise RuntimeError("No embeddings provider available")
+
+        # Use Voyage's cached query embedding if available
+        if self.active_provider == self.voyage_provider:
+            return await self.voyage_provider.embed_query(text)
+
+        # Fallback: regular embedding for other providers
+        return await self.active_provider.embed(text)
 
     async def health_check(self) -> bool:
         """Check if any provider is available."""
@@ -318,12 +586,53 @@ class HybridEmbeddingsClient:
 
     async def close(self) -> None:
         """Clean up resources."""
+        await self.voyage_provider.close()
         await self.external_provider.close()
         await self.local_provider.close()
 
 
 # Alias for backward compatibility with RAG modules
 EmbeddingsClient = HybridEmbeddingsClient
+
+
+# =========================================================================
+# SINGLETON FACTORY
+# =========================================================================
+
+_embeddings_client: HybridEmbeddingsClient | None = None
+_embeddings_client_lock = asyncio.Lock()
+
+
+async def get_embeddings_client() -> HybridEmbeddingsClient:
+    """Get or create the global embeddings client singleton.
+
+    Returns an initialized HybridEmbeddingsClient that's reused across
+    all operations, avoiding the overhead of creating new clients.
+
+    Returns:
+        Initialized HybridEmbeddingsClient instance
+    """
+    global _embeddings_client
+
+    if _embeddings_client is not None:
+        return _embeddings_client
+
+    async with _embeddings_client_lock:
+        # Double-check after acquiring lock
+        if _embeddings_client is not None:
+            return _embeddings_client
+
+        client = HybridEmbeddingsClient()
+        await client.initialize()
+        _embeddings_client = client
+        log.info("embeddings_client_singleton_created")
+        return _embeddings_client
+
+
+def reset_embeddings_client() -> None:
+    """Reset the singleton (for testing or reconfiguration)."""
+    global _embeddings_client
+    _embeddings_client = None
 
 
 # Reference content for each category - these get embedded once and cached

@@ -6,7 +6,8 @@ Hybrid Retrieval for Playbook Bullets.
 Implements scoring formula: score = relevance^α × utility^β × recency^γ
 
 Uses HybridEmbeddingsClient for embeddings (Ollama/API/local fallback).
-Pre-computed bullet embeddings stored in .delia/embeddings.json.
+Primary storage: ChromaDB vector database for efficient similarity search.
+Fallback: Pre-computed bullet embeddings in .delia/embeddings.json.
 """
 
 from __future__ import annotations
@@ -83,15 +84,16 @@ class HybridRetriever:
         self._cache_loaded_for: Path | None = None
 
     async def _get_client(self):
-        """Get or create HybridEmbeddingsClient."""
+        """Get the global embeddings client singleton."""
         if self._client is None:
-            from delia.embeddings import HybridEmbeddingsClient
-            self._client = HybridEmbeddingsClient()
-            self._client_available = await self._client.initialize()
-            if self._client_available:
+            from delia.embeddings import get_embeddings_client
+            try:
+                self._client = await get_embeddings_client()
+                self._client_available = True
                 log.debug("retrieval_embeddings_available")
-            else:
-                log.debug("retrieval_embeddings_unavailable_fallback_to_utility")
+            except Exception as e:
+                log.debug("retrieval_embeddings_unavailable_fallback_to_utility", error=str(e))
+                self._client_available = False
         return self._client if self._client_available else None
 
     def _load_embeddings(self, project_path: Path) -> None:
@@ -220,8 +222,9 @@ class HybridRetriever:
         # Load pre-computed embeddings
         self._load_embeddings(project_path)
 
-        # Try to get query embedding
-        query_embedding = await self.generate_embedding(query)
+        # Try to get query embedding with caching
+        client = await self._get_client()
+        query_embedding = await client.embed_query(query) if client else None
         use_semantic = query_embedding is not None and len(self._embedding_cache) > 0
 
         scored: list[ScoredBullet] = []
@@ -317,10 +320,203 @@ class HybridRetriever:
         self._cache_loaded_for = None
 
     async def close(self) -> None:
-        """Clean up resources."""
-        if self._client:
-            await self._client.close()
-            self._client = None
+        """Clean up local resources (singleton client is not closed)."""
+        # Don't close the shared singleton client - just clear reference
+        self._client = None
+        self._client_available = None
+
+    # =========================================================================
+    # CHROMADB-BASED RETRIEVAL (Preferred)
+    # =========================================================================
+
+    def _get_vector_store(self, project_path: Path | str | None = None):
+        """Get the VectorStore instance for a specific project."""
+        from delia.orchestration.vector_store import get_vector_store
+        return get_vector_store(project_path)
+
+    async def index_bullets_to_chromadb(
+        self,
+        bullets: list["PlaybookBullet"],
+        task_type: str,
+        project: str | None = None,
+        project_path: Path | str | None = None,
+    ) -> int:
+        """Index playbook bullets to ChromaDB using batch embeddings.
+
+        Args:
+            bullets: Bullets to index
+            task_type: Task type (coding, testing, etc.)
+            project: Optional project identifier for metadata filtering
+            project_path: Project path for per-project ChromaDB storage
+
+        Returns:
+            Number of bullets indexed
+        """
+        if not bullets:
+            return 0
+
+        store = self._get_vector_store(project_path)
+
+        # Use batch embedding for efficiency
+        client = await self._get_client()
+        if not client:
+            log.warning("indexing_failed_no_client")
+            return 0
+
+        contents = [b.content for b in bullets]
+        embeddings = await client.embed_batch(contents, input_type="document")
+
+        indexed = 0
+        for bullet, embedding in zip(bullets, embeddings):
+            # Skip zero vectors (failed embeddings)
+            if embedding is None or (hasattr(embedding, 'sum') and embedding.sum() == 0):
+                continue
+
+            store.add_playbook_bullet(
+                bullet_id=bullet.id,
+                content=bullet.content,
+                embedding=embedding.tolist(),
+                task_type=task_type,
+                project=project,
+                utility_score=self.compute_utility_score(bullet),
+            )
+            indexed += 1
+
+        log.info("indexed_bullets_to_chromadb", count=indexed, task_type=task_type, project=project)
+        return indexed
+
+    async def retrieve_from_chromadb(
+        self,
+        query: str,
+        task_type: str | None = None,
+        project: str | None = None,
+        project_path: Path | str | None = None,
+        limit: int = 5,
+        min_score: float = 0.1,
+    ) -> list[ScoredBullet]:
+        """Retrieve bullets using ChromaDB semantic search.
+
+        Args:
+            query: Natural language query
+            task_type: Optional filter by task type
+            project: Optional project context for metadata filtering
+            project_path: Project path for per-project ChromaDB storage
+            limit: Max results
+            min_score: Minimum similarity score
+
+        Returns:
+            Scored bullets with semantic relevance
+        """
+        # Get query embedding with caching
+        client = await self._get_client()
+        if not client:
+            log.debug("chromadb_retrieve_no_client")
+            return []
+
+        query_embedding = await client.embed_query(query)
+        if query_embedding is None:
+            log.debug("chromadb_retrieve_no_embedding")
+            return []
+
+        store = self._get_vector_store(project_path)
+        results = store.search_playbook(
+            query_embedding=query_embedding.tolist(),
+            task_type=task_type,
+            project=project,
+            n_results=limit * 2,  # Get extra for filtering
+        )
+
+        if not results:
+            return []
+
+        # Convert to ScoredBullets with utility/recency applied
+        from delia.playbook import PlaybookBullet
+
+        scored = []
+        for r in results:
+            if r["score"] < min_score:
+                continue
+
+            # Reconstruct bullet from metadata
+            meta = r.get("metadata", {})
+            bullet = PlaybookBullet(
+                id=r["id"],
+                content=r["content"],
+                section=meta.get("task_type", "coding"),
+            )
+
+            # Apply hybrid scoring
+            relevance = r["score"]
+            utility = meta.get("utility_score", 0.5)
+            recency = 0.8  # ChromaDB doesn't store recency, use default
+
+            final = self.compute_final_score(relevance, utility, recency)
+
+            scored.append(ScoredBullet(
+                bullet=bullet,
+                final_score=final,
+                relevance_score=relevance,
+                utility_score=utility,
+                recency_score=recency,
+            ))
+
+        scored.sort(key=lambda s: s.final_score, reverse=True)
+
+        log.debug(
+            "chromadb_retrieval",
+            query=query[:50],
+            results=len(scored),
+            task_type=task_type,
+        )
+
+        return scored[:limit]
+
+    async def migrate_json_to_chromadb(
+        self,
+        project_path: Path,
+        task_types: list[str] | None = None,
+    ) -> dict[str, int]:
+        """Migrate existing JSON embeddings to ChromaDB.
+
+        Args:
+            project_path: Project path containing .delia/
+            task_types: Task types to migrate (default: all)
+
+        Returns:
+            Dict of task_type -> count migrated
+        """
+        from delia.playbook import get_playbook_manager
+
+        if task_types is None:
+            task_types = [
+                "coding", "testing", "debugging", "security",
+                "architecture", "deployment", "performance",
+                "api", "git", "project",
+            ]
+
+        # Load existing JSON embeddings
+        self._load_embeddings(project_path)
+
+        pm = get_playbook_manager()
+        pm.set_project(project_path)
+
+        migrated = {}
+        for task_type in task_types:
+            bullets = pm.load_playbook(task_type)
+            if not bullets:
+                continue
+
+            count = await self.index_bullets_to_chromadb(
+                bullets=bullets,
+                task_type=task_type,
+                project=str(project_path),
+                project_path=project_path,
+            )
+            migrated[task_type] = count
+
+        total = sum(migrated.values())
+        log.info("migrated_to_chromadb", total=total, by_type=migrated)
+        return migrated
 
 
 # Singleton

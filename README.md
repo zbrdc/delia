@@ -98,10 +98,42 @@ Delia works with local LLM backends:
 
 | Purpose | Models |
 |---------|--------|
-| Embeddings | `mxbai-embed-large` (required for semantic search) |
 | Quick tasks | `qwen3:4b`, `ministral-3b` |
 | Coding | `deepcoder:14b`, `qwen-coder:14b` |
 | Thinking | `qwen3:14b`, `openthinker:7b` |
+
+## Semantic Search (Embeddings)
+
+Delia uses embeddings for semantic playbook retrieval. Supported providers (in priority order):
+
+### 1. Voyage AI (Recommended)
+Best quality embeddings using `voyage-code-3` model (1024 dimensions).
+
+```bash
+# Add to ~/.delia/.env
+echo "DELIA_VOYAGE_API_KEY=your-key-here" >> ~/.delia/.env
+```
+
+Get an API key at [voyageai.com](https://www.voyageai.com/).
+
+### 2. Ollama (Local)
+Uses `mxbai-embed-large` or `nomic-embed-text` from your local Ollama:
+
+```bash
+ollama pull mxbai-embed-large
+```
+
+### 3. Sentence Transformers (Fallback)
+CPU-based local fallback using `sentence-transformers` library. Slower but works offline.
+
+### Initialize Semantic Search
+After setting up embeddings, index your playbooks:
+
+```bash
+delia migrate  # Index playbooks to ChromaDB
+```
+
+This creates `.delia/chroma/` with vector indices for semantic search.
 
 ## Project Structure
 
@@ -110,8 +142,23 @@ your-project/
 ├── .delia/
 │   ├── playbooks/      # Learned patterns (coding.json, testing.json, ...)
 │   ├── memories/       # Persistent knowledge (architecture.md, ...)
-│   └── profiles/       # Framework guides (fastapi.md, react.md, ...)
+│   ├── profiles/       # Framework guides (fastapi.md, react.md, ...)
+│   └── chroma/         # Vector database for semantic search
 └── CLAUDE.md           # Auto-generated instructions for AI assistants
+```
+
+### What's Stored in ChromaDB
+
+| Collection | Contents |
+|------------|----------|
+| `delia_playbook` | Playbook bullets with embeddings for semantic retrieval |
+| `delia_memories` | Memory files indexed for search |
+| `delia_code` | Code file summaries (optional, for codebase search) |
+| `delia_profiles` | Profile templates |
+
+Search playbooks semantically:
+```python
+playbook(action="search", query="async HTTP patterns")
 ```
 
 ## Architecture
