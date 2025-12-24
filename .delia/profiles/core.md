@@ -1,6 +1,24 @@
 # Delia Framework: Core Profile (v1.2)
 
-## 0. Core Values (Non-Negotiable)
+## 0. Session Initialization (MANDATORY FIRST STEP)
+
+**Every session or context resumption MUST begin with:**
+
+```python
+auto_context(message="<task description>")
+```
+
+This is non-negotiable because:
+- Summarized context lacks loaded playbook bullets
+- Tool recommendations are not carried over
+- Profile guidance must be freshly loaded
+
+**Signs you skipped this step:**
+- You jumped straight into implementation
+- You didn't see bullet IDs in your context
+- You're unsure which patterns apply
+
+## 1. Core Values (Non-Negotiable)
 
 These principles override all other guidance:
 
@@ -12,7 +30,7 @@ These principles override all other guidance:
 
 4. **Fallibility:** You make mistakes. Assume your first solution may be wrong. Verify with tests, grep counts, and user confirmation. "I think" is often wrong - investigate first.
 
-## 1. Library-First Principle (The 50-Line Rule)
+## 2. Library-First Principle (The 50-Line Rule)
 
 **Constraint:** Do not write custom logic for problems solved by industry-standard libraries.
 
@@ -25,7 +43,7 @@ These principles override all other guidance:
 
 - **Scratch Implementation:** Only permitted if the dependency overhead (size/security) outweighs the logic complexity.
 
-## 2. Technical Standards & Patterns
+## 3. Technical Standards & Patterns
 
 All code must adhere to these strict mechanical requirements:
 
@@ -36,7 +54,7 @@ All code must adhere to these strict mechanical requirements:
   - Bad: `log.info("Saved user")`
   - Good: `log.info("user_persistence_success", user_id=user.id, latency_ms=20)`
 
-## 3. Pre-Flight Checklist (Mandatory)
+## 4. Pre-Flight Checklist (Mandatory)
 
 Before a single line of code is finalized, verify against the codebase:
 
@@ -44,19 +62,19 @@ Before a single line of code is finalized, verify against the codebase:
 2. **Validation:** Inputs must be validated at the entry point (e.g., Pydantic models, Zod schemas). Fail fast with specific exceptions.
 3. **Clean-up:** When refactoring, the old implementation must be deleted. No "ghost code" or commented-out blocks.
 
-## 4. Anti-Patterns (Zero Tolerance)
+## 5. Anti-Patterns (Zero Tolerance)
 
 - **The Placeholder:** Never output `// TODO: Implement logic here`. Provide a functional skeleton or the full logic.
 - **State Duplication:** Never store the same data in two different modules. Define a single source of truth.
 - **Magic Values:** No hardcoded strings or integers. All configuration must reside in `.env` or `config.py`.
 - **Bypassing Integration:** New modules must be wired into the main application. Isolated code that isn't called is a failure.
 
-## 5. Documentation Requirements
+## 6. Documentation Requirements
 
 - **Public API:** Every public class/function requires a docstring defining Parameters, Return Type, and Exceptions raised.
 - **"The Why":** Comments should explain *why* a specific architectural choice or edge case handling exists, not *what* the code is doing (the code should be self-documenting).
 
-## 6. Delia Methodology Capture
+## 7. Delia Methodology Capture
 
 When completing any task, ask: **"What did I do differently that worked?"**
 
