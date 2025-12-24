@@ -790,23 +790,28 @@ def doctor() -> None:
 @app.command()
 def run(
     transport: str = typer.Option("stdio", "--transport", "-t", help="Transport: stdio, sse, http"),
-    port: int = typer.Option(8200, "--port", "-p", help="Port for HTTP/SSE"),
+    port: int = typer.Option(8765, "--port", "-p", help="Port for HTTP/SSE backend"),
     host: str = typer.Option("0.0.0.0", "--host", help="Host to bind"),
 ) -> None:
     """
     Start the Delia MCP server.
 
-    This is the default command when running 'delia' without arguments.
-    """
-    # For stdio transport, check if we can use lightweight proxy mode
-    # This avoids loading the heavy MCP server when an HTTP backend is available
-    if transport.lower() == "stdio":
-        from .proxy import maybe_run_proxy
-        if maybe_run_proxy():
-            # Successfully ran as proxy, exit
-            return
+    For stdio transport (default): Runs a lightweight proxy that auto-starts
+    and connects to a shared HTTP backend. This is memory-efficient when
+    multiple AI tools are running.
 
-    # No proxy available or non-stdio transport - load full server
+    For http/sse transport: Runs the full MCP server directly.
+    """
+    transport = transport.lower().strip()
+
+    if transport == "stdio":
+        # ALWAYS use proxy mode for stdio - this auto-starts HTTP backend if needed
+        from .proxy import run_stdio_via_proxy
+        if not run_stdio_via_proxy():
+            raise typer.Exit(1)
+        return
+
+    # For HTTP/SSE, run the full server directly
     from .mcp_server import run_server
     run_server(transport=transport, port=port, host=host)
 

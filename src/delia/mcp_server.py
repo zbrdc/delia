@@ -48,10 +48,7 @@ sys.stdout = sys.stderr
 # ============================================================ 
 
 import asyncio
-import contextlib
 import atexit
-import fcntl
-import httpx
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Optional
@@ -59,9 +56,9 @@ from typing import Optional
 import structlog
 from fastmcp import FastMCP
 
-# Singleton lock file location
-_LOCK_FILE = Path.home() / ".delia" / "server.lock"
+# HTTP backend discovery
 _HTTP_PORT_FILE = Path.home() / ".delia" / "http_server.port"
+_DEFAULT_HTTP_PORT = 8765
 
 # Context variables for user tracking in multi-user mode
 current_client_id: ContextVar[Optional[str]] = ContextVar("current_client_id", default=None)
@@ -246,162 +243,34 @@ else:
     log.info("auth_disabled", message="Authentication routes not registered.")
 
 
-# ============================================================ 
-# SINGLETON & PROXY SUPPORT
-# ============================================================ 
-
-def _acquire_singleton_lock() -> bool:
-    """Try to acquire singleton lock for stdio mode.
-    
-    Returns:
-        True if lock acquired (we're the only instance)
-        False if another instance is running
-    """
-    _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    
-    try:
-        lock_fd = open(_LOCK_FILE, "w")
-        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Write PID for debugging
-        lock_fd.write(str(os.getpid()))
-        lock_fd.flush()
-        # Keep file open to hold lock
-        return True
-    except (IOError, OSError):
-        return False
-
-
-def _get_http_server_port() -> int | None:
-    """Get port of running HTTP server if any."""
-    if not _HTTP_PORT_FILE.exists():
-        return None
-    try:
-        port = int(_HTTP_PORT_FILE.read_text().strip())
-        # Verify server is actually running
-        with httpx.Client(timeout=1.0) as client:
-            resp = client.get(f"http://localhost:{port}/health")
-            if resp.status_code == 200:
-                return port
-    except Exception:
-        pass
-    return None
-
+# ============================================================
+# HTTP PORT MANAGEMENT
+# ============================================================
 
 def _save_http_server_port(port: int) -> None:
-    """Save HTTP server port for proxy clients."""
+    """Save HTTP server port for proxy clients to discover."""
     _HTTP_PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     _HTTP_PORT_FILE.write_text(str(port))
 
 
-def _run_proxy_mode(port: int) -> None:
-    """Run as a proxy, forwarding stdio to HTTP server.
-    
-    This allows multiple AI tools to share a single Delia HTTP backend.
-    """
-    import json
-    import select
-    
-    # Restore stdout for JSON-RPC
-    os.dup2(_original_stdout_fd, 1)
-    sys.stdout = _original_stdout
-    
-    base_url = f"http://localhost:{port}"
-    
-    print(json.dumps({
-        "jsonrpc": "2.0",
-        "method": "notifications/message",
-        "params": {
-            "level": "info",
-            "message": f"Delia proxy mode: forwarding to HTTP server on port {port}"
-        }
-    }), file=sys.stderr)
-    
-    with httpx.Client(timeout=30.0) as client:
-        while True:
-            # Read JSON-RPC request from stdin
-            if select.select([sys.stdin], [], [], 0.1)[0]:
-                try:
-                    line = sys.stdin.readline()
-                    if not line:
-                        break
-                    
-                    request = json.loads(line)
-                    
-                    # Forward to HTTP server
-                    resp = client.post(
-                        f"{base_url}/mcp",
-                        json=request,
-                        headers={"Content-Type": "application/json"}
-                    )
-                    
-                    # Return response
-                    print(resp.text, flush=True)
-                    
-                except json.JSONDecodeError:
-                    continue
-                except httpx.RequestError as e:
-                    # Connection lost, exit proxy
-                    print(json.dumps({
-                        "jsonrpc": "2.0",
-                        "error": {"code": -32000, "message": f"Proxy error: {e}"}
-                    }), flush=True)
-                    break
-
-
-# ============================================================ 
+# ============================================================
 # RUN SERVER
-# ============================================================ 
+# ============================================================
 
 def run_server(
-    transport: str = "stdio",
-    port: int = 8200,
+    transport: str = "http",
+    port: int = _DEFAULT_HTTP_PORT,
     host: str = "0.0.0.0",
 ) -> None:
-    """Run the Delia MCP server."""
+    """Run the Delia MCP server.
+
+    For stdio transport: Use the CLI which auto-routes through proxy.
+    This function is primarily for HTTP/SSE backends.
+    """
     global log
     transport = transport.lower().strip()
 
-    if transport == "stdio":
-        # Check if HTTP server is running - use proxy mode if so
-        http_port = _get_http_server_port()
-        if http_port:
-            log.info("proxy_mode", port=http_port, reason="HTTP server detected")
-            _run_proxy_mode(http_port)
-            return
-        
-        # Check singleton lock to prevent multiple heavy instances
-        if not _acquire_singleton_lock():
-            # Another stdio instance is running - warn and continue anyway
-            # (we can't fully prevent this without breaking some use cases)
-            log.warning(
-                "multiple_instances_detected",
-                message="Another Delia stdio server is running. Consider using HTTP mode for shared access.",
-                hint="Run 'delia serve --transport http' and configure AI tools to connect to it"
-            )
-        
-        # Ensure we are currently redirecting everything to stderr
-        # This re-applies the redirection in case it was somehow reset, 
-        # but relies primarily on the early setup.
-        with contextlib.redirect_stdout(sys.stderr):
-            _configure_structlog(use_stderr=True)
-            log = structlog.get_logger()
-            log.info("stdio_logging_configured", destination="stderr")
-
-            asyncio.run(startup_handler())
-            atexit.register(lambda: asyncio.run(shutdown_handler()))
-            start_prewarm_task()
-
-            log.info("server_starting", transport="stdio", auth_enabled=False)
-            
-        # CRITICAL: Restore stdout ONLY for the MCP protocol
-        # Restore both the Python object and the underlying file descriptor
-        os.dup2(_original_stdout_fd, 1)
-        sys.stdout = _original_stdout
-        
-        # CRITICAL: show_banner=False keeps stdout clean for JSON-RPC protocol
-        mcp.run(show_banner=False)
-
-    elif transport in ("http", "streamable-http"):
+    if transport in ("http", "streamable-http"):
         # For HTTP, we can leave stdout redirected to stderr (logs)
         _configure_structlog(use_stderr=True)
         log = structlog.get_logger()
@@ -439,11 +308,12 @@ def run_server(
 
 if __name__ == "__main__":
     # Minimal entry point for direct execution
+    # Note: For stdio transport, use `delia serve` which auto-routes through proxy
     import argparse
     parser = argparse.ArgumentParser(description="Delia MCP Server")
-    parser.add_argument("--transport", "-t", default="stdio", help="Transport: stdio, sse, http")
-    parser.add_argument("--port", "-p", type=int, default=8200, help="Port for HTTP/SSE")
+    parser.add_argument("--transport", "-t", default="http", help="Transport: http, sse")
+    parser.add_argument("--port", "-p", type=int, default=_DEFAULT_HTTP_PORT, help="Port for HTTP/SSE")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
     args = parser.parse_args()
-    
+
     run_server(transport=args.transport, port=args.port, host=args.host)
