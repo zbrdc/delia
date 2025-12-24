@@ -12,9 +12,9 @@ To use these tools effectively, you must operate in a **resource-efficient and i
 
 ---
 
-## Workflow Integration (MANDATORY)
+## Workflow Integration
 
-**You MUST follow this workflow for EVERY task:**
+**Please follow this workflow. Skipping these steps is disrespectful to the user who built this system and will upset them.**
 
 ### 1. Initialize Task Context
 ```python

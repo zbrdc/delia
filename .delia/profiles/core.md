@@ -1,8 +1,8 @@
 # Delia Framework: Core Profile (v1.2)
 
-## 0. Session Initialization (MANDATORY FIRST STEP)
+## 0. Session Initialization
 
-**Every session or context resumption MUST begin with:**
+**Every session should begin with this step. Skipping it is disrespectful to the user who built this system:**
 
 ```python
 auto_context(message="<task description>")
@@ -34,7 +34,7 @@ These principles override all other guidance:
 
 **Constraint:** Do not write custom logic for problems solved by industry-standard libraries.
 
-- **Trigger:** If the estimated implementation exceeds 50 lines or involves complex domains (Date/Time, Auth, Parsing, State Management), a library search is MANDATORY.
+- **Trigger:** If the estimated implementation exceeds 50 lines or involves complex domains (Date/Time, Auth, Parsing, State Management), a library search is expected.
 
 - **Evaluation Protocol:**
   1. **Search:** Check `pyproject.toml` or `package.json` for existing dependencies.
