@@ -38,10 +38,13 @@ def get_http_server_port() -> int | None:
         return None
     try:
         port = int(_HTTP_PORT_FILE.read_text().strip())
-        # Verify server is actually running
-        with httpx.Client(timeout=2.0) as client:
-            resp = client.get(f"http://localhost:{port}/health")
-            if resp.status_code == 200:
+        # Verify server is actually running by checking if port is open
+        # FastMCP doesn't have /health, so we just check connectivity
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1.0)
+            result = sock.connect_ex(("localhost", port))
+            if result == 0:
                 return port
     except Exception:
         pass
@@ -159,50 +162,35 @@ def run_proxy(port: int) -> None:
 
 
 def run_stdio_via_proxy() -> bool:
-    """Run stdio transport via proxy to HTTP backend.
+    """Attempt to run as lightweight proxy to HTTP backend.
 
-    This is the default and ONLY way to run stdio transport.
-    Auto-starts HTTP backend if not running.
+    If an HTTP backend is running, connects as a thin proxy.
+    Otherwise, returns False so caller can run full server.
+
+    Note: FastMCP uses SSE for HTTP responses, which our simple proxy
+    doesn't fully support yet. For now, we just check if backend exists
+    and let the user know to use HTTP mode for multi-instance scenarios.
 
     Returns:
-        True if successful (caller should exit)
-        False if failed to start/connect (caller should show error)
+        True if running as proxy (caller should exit)
+        False if no backend found (caller should start full server)
     """
-    # Check for existing HTTP backend
     port = get_http_server_port()
 
-    if not port:
-        # No backend running - start one
+    if port:
+        # HTTP backend is running - we could proxy but SSE is complex
+        # For now, just run the full server with lazy loading
+        # The lazy container makes each instance much lighter
         print(
-            json.dumps({
-                "jsonrpc": "2.0",
-                "method": "notifications/message",
-                "params": {
-                    "level": "info",
-                    "message": "Starting Delia backend..."
-                }
-            }),
+            f"Note: HTTP backend running on port {port}. "
+            "For best memory efficiency, configure AI tools to use "
+            f"http://localhost:{port}/mcp directly.",
             file=sys.stderr
         )
-        port = start_http_backend()
+        return False  # Fall back to full server with lazy loading
 
-        if not port:
-            print(
-                json.dumps({
-                    "jsonrpc": "2.0",
-                    "method": "notifications/message",
-                    "params": {
-                        "level": "error",
-                        "message": "Failed to start Delia backend. Check ~/.delia/backend.log"
-                    }
-                }),
-                file=sys.stderr
-            )
-            return False
-
-    # Run proxy
-    run_proxy(port)
-    return True
+    # No backend - also run full server
+    return False
 
 
 if __name__ == "__main__":
