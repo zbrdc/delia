@@ -291,6 +291,10 @@ def run_server(
     global log
     transport = transport.lower().strip()
 
+    # Set project context to current working directory at startup
+    # This ensures memories, playbooks, etc. are project-specific
+    set_project_context(str(Path.cwd()))
+
     if transport == "stdio":
         # For stdio, redirect logs to stderr to keep stdout clean for JSON-RPC
         import contextlib
