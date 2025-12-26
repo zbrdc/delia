@@ -10,7 +10,25 @@ MCP server that adds persistent learning and semantic code intelligence to AI co
 - **LSP Tools** - Semantic code navigation: find references, go to definition, rename symbols
 - **Learning Loop** - Extracts insights from completed tasks and updates playbooks
 
-## Installation
+## Quick Start
+
+```bash
+# 1. Clone and install
+git clone https://github.com/zbrdc/delia.git
+cd delia
+uv sync
+
+# 2. Start HTTP server (recommended for multi-project)
+uv run delia run -t http --port 8765
+
+# 3. Initialize your project (from project directory)
+cd ~/your-project
+uv run --directory ~/git/delia delia init-project
+```
+
+## Complete Setup Guide
+
+### Step 1: Install Delia
 
 ```bash
 git clone https://github.com/zbrdc/delia.git
@@ -18,15 +36,33 @@ cd delia
 uv sync
 ```
 
-## Setup
+### Step 2: Configure MCP Clients
 
-### Option 1: HTTP Transport (Recommended)
+Auto-detect and configure all supported AI clients:
+```bash
+uv run delia install
+```
+
+Or install to a specific client:
+```bash
+uv run delia install claude    # Claude Code
+uv run delia install cursor    # Cursor
+uv run delia install vscode    # VS Code
+```
+
+List available clients:
+```bash
+uv run delia install --list
+```
+
+### Step 3: Start the Server
+
+**Option A: HTTP Transport (Recommended)**
 
 Best for multi-project setups. One server handles all projects.
 
-Start the server (runs in background):
 ```bash
-delia run -t http --port 8765
+uv run delia run -t http --port 8765
 ```
 
 Add to each project's `.mcp.json`:
@@ -41,13 +77,12 @@ Add to each project's `.mcp.json`:
 }
 ```
 
-**Note**: HTTP servers won't appear in Claude Code's `/mcp` list, but tools work normally. Verify with `mcp__delia__health` or by using any Delia tool.
+**Note**: HTTP servers won't appear in Claude Code's `/mcp` list, but tools work normally.
 
-### Option 2: stdio Transport
+**Option B: stdio Transport**
 
-Per-project server, managed by Claude Code. Shows in `/mcp` list.
+Per-project server, managed by the AI client. Shows in `/mcp` list.
 
-Add to Claude Code settings (`~/.claude.json` for global, or project `.mcp.json`):
 ```json
 {
   "mcpServers": {
@@ -59,16 +94,24 @@ Add to Claude Code settings (`~/.claude.json` for global, or project `.mcp.json`
 }
 ```
 
-For Cursor, use `.cursor/mcp.json` in your project root.
+### Step 4: Initialize Your Project
 
-## Initialize a Project
-
+From your project directory:
 ```bash
-cd your-project
-delia init .
+# Using uv (no venv activation needed)
+uv run --directory /path/to/delia delia init-project
+
+# Or if delia is in PATH
+delia init-project
 ```
 
-Creates `.delia/` with playbooks tailored to your tech stack.
+This creates `.delia/` with playbooks tailored to your tech stack.
+
+### Step 5: Verify Setup
+
+```bash
+uv run delia doctor
+```
 
 ## Usage
 
