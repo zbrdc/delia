@@ -1,7 +1,0 @@
-Uninstalled 1 package in 1ms
-Installed 1 package in 4ms
-Warning: Unsloth not installed. Using standard transformers.
-Traceback (most recent call last):
-  File "/home/dan/git/delia/scripts/train_lora.py", line 43, in <module>
-    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-ModuleNotFoundError: No module named 'peft'

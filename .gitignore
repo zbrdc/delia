@@ -93,3 +93,26 @@ data/
 # Fuzz test logs
 logs/
 outputs/
+
+# Temp/debug files
+*.log
+*.err
+*.txt
+!requirements.txt
+!LICENSE.txt
+
+# Playbook files in root (should be in .delia/playbooks/)
+/api.json
+/architecture.json
+/coding.json
+/debugging.json
+/deployment.json
+/git.json
+/orchestration.json
+/performance.json
+/project.json
+/security.json
+/testing.json
+
+# Modelfiles
+Modelfile.*
