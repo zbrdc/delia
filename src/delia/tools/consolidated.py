@@ -30,7 +30,7 @@ _resolve_project_path = get_project_path
 # =============================================================================
 
 async def playbook_tool(
-    action: Literal["add", "write", "delete", "prune", "list", "stats", "confirm", "search", "index"],
+    action: Literal["add", "write", "delete", "prune", "list", "stats", "confirm", "search", "index", "feedback", "learning_stats", "prune_patterns"],
     task_type: str | None = None,
     path: str | None = None,
     **kwargs
@@ -47,6 +47,9 @@ async def playbook_tool(
         confirm - Confirm framework compliance
         search - Semantic search for relevant bullets via ChromaDB
         index - Index all playbook bullets to ChromaDB
+        feedback - Record detection feedback to improve auto_context accuracy
+        learning_stats - Get statistics about learned detection patterns
+        prune_patterns - Remove learned patterns with low effectiveness
 
     Args:
         action: The operation to perform
@@ -345,6 +348,74 @@ async def playbook_tool(
         except Exception as e:
             return json.dumps({"error": f"Indexing failed: {str(e)}"})
 
+    elif action == "feedback":
+        # Record detection feedback to improve auto_context accuracy
+        from ..context_detector import get_pattern_learner
+
+        message = kwargs.get("message")
+        detected_task = kwargs.get("detected_task")
+        correct_task = kwargs.get("correct_task")
+
+        if not message or not detected_task or not correct_task:
+            return json.dumps({"error": "message, detected_task, and correct_task required for feedback action"})
+
+        project_path = _resolve_project_path(path)
+        learner = get_pattern_learner(project_path)
+
+        was_correct = detected_task == correct_task
+        result = learner.record_feedback(
+            message=message,
+            detected_task=detected_task,
+            correct_task=correct_task,
+            was_correct=was_correct,
+        )
+
+        return json.dumps({
+            "success": True,
+            "was_correct": was_correct,
+            "patterns_updated": result["patterns_updated"],
+            "patterns_added": result["patterns_added"],
+            "message": (
+                "Detection was correct, patterns reinforced."
+                if was_correct else
+                f"Learning from feedback: {result['patterns_added']} new patterns added."
+            ),
+        })
+
+    elif action == "learning_stats":
+        # Get statistics about learned detection patterns
+        from ..context_detector import get_pattern_learner
+
+        project_path = _resolve_project_path(path)
+        learner = get_pattern_learner(project_path)
+        stats = learner.get_stats()
+
+        return json.dumps({
+            "project": str(project_path),
+            "learned_patterns": stats,
+            "suggestions": {
+                "prune_command": "Use playbook(action='prune_patterns') to remove ineffective patterns",
+                "effectiveness_threshold": 0.4,
+            },
+        }, indent=2)
+
+    elif action == "prune_patterns":
+        # Remove learned patterns with low effectiveness
+        from ..context_detector import get_pattern_learner
+
+        min_effectiveness = kwargs.get("min_effectiveness", 0.3)
+        min_uses = kwargs.get("min_uses", 5)
+
+        project_path = _resolve_project_path(path)
+        learner = get_pattern_learner(project_path)
+        removed = learner.prune_ineffective(min_effectiveness, min_uses)
+
+        return json.dumps({
+            "success": True,
+            "patterns_removed": removed,
+            "message": f"Pruned {removed} ineffective patterns." if removed > 0 else "No patterns needed pruning.",
+        }, indent=2)
+
     else:
         return json.dumps({"error": f"Unknown action: {action}"})
 
@@ -574,7 +645,7 @@ async def memory_tool(
 # =============================================================================
 
 async def session_tool(
-    action: Literal["list", "stats", "compact", "delete"],
+    action: Literal["list", "stats", "compact", "delete", "snapshot"],
     session_id: str | None = None,
     **kwargs
 ) -> str:
@@ -585,11 +656,12 @@ async def session_tool(
         stats - Get session statistics
         compact - Compact session history with LLM summarization
         delete - Delete session
+        snapshot - Save task state for continuation (requires task_summary, pending_items)
 
     Args:
         action: The operation to perform
         session_id: Session ID (required for stats, compact, delete)
-        **kwargs: Action-specific parameters
+        **kwargs: Action-specific parameters (task_summary, pending_items, key_decisions, files_modified, next_steps for snapshot)
 
     Returns:
         JSON string with operation result
@@ -640,6 +712,101 @@ async def session_tool(
             "status": "deleted" if success else "not_found",
             "session_id": session_id
         })
+
+    elif action == "snapshot":
+        # Save task state for continuation in a new conversation
+        from datetime import datetime
+        from ..playbook import get_playbook_manager
+        from ..context import get_project_path
+
+        task_summary = kwargs.get("task_summary")
+        pending_items = kwargs.get("pending_items")
+
+        if not task_summary or not pending_items:
+            return json.dumps({"error": "task_summary and pending_items required for snapshot action"})
+
+        key_decisions = kwargs.get("key_decisions")
+        files_modified = kwargs.get("files_modified")
+        next_steps = kwargs.get("next_steps")
+        path = kwargs.get("path")
+
+        pm = get_playbook_manager()
+        if path:
+            project_path = Path(path).resolve()
+        elif pm.playbook_dir.exists():
+            project_path = pm.playbook_dir.parent.parent
+        else:
+            project_path = get_project_path()
+
+        memories_dir = project_path / ".delia" / "memories"
+        memories_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            pending_list = json.loads(pending_items) if pending_items else []
+        except json.JSONDecodeError:
+            pending_list = [pending_items]
+
+        try:
+            decisions_dict = json.loads(key_decisions) if key_decisions else {}
+        except json.JSONDecodeError:
+            decisions_dict = {"note": key_decisions} if key_decisions else {}
+
+        try:
+            files_list = json.loads(files_modified) if files_modified else []
+        except json.JSONDecodeError:
+            files_list = [files_modified] if files_modified else []
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            "# Task Snapshot",
+            "",
+            f"*Captured: {timestamp}*",
+            "",
+            "## Summary",
+            task_summary,
+            "",
+            "## Pending Items",
+        ]
+
+        for item in pending_list:
+            lines.append(f"- [ ] {item}")
+        lines.append("")
+
+        if decisions_dict:
+            lines.append("## Key Decisions")
+            for key, value in decisions_dict.items():
+                lines.append(f"- **{key}**: {value}")
+            lines.append("")
+
+        if files_list:
+            lines.append("## Files Modified")
+            for f in files_list:
+                lines.append(f"- `{f}`")
+            lines.append("")
+
+        if next_steps:
+            lines.append("## Next Steps")
+            lines.append(next_steps)
+            lines.append("")
+
+        lines.extend([
+            "---",
+            "*To continue: Read this file at the start of your next session.*",
+        ])
+
+        content = "\n".join(lines)
+        snapshot_path = memories_dir / "task_snapshot.md"
+        snapshot_path.write_text(content)
+
+        return json.dumps({
+            "status": "snapshot_saved",
+            "path": str(snapshot_path.relative_to(project_path)),
+            "message": (
+                "Task state captured. Suggest user start a new conversation. "
+                "The next agent should call memory(action='read', name='task_snapshot') to resume."
+            ),
+            "pending_count": len(pending_list),
+        }, indent=2)
 
     else:
         return json.dumps({"error": f"Unknown action: {action}"})
@@ -864,7 +1031,7 @@ async def profiles_tool(
 # =============================================================================
 
 async def project_tool(
-    action: Literal["init", "scan", "analyze", "sync", "read_instructions"],
+    action: Literal["init", "scan", "analyze", "sync", "read_instructions", "profile", "overview"],
     path: str,
     **kwargs
 ) -> str:
@@ -876,6 +1043,8 @@ async def project_tool(
         analyze - Create Delia index from analysis
         sync - Sync CLAUDE.md to all AI agent configs
         read_instructions - Read existing instruction files
+        profile - Load a specific profile by name
+        overview - Get hierarchical project structure summary
 
     Args:
         action: The operation to perform
@@ -975,6 +1144,70 @@ async def project_tool(
         }
         return json.dumps(result)
 
+    elif action == "profile":
+        # Load a specific profile by name
+        name = kwargs.get("name")
+        if not name:
+            return json.dumps({"error": "name required for profile action"})
+
+        # Ensure .md extension
+        if not name.endswith(".md"):
+            name = f"{name}.md"
+
+        profiles_dir = project_path / ".delia" / "profiles"
+        templates_dir = Path(__file__).parent.parent / "templates" / "profiles"
+
+        content = None
+        source = None
+
+        # Check project profiles first
+        profile_path = profiles_dir / name
+        if profile_path.exists():
+            try:
+                content = profile_path.read_text()
+                source = "project"
+            except Exception as e:
+                return json.dumps({"error": f"Failed to read profile: {e}"})
+
+        # Fall back to templates
+        if content is None:
+            template_path = templates_dir / name
+            if template_path.exists():
+                try:
+                    content = template_path.read_text()
+                    source = "template"
+                except Exception as e:
+                    return json.dumps({"error": f"Failed to read template: {e}"})
+
+        # Profile not found - list available
+        if content is None:
+            available = []
+            if profiles_dir.exists():
+                available.extend(p.name for p in profiles_dir.glob("*.md"))
+            return json.dumps({
+                "error": f"Profile '{name}' not found",
+                "available_profiles": sorted(available),
+            }, indent=2)
+
+        return json.dumps({
+            "name": name,
+            "source": source,
+            "content": content,
+        }, indent=2)
+
+    elif action == "overview":
+        # Get hierarchical project structure summary (was project_overview)
+        from ..orchestration.summarizer import get_summarizer
+
+        summarizer = get_summarizer()
+        await summarizer.initialize()
+        overview = summarizer.get_project_overview()
+
+        if not overview or overview == "Project overview not yet generated.":
+            return json.dumps({"error": "Project not yet indexed. Run project(action='scan') first."}, indent=2)
+
+        return overview
+
     else:
         return json.dumps({"error": f"Unknown action: {action}"})
 
@@ -984,23 +1217,35 @@ async def project_tool(
 # =============================================================================
 
 async def admin_tool(
-    action: Literal["switch_model", "queue_status", "mcp_servers", "cleanup_legacy", "cleanup_project", "cleanup_all", "vector_store"],
+    action: Literal[
+        "switch_model", "queue_status", "mcp_servers", "vector_store",
+        "cleanup_legacy", "cleanup_project", "cleanup_all",
+        "models", "dashboard", "model_info", "tools", "describe",
+        "framework_stats", "framework_cleanup"
+    ],
     **kwargs
 ) -> str:
-    """Unified admin/system management tool.
+    """Unified admin/system management tool (ADR-010).
 
     Actions:
         switch_model - Switch model for specific tier
         queue_status - Get model queue system status
         mcp_servers - Manage external MCP servers
+        vector_store - Get ChromaDB vector store stats
         cleanup_legacy - Remove old global sessions/memories/playbooks
         cleanup_project - Clean a project's .delia/ directory
         cleanup_all - Full cleanup of all legacy data
-        vector_store - Get ChromaDB vector store stats
+        models - List all configured models
+        dashboard - Get dashboard URL
+        model_info - Get info about specific model (requires model_name)
+        tools - List available tools (optional category)
+        describe - Get tool details (requires tool_name)
+        framework_stats - Get framework enforcement stats
+        framework_cleanup - Clean stale trackers (optional max_age_hours)
 
     Args:
         action: The operation to perform
-        **kwargs: Action-specific parameters (dry_run=True for cleanup actions)
+        **kwargs: Action-specific parameters
 
     Returns:
         JSON string with operation result
@@ -1068,6 +1313,78 @@ async def admin_tool(
         except Exception as e:
             return json.dumps({"error": f"Vector store unavailable: {str(e)}"})
 
+    # ADR-010: New actions absorbed from standalone tools
+    elif action == "models":
+        from .admin import models_impl
+        return await models_impl()
+
+    elif action == "dashboard":
+        from .admin import dashboard_url_impl
+        return await dashboard_url_impl()
+
+    elif action == "model_info":
+        from .admin import get_model_info_impl
+        model_name = kwargs.get("model_name")
+        if not model_name:
+            return json.dumps({"error": "model_info requires model_name parameter"})
+        return await get_model_info_impl(model_name)
+
+    elif action == "tools":
+        # List available tools by category
+        from .registry import TOOL_CATEGORIES
+        category = kwargs.get("category")
+
+        # Simplified tool listing
+        return json.dumps({
+            "hint": "Use the MCP tools/list endpoint for full tool listing",
+            "categories": list(TOOL_CATEGORIES.keys()),
+            "filter": category,
+        }, indent=2)
+
+    elif action == "describe":
+        tool_name = kwargs.get("tool_name")
+        if not tool_name:
+            return json.dumps({"error": "describe requires tool_name parameter"})
+        return json.dumps({
+            "hint": "Use the MCP tools/get endpoint for tool details",
+            "tool": tool_name,
+        }, indent=2)
+
+    elif action == "framework_stats":
+        from .handlers_enforcement import get_manager
+        manager = get_manager()
+        stats = manager.get_stats()
+
+        project_details = {}
+        for project in stats["projects"]:
+            tracker = manager.get_tracker(project)
+            project_details[project] = {
+                "context_started": tracker.is_context_started(project),
+                "playbook_queried": tracker.was_playbook_queried(project),
+                "last_activity": tracker.get_last_activity(),
+            }
+
+        return json.dumps({
+            "result": {
+                "active_projects": stats["active_projects"],
+                "projects": project_details,
+            }
+        }, indent=2)
+
+    elif action == "framework_cleanup":
+        from .handlers_enforcement import get_manager
+        manager = get_manager()
+        max_age_hours = kwargs.get("max_age_hours", 1.0)
+        max_age_seconds = int(max_age_hours * 3600)
+        removed = manager.cleanup_stale(max_age_seconds)
+
+        return json.dumps({
+            "result": {
+                "trackers_removed": removed,
+                "remaining_projects": len(manager.list_projects()),
+            }
+        }, indent=2)
+
     else:
         return json.dumps({"error": f"Unknown action: {action}"})
 
@@ -1086,7 +1403,7 @@ def register_consolidated_tools(mcp):
 
     @mcp.tool()
     async def playbook(
-        action: Literal["add", "write", "delete", "prune", "list", "stats", "confirm", "search", "index"],
+        action: Literal["add", "write", "delete", "prune", "list", "stats", "confirm", "search", "index", "feedback", "learning_stats", "prune_patterns"],
         task_type: str | None = None,
         path: str | None = None,
         content: str | None = None,
@@ -1100,8 +1417,13 @@ def register_consolidated_tools(mcp):
         patterns_followed: str | None = None,
         query: str | None = None,
         limit: int = 5,
+        message: str | None = None,
+        detected_task: str | None = None,
+        correct_task: str | None = None,
+        min_effectiveness: float = 0.3,
+        min_uses: int = 5,
     ) -> str:
-        """Manage playbooks: add, write, delete, prune, list, stats, confirm, search, index."""
+        """Manage playbooks: add, write, delete, prune, list, stats, confirm, search, index, feedback, learning_stats, prune_patterns."""
         return await playbook_tool(
             action=action,
             task_type=task_type,
@@ -1117,6 +1439,11 @@ def register_consolidated_tools(mcp):
             patterns_followed=patterns_followed,
             query=query,
             limit=limit,
+            message=message,
+            detected_task=detected_task,
+            correct_task=correct_task,
+            min_effectiveness=min_effectiveness,
+            min_uses=min_uses,
         )
 
     @mcp.tool()
@@ -1142,23 +1469,35 @@ def register_consolidated_tools(mcp):
 
     @mcp.tool()
     async def session(
-        action: Literal["list", "stats", "compact", "delete"],
+        action: Literal["list", "stats", "compact", "delete", "snapshot"],
         session_id: str | None = None,
         force: bool = False,
+        task_summary: str | None = None,
+        pending_items: str | None = None,
+        key_decisions: str | None = None,
+        files_modified: str | None = None,
+        next_steps: str | None = None,
+        path: str | None = None,
     ) -> str:
-        """Unified session management (ADR-009).
+        """Unified session management (ADR-010).
 
-        Consolidates 4 operations: list, stats, compact, delete.
+        Consolidates 5 operations: list, stats, compact, delete, snapshot.
 
         Examples:
             session(action="list")
             session(action="stats", session_id="abc123")
             session(action="compact", session_id="abc123", force=True)
-        """
+            session(action="snapshot", task_summary="...", pending_items='["item1", "item2"]')"""
         return await session_tool(
             action=action,
             session_id=session_id,
             force=force,
+            task_summary=task_summary,
+            pending_items=pending_items,
+            key_decisions=key_decisions,
+            files_modified=files_modified,
+            next_steps=next_steps,
+            path=path,
         )
 
     @mcp.tool()
@@ -1194,7 +1533,7 @@ def register_consolidated_tools(mcp):
 
     @mcp.tool()
     async def project(
-        action: Literal["init", "scan", "analyze", "sync", "read_instructions"],
+        action: Literal["init", "scan", "analyze", "sync", "read_instructions", "profile", "overview"],
         path: str,
         force: bool = False,
         skip_index: bool = False,
@@ -1206,15 +1545,18 @@ def register_consolidated_tools(mcp):
         project_summary: str | None = None,
         coding_bullets: str | None = None,
         content: str | None = None,
+        name: str | None = None,
     ) -> str:
         """Unified project initialization and management (ADR-009).
 
-        Consolidates 5 operations: init, scan, analyze, sync, read_instructions.
+        Consolidates 7 operations: init, scan, analyze, sync, read_instructions, profile, overview.
 
         Examples:
             project(action="init", path="/home/user/myapp")
             project(action="scan", path="/home/user/myapp", phase="overview")
             project(action="sync", path="/home/user/myapp", content="# Instructions...")
+            project(action="profile", path="/home/user/myapp", name="security.md")
+            project(action="overview", path="/home/user/myapp")
         """
         return await project_tool(
             action=action,
@@ -1229,11 +1571,16 @@ def register_consolidated_tools(mcp):
             project_summary=project_summary,
             coding_bullets=coding_bullets,
             content=content,
+            name=name,
         )
 
     @mcp.tool()
     async def admin(
-        action: Literal["switch_model", "queue_status", "mcp_servers", "vector_store"],
+        action: Literal[
+            "switch_model", "queue_status", "mcp_servers", "vector_store",
+            "models", "dashboard", "model_info", "tools", "describe",
+            "framework_stats", "framework_cleanup"
+        ],
         tier: str | None = None,
         model_name: str | None = None,
         mcp_action: str = "status",
@@ -1241,23 +1588,36 @@ def register_consolidated_tools(mcp):
         command: str | None = None,
         name: str | None = None,
         env: str | None = None,
+        tool_name: str | None = None,
+        category: str | None = None,
+        max_age_hours: float = 1.0,
     ) -> str:
-        """Unified admin/system management (ADR-009).
+        """Unified admin/system management (ADR-010).
 
-        Consolidates 4 operations: switch_model, queue_status, mcp_servers, vector_store.
+        Actions:
+        - switch_model, queue_status, mcp_servers, vector_store (existing)
+        - models: List all configured models
+        - dashboard: Get dashboard URL
+        - model_info: Get info about specific model (requires model_name)
+        - tools: List available tools (optional category filter)
+        - describe: Get tool details (requires tool_name)
+        - framework_stats: Get framework enforcement stats
+        - framework_cleanup: Clean stale trackers (optional max_age_hours)
 
         Examples:
-            admin(action="queue_status")
-            admin(action="switch_model", tier="coder", model_name="deepcoder:14b")
-            admin(action="mcp_servers", mcp_action="status")
-            admin(action="vector_store")  # Get ChromaDB stats
-        """
+            admin(action="models")
+            admin(action="dashboard")
+            admin(action="model_info", model_name="qwen3:14b")
+            admin(action="framework_stats")"""
         return await admin_tool(
             action=action,
             tier=tier,
             model_name=model_name,
             mcp_action=mcp_action,
             server_id=server_id,
+            tool_name=tool_name,
+            category=category,
+            max_age_hours=max_age_hours,
             command=command,
             name=name,
             env=env,

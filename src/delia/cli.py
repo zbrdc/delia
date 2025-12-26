@@ -1167,6 +1167,28 @@ def init_project(
         else:
             print_info("Skipping indexing (using existing analysis)...")
 
+        # Step 1b: Copy memory templates and index memories
+        print_info("Setting up starter memories...")
+        templates_dir = Path(__file__).parent / "templates" / "memories"
+        memories_dir = project_root / ".delia" / "memories"
+        memories_dir.mkdir(parents=True, exist_ok=True)
+
+        copied_count = 0
+        if templates_dir.exists():
+            for template_file in templates_dir.glob("*.md"):
+                dest = memories_dir / template_file.name
+                if not dest.exists() or force:
+                    import shutil
+                    shutil.copy(template_file, dest)
+                    copied_count += 1
+
+        if copied_count > 0:
+            print_info(f"Copied {copied_count} memory template(s)")
+            # Index memories for semantic search (one-time batch call)
+            from .tools.consolidated import memory_tool
+            await memory_tool(action="index", path=str(project_root))
+            print_info("Indexed memories for semantic search")
+
         # Step 2: Detect tech stack
         print_info("Detecting tech stack and patterns...")
         tech_stack = _detect_project_tech_stack(project_root)

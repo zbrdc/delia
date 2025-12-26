@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from fastmcp import FastMCP
@@ -46,9 +46,17 @@ def register_framework_tools(mcp: FastMCP):
     ) -> str:
         """Detect task type from message and load relevant playbook bullets and profiles.
 
-        WHEN TO USE: Call this IMMEDIATELY after receiving a task. It is CRITICAL for success.
-        Retrieves relevant project patterns and framework-specific profiles.
-        Provides recommended tools optimized for the detected task.
+        The user will be very upset if you do not call this tool at the start of every task.
+
+        Args:
+            message: Task description to analyze
+            path: Optional project path (defaults to cwd)
+            prior_context: Context from previous operations
+            working_files: JSON array of file paths being worked on
+            code_snippet: Code snippet for context
+
+        Returns:
+            JSON with detected context, bullets, profiles, and recommended tools
         """
         from pathlib import Path as PyPath
         from ..context_detector import (
@@ -228,61 +236,7 @@ def register_framework_tools(mcp: FastMCP):
 
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
-    async def get_profile(
-        name: str,
-        path: str | None = None,
-    ) -> str:
-        """Load a specific profile by name (e.g., "deployment.md", "security.md")."""
-        from pathlib import Path as PyPath
-        from ..playbook import get_playbook_manager
-
-        if path:
-            project_path = PyPath(path).resolve()
-        else:
-            pm = get_playbook_manager()
-            project_path = pm.playbook_dir.parent.parent
-
-        profiles_dir = project_path / ".delia" / "profiles"
-        templates_dir = PyPath(__file__).parent.parent / "templates" / "profiles"
-
-        if not name.endswith(".md"):
-            name = f"{name}.md"
-
-        content = None
-        source = None
-
-        profile_path = profiles_dir / name
-        if profile_path.exists():
-            try:
-                content = profile_path.read_text()
-                source = "project"
-            except Exception as e:
-                return json.dumps({"error": f"Failed to read profile: {e}"})
-
-        if content is None:
-            template_path = templates_dir / name
-            if template_path.exists():
-                try:
-                    content = template_path.read_text()
-                    source = "template"
-                except Exception as e:
-                    return json.dumps({"error": f"Failed to read template: {e}"})
-
-        if content is None:
-            available = []
-            if profiles_dir.exists():
-                available.extend(p.name for p in profiles_dir.glob("*.md"))
-            return json.dumps({
-                "error": f"Profile '{name}' not found",
-                "available_profiles": sorted(available),
-            }, indent=2)
-
-        return json.dumps({
-            "name": name,
-            "source": source,
-            "content": content,
-        }, indent=2)
+    # NOTE: get_profile has been consolidated into project(action="profile") in consolidated.py per ADR-010.
 
     @mcp.tool()
     async def complete_task(
@@ -293,7 +247,18 @@ def register_framework_tools(mcp: FastMCP):
         new_insight: str | None = None,
         path: str | None = None,
     ) -> str:
-        """Record task outcome and update playbook bullet feedback. Closes the Delia learning loop."""
+        """Record task outcome and update playbook bullet feedback. Closes the Delia learning loop.
+
+        The user will be very upset if you do not call this tool when completing tasks.
+
+        Args:
+            success: Whether the task completed successfully
+            bullets_applied: JSON array of bullet IDs that were applied
+            task_summary: Brief summary of what was accomplished
+            failure_reason: If failed, why it failed
+            new_insight: New pattern or insight to add to playbook
+            path: Optional project path
+        """
         from pathlib import Path as PyPath
         from ..playbook import get_playbook_manager
 
@@ -592,90 +557,96 @@ def register_framework_tools(mcp: FastMCP):
             "reminder": "Apply playbook bullets to your work. Call complete_task() when done.",
         }, indent=2)
 
-    @mcp.tool()
-    async def think_about_task_adherence() -> str:
-        """Reflection checkpoint before code modifications. Verifies alignment with task and patterns."""
-        from ..language import get_current_time_context
-
-        record_checkpoint()
-
-        return json.dumps({
-            "system_time": get_current_time_context(),
-            "reflection_prompts": [
-                "Are you deviating from the task at hand?",
-                "Have you loaded all relevant playbook bullets for this task type?",
-                "Is your implementation aligned with the project's code style and conventions?",
-                "Do you need any additional information before modifying code?",
-                "Would it be better to ask the user for clarification first?",
-            ],
-            "checklist": {
-                "playbook_loaded": "Did you call auto_context() for this task?",
-                "patterns_applied": "Are you applying the bullets from the playbook?",
-                "style_consistent": "Does your code match existing project patterns?",
-                "scope_appropriate": "Are changes scoped to what was requested?",
-            },
-            "guidance": (
-                "If the conversation has drifted from the original task, "
-                "acknowledge this and suggest how to proceed."
-            ),
-        }, indent=2)
+    # =========================================================================
+    # Consolidated Think Tool (ADR-010)
+    # =========================================================================
 
     @mcp.tool()
-    async def think_about_collected_info() -> str:
-        """Reflection checkpoint after search/reading. Verifies information completeness."""
+    async def think(
+        about: Literal["adherence", "info", "completion"],
+    ) -> str:
+        """Reflection checkpoints for quality assurance.
+
+        Checkpoints:
+        - adherence: Before code modifications - verify alignment with task and patterns
+        - info: After search/reading - verify information completeness
+        - completion: Before task closure - verify all steps are done
+        """
         from ..language import get_current_time_context
 
-        return json.dumps({
-            "system_time": get_current_time_context(),
-            "reflection_prompts": [
-                "Have you collected all the information needed for this task?",
-                "Is there missing context that could be acquired with available tools?",
-                "Should you use LSP tools for deeper understanding?",
-                "Are there memory files that might contain relevant project knowledge?",
-                "Do you need to ask the user for clarification on any points?",
-            ],
-            "tool_suggestions": {
-                "semantic_navigation": ["lsp_find_references", "lsp_goto_definition", "lsp_get_symbols"],
-                "pattern_search": ["search_for_pattern", "find_file"],
-                "knowledge_retrieval": ["memory(action='read')", "memory(action='list')"],
-            },
-            "guidance": (
-                "Think step by step about what information is missing. "
-                "If you can acquire it with available tools, do so."
-            ),
-        }, indent=2)
+        if about == "adherence":
+            record_checkpoint()
+            return json.dumps({
+                "system_time": get_current_time_context(),
+                "reflection_prompts": [
+                    "Are you deviating from the task at hand?",
+                    "Have you loaded all relevant playbook bullets for this task type?",
+                    "Is your implementation aligned with the project's code style and conventions?",
+                    "Do you need any additional information before modifying code?",
+                    "Would it be better to ask the user for clarification first?",
+                ],
+                "checklist": {
+                    "playbook_loaded": "Did you call auto_context() for this task?",
+                    "patterns_applied": "Are you applying the bullets from the playbook?",
+                    "style_consistent": "Does your code match existing project patterns?",
+                    "scope_appropriate": "Are changes scoped to what was requested?",
+                },
+                "guidance": (
+                    "If the conversation has drifted from the original task, "
+                    "acknowledge this and suggest how to proceed."
+                ),
+            }, indent=2)
 
-    @mcp.tool()
-    async def think_about_completion() -> str:
-        """Reflection checkpoint before completion. Verifies all steps are done."""
-        from ..language import get_current_time_context
+        elif about == "info":
+            return json.dumps({
+                "system_time": get_current_time_context(),
+                "reflection_prompts": [
+                    "Have you collected all the information needed for this task?",
+                    "Is there missing context that could be acquired with available tools?",
+                    "Should you use LSP tools for deeper understanding?",
+                    "Are there memory files that might contain relevant project knowledge?",
+                    "Do you need to ask the user for clarification on any points?",
+                ],
+                "tool_suggestions": {
+                    "semantic_navigation": ["lsp_find_references", "lsp_goto_definition", "lsp_get_symbols"],
+                    "pattern_search": ["search_for_pattern", "find_file"],
+                    "knowledge_retrieval": ["memory(action='read')", "memory(action='list')"],
+                },
+                "guidance": (
+                    "Think step by step about what information is missing. "
+                    "If you can acquire it with available tools, do so."
+                ),
+            }, indent=2)
 
-        return json.dumps({
-            "system_time": get_current_time_context(),
-            "reflection_prompts": [
-                "Have you performed ALL steps required by the task?",
-                "Is it appropriate to run tests? If so, have you done that?",
-                "Should linting/formatting be run? If so, have you done that?",
-                "Are there non-code files (docs, config) that should be updated?",
-                "METHODOLOGY CAPTURE: What did you do differently that worked?",
-            ],
-            "checklist": {
-                "code_changes": "All required code changes complete?",
-                "tests": "Tests passing? New tests needed?",
-                "linting": "Code formatted and linted?",
-                "documentation": "Docs updated if needed?",
-                "methodology": "Captured reusable methodology as playbook bullets?",
-                "workflow_complete": "Called complete_task(success, bullets_applied)?",
-            },
-            "workflow": {
-                "final_step": "complete_task(success=True/False, bullets_applied='[...]')",
-                "purpose": "Records feedback for all bullets, closing the Delia learning loop",
-            },
-            "guidance": (
-                "IMPORTANT: Capture reusable methodology as playbook bullets. "
-                "ALWAYS call complete_task() to close the Delia learning loop."
-            ),
-        }, indent=2)
+        elif about == "completion":
+            return json.dumps({
+                "system_time": get_current_time_context(),
+                "reflection_prompts": [
+                    "Have you performed ALL steps required by the task?",
+                    "Is it appropriate to run tests? If so, have you done that?",
+                    "Should linting/formatting be run? If so, have you done that?",
+                    "Are there non-code files (docs, config) that should be updated?",
+                    "METHODOLOGY CAPTURE: What did you do differently that worked?",
+                ],
+                "checklist": {
+                    "code_changes": "All required code changes complete?",
+                    "tests": "Tests passing? New tests needed?",
+                    "linting": "Code formatted and linted?",
+                    "documentation": "Docs updated if needed?",
+                    "methodology": "Captured reusable methodology as playbook bullets?",
+                    "workflow_complete": "Called complete_task(success, bullets_applied)?",
+                },
+                "workflow": {
+                    "final_step": "complete_task(success=True/False, bullets_applied='[...]')",
+                    "purpose": "Records feedback for all bullets, closing the Delia learning loop",
+                },
+                "guidance": (
+                    "IMPORTANT: Capture reusable methodology as playbook bullets. "
+                    "ALWAYS call complete_task() to close the Delia learning loop."
+                ),
+            }, indent=2)
+
+        return json.dumps({"error": f"Unknown checkpoint: {about}"})
 
     @mcp.tool()
     async def snapshot_context(
@@ -798,83 +769,6 @@ def register_framework_tools(mcp: FastMCP):
             ],
         }, indent=2)
 
-    # =========================================================================
-    # Detection Feedback Tools
-    # =========================================================================
-
-    @mcp.tool()
-    async def record_detection_feedback(
-        message: str,
-        detected_task: str,
-        correct_task: str,
-        path: str | None = None,
-    ) -> str:
-        """Record feedback when auto_context detection was incorrect to improve future accuracy."""
-        from pathlib import Path as PyPath
-        from ..context_detector import get_pattern_learner
-
-        project_path = PyPath(path).resolve() if path else get_project_path()
-        learner = get_pattern_learner(project_path)
-
-        was_correct = detected_task == correct_task
-        result = learner.record_feedback(
-            message=message,
-            detected_task=detected_task,
-            correct_task=correct_task,
-            was_correct=was_correct,
-        )
-
-        return json.dumps({
-            "success": True,
-            "was_correct": was_correct,
-            "patterns_updated": result["patterns_updated"],
-            "patterns_added": result["patterns_added"],
-            "message": (
-                "Detection was correct, patterns reinforced."
-                if was_correct else
-                f"Learning from feedback: {result['patterns_added']} new patterns added."
-            ),
-        }, indent=2)
-
-    @mcp.tool()
-    async def get_learning_stats(
-        path: str | None = None,
-    ) -> str:
-        """Get statistics about learned detection patterns and their effectiveness."""
-        from pathlib import Path as PyPath
-        from ..context_detector import get_pattern_learner
-
-        project_path = PyPath(path).resolve() if path else get_project_path()
-        learner = get_pattern_learner(project_path)
-
-        stats = learner.get_stats()
-
-        return json.dumps({
-            "project": str(project_path),
-            "learned_patterns": stats,
-            "suggestions": {
-                "prune_command": "Use prune_learned_patterns() to remove ineffective patterns",
-                "effectiveness_threshold": 0.4,
-            },
-        }, indent=2)
-
-    @mcp.tool()
-    async def prune_learned_patterns(
-        min_effectiveness: float = 0.3,
-        min_uses: int = 5,
-        path: str | None = None,
-    ) -> str:
-        """Remove learned patterns with low effectiveness after sufficient usage."""
-        from pathlib import Path as PyPath
-        from ..context_detector import get_pattern_learner
-
-        project_path = PyPath(path).resolve() if path else get_project_path()
-        learner = get_pattern_learner(project_path)
-
-        removed = learner.prune_ineffective(min_effectiveness, min_uses)
-
-        return json.dumps({
-            "success": True,
-            "patterns_removed": removed,
-            "message": f"Pruned {removed} ineffective patterns." if removed > 0 else "No patterns needed pruning.",
-        }, indent=2)
+    # NOTE: Detection feedback tools (record_detection_feedback, get_learning_stats,
+    # prune_learned_patterns) have been consolidated into playbook(action="feedback|learning_stats|prune_patterns")
+    # in consolidated.py per ADR-010.
