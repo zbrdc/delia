@@ -271,24 +271,129 @@ def matches_container_path(symbol: dict, container_path: list[str]) -> bool:
 
 
 def register_lsp_tools(mcp: FastMCP):
-    """Register LSP tools with FastMCP."""
+    """Register LSP tools with FastMCP.
 
-    # Register tools using the public functions directly
-    mcp.tool(name="lsp_goto_definition")(lsp_goto_definition)
-    mcp.tool(name="lsp_find_references")(lsp_find_references)
-    mcp.tool(name="lsp_hover")(lsp_hover)
-    mcp.tool(name="lsp_get_symbols")(lsp_get_symbols)
-    mcp.tool(name="lsp_find_symbol")(lsp_find_symbol)
-    mcp.tool(name="lsp_find_referencing_symbols")(lsp_find_referencing_symbols)
-    mcp.tool(name="lsp_find_symbol_semantic")(lsp_find_symbol_semantic)
-    mcp.tool(name="lsp_get_hot_files")(lsp_get_hot_files)
-    mcp.tool(name="lsp_move_symbol")(lsp_move_symbol)
-    mcp.tool(name="lsp_extract_method")(lsp_extract_method)
-    mcp.tool(name="lsp_batch")(lsp_batch)
-    mcp.tool(name="lsp_organize_imports")(lsp_organize_imports)
-    mcp.tool(name="lsp_get_dependencies")(lsp_get_dependencies)
-    mcp.tool(name="lsp_batch_history")(lsp_batch_history)
-    mcp.tool(name="lsp_batch_undo")(lsp_batch_undo)
+    MCP wrappers auto-detect workspace from project context, eliminating
+    the need for callers to pass workspace explicitly. The underlying
+    functions still accept workspace for internal/programmatic use.
+    """
+
+    # === MCP Wrappers (auto-detect workspace) ===
+    # These hide the workspace parameter from the MCP schema while
+    # the underlying functions retain it for programmatic access.
+
+    @mcp.tool(name="lsp_goto_definition")
+    async def _mcp_goto_definition(path: str, line: int, character: int) -> str:
+        """Find the definition of a symbol at position. Supports Python, TS, Rust, Go."""
+        return await lsp_goto_definition(path, line, character)
+
+    @mcp.tool(name="lsp_find_references")
+    async def _mcp_find_references(path: str, line: int, character: int) -> str:
+        """Find all references to a symbol at position."""
+        return await lsp_find_references(path, line, character)
+
+    @mcp.tool(name="lsp_hover")
+    async def _mcp_hover(path: str, line: int, character: int) -> str:
+        """Get documentation and type info for a symbol at position."""
+        return await lsp_hover(path, line, character)
+
+    @mcp.tool(name="lsp_get_symbols")
+    async def _mcp_get_symbols(path: str) -> str:
+        """Get all symbols in a file (classes, functions, methods, variables)."""
+        return await lsp_get_symbols(path)
+
+    @mcp.tool(name="lsp_find_symbol")
+    async def _mcp_find_symbol(
+        name: str,
+        path: str | None = None,
+        kind: str | None = None,
+        kinds: list[str] | None = None,
+        depth: int | None = None,
+        include_body: bool = False,
+    ) -> str:
+        """Find symbols by name. Supports path syntax: 'Class.method' or 'mod::func'."""
+        return await lsp_find_symbol(name, path=path, kind=kind, kinds=kinds, depth=depth, include_body=include_body)
+
+    @mcp.tool(name="lsp_find_referencing_symbols")
+    async def _mcp_find_referencing_symbols(
+        path: str,
+        line: int,
+        character: int,
+        kinds: list[str] | None = None,
+        include_body: bool = False,
+    ) -> str:
+        """Find symbols containing references to the symbol at position."""
+        return await lsp_find_referencing_symbols(path, line, character, kinds=kinds, include_body=include_body)
+
+    @mcp.tool(name="lsp_find_symbol_semantic")
+    async def _mcp_find_symbol_semantic(
+        query: str,
+        top_k: int = 10,
+        kinds: list[str] | None = None,
+        include_body: bool = False,
+        boost_recent: bool = True,
+    ) -> str:
+        """Find symbols by natural language query using semantic search + LSP."""
+        return await lsp_find_symbol_semantic(query, top_k=top_k, kinds=kinds, include_body=include_body, boost_recent=boost_recent)
+
+    @mcp.tool(name="lsp_get_hot_files")
+    async def _mcp_get_hot_files(limit: int = 10, since_hours: float = 24) -> str:
+        """Get recently modified files."""
+        return await lsp_get_hot_files(limit=limit, since_hours=since_hours)
+
+    @mcp.tool(name="lsp_move_symbol")
+    async def _mcp_move_symbol(
+        source_path: str,
+        symbol_name: str,
+        dest_path: str,
+        update_imports: bool = True,
+        cleanup_imports: bool = True,
+    ) -> str:
+        """Move a symbol to another file, updating imports across codebase."""
+        return await lsp_move_symbol(source_path, symbol_name, dest_path, update_imports=update_imports, cleanup_imports=cleanup_imports)
+
+    @mcp.tool(name="lsp_extract_method")
+    async def _mcp_extract_method(
+        path: str,
+        start_line: int,
+        end_line: int,
+        new_name: str | None = None,
+    ) -> str:
+        """Extract lines into a new method, replacing original with a call."""
+        return await lsp_extract_method(path, start_line, end_line, new_name=new_name)
+
+    @mcp.tool(name="lsp_batch")
+    async def _mcp_batch(operations: str) -> str:
+        """Execute multiple LSP operations in sequence with undo support."""
+        return await lsp_batch(operations)
+
+    @mcp.tool(name="lsp_organize_imports")
+    async def _mcp_organize_imports(
+        path: str,
+        remove_unused: bool = True,
+        sort_imports: bool = True,
+    ) -> str:
+        """Organize imports in a Python file using Ruff."""
+        return await lsp_organize_imports(path, remove_unused=remove_unused, sort_imports=sort_imports)
+
+    @mcp.tool(name="lsp_get_dependencies")
+    async def _mcp_get_dependencies(
+        path: str,
+        include_symbols: bool = True,
+        max_depth: int = 2,
+    ) -> str:
+        """Show file exports, imports, and dependents."""
+        return await lsp_get_dependencies(path, include_symbols=include_symbols, max_depth=max_depth)
+
+    @mcp.tool(name="lsp_batch_history")
+    async def _mcp_batch_history(limit: int = 10) -> str:
+        """List recent batch operations available for undo."""
+        return await lsp_batch_history(limit=limit)
+
+    @mcp.tool(name="lsp_batch_undo")
+    async def _mcp_batch_undo(batch_id: str | None = None) -> str:
+        """Undo a batch operation, restoring files to previous state."""
+        return await lsp_batch_undo(batch_id=batch_id)
     
     # These have gating, so we wrap them to include the check
     @mcp.tool()

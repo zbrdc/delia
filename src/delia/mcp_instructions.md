@@ -2,6 +2,21 @@
 
 This guide provides strategies for utilizing available semantic tools to efficiently navigate and modify this codebase.
 
+## Why This Framework Matters
+
+**Delia transforms you from a generic assistant into a project specialist.**
+
+Your base training is frozen—it cannot learn from this specific codebase. But Delia's learning loop captures patterns, mistakes, and insights as you work. Each `complete_task()` call feeds back into playbooks that make you faster and more accurate on *this* project.
+
+Think of it as **reinforcement learning for coding assistants**:
+- Early tasks: You rely on general knowledge, make mistakes, discover patterns
+- After 10+ tasks: Playbooks contain project-specific idioms, common pitfalls, proven solutions
+- After 50+ tasks: You operate like a senior developer who's worked on this codebase for months
+
+**The investment pays compound returns.** A 2-second `auto_context()` call now saves minutes of exploration later.
+
+---
+
 ## Mental Model: How to Succeed
 
 To use these tools effectively, you must operate in a **resource-efficient and intelligent manner**. Always keep in mind to not read or generate content that is not needed for the task at hand. **Large file reads are a sign of a poorly performing agent.**
@@ -57,6 +72,21 @@ Instead, use symbolic tools for overviews and relations, then read only necessar
   - `lsp_find_symbol(name="Foo")` → Find filename.
   - `lsp_get_symbols(path)` → Find line range for `Foo.bar`.
   - `read_file(path, start_line, end_line)` → Read only the body.
+
+### Semantic Search vs Grep: When to Use Which
+
+| Use Case | Tool | Why |
+| :--- | :--- | :--- |
+| "Find where errors are handled" | `semantic_search` | Intent-based, finds conceptually related code |
+| "Find exact string `raise ValueError`" | `search_for_pattern` | Literal match, precise |
+| "Find authentication logic" | `semantic_search` | May be named `login`, `auth`, `session`, etc. |
+| "Find all uses of `config.API_KEY`" | `search_for_pattern` | Exact identifier match |
+| "How is caching implemented?" | `semantic_search` | Conceptual question, multiple possible implementations |
+| "Find `TODO` comments" | `search_for_pattern` | Literal string pattern |
+
+**Rule of thumb**:
+- **Semantic search** = "I know what I want, not what it's called"
+- **Grep/pattern search** = "I know the exact string/symbol"
 
 ### Modification Safety
 Operational checkpoints are required at phase transitions:
@@ -116,6 +146,28 @@ snapshot_context(
 ## Constraints
 
 - **Hard Gating**: File modifications require a preceding call to `think_about_task_adherence()`.
-- **Symbolic Priority**: **I WILL BE VERY UNHAPPY IF YOU GREP FOR CODE WHEN LSP TOOLS ARE AVAILABLE.**
+- **Symbolic Priority**: Use LSP tools over grep when navigating code structure.
 - **Atomic Operations**: Favor small, targeted edits over massive file rewrites.
 - **Learning Loop**: Always finalize tasks with `complete_task()` to preserve patterns.
+
+---
+
+## The Learning Loop (Critical)
+
+**This is not optional overhead—it's how you become exceptional at this codebase.**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  auto_context() ──► Work on task ──► complete_task()        │
+│        │                                    │               │
+│        └────── Playbooks improve ◄──────────┘               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Each cycle:
+1. **auto_context()** loads patterns from previous sessions
+2. You apply those patterns (faster, fewer mistakes)
+3. **complete_task()** captures what worked (and what didn't)
+4. Next session starts smarter
+
+**Skip this loop and you reset to zero every conversation.** Honor it and you compound knowledge across hundreds of sessions.
