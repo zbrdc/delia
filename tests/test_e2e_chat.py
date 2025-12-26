@@ -189,7 +189,7 @@ class TestE2EChatTooling:
         expected_tools = [
             "read_file", "list_directory", "search_code",
             "web_fetch", "web_search",
-            "write_file", "delete_file", "shell_exec",
+            "write_file", "shell_exec",  # delete_file removed per ADR-010
             "replace_in_file", "insert_into_file"
         ]
         for tool_name in expected_tools:

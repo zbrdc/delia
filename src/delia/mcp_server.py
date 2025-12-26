@@ -197,8 +197,8 @@ mcp = FastMCP("delia", instructions=_build_dynamic_instructions())
 # TOOL REGISTRATION (Profile-based)
 # ============================================================
 # Profiles:
-# - light (~35 tools): Files, LSP, Framework, Semantic - MINIMUM VIABLE
-# - standard (~50 tools): + Consolidated, Git, Admin, Batch ops [DEFAULT]
+# - light (~23 tools): Files, LSP, Framework, Semantic - MINIMUM VIABLE
+# - standard (~31 tools): + Consolidated, Git, Admin, Batch ops [DEFAULT]
 # - full: + MCP resources
 #
 # Local model delegation (delegate, think, batch, chain, workflow, agent)
@@ -220,16 +220,16 @@ delegation_enabled = os.getenv("DELIA_DELEGATION", "false").lower() in ("true", 
 log.info("tool_profile_selected", profile=tool_profile, delegation=delegation_enabled)
 
 # =========================================================================
-# LIGHT PROFILE (~35 tools) - ALWAYS REGISTERED
+# LIGHT PROFILE (~23 tools) - ALWAYS REGISTERED
 # These are the minimum viable tools for Delia to function
 # =========================================================================
 register_file_tools(mcp)       # read_file, write_file, edit_file, list_dir, etc.
 register_lsp_tools(mcp)        # lsp_*, semantic code navigation
 register_framework_tools(mcp)  # auto_context, complete_task, think_about_*, etc.
-register_semantic_tools(mcp)   # semantic_search, get_related_files, codebase_graph
+register_semantic_tools(mcp)   # semantic_search, codebase_graph (consolidated per ADR-010)
 
 # =========================================================================
-# STANDARD PROFILE (~50 tools) - DEFAULT
+# STANDARD PROFILE (~31 tools) - DEFAULT
 # Adds consolidated tools, admin, git, batch operations
 # =========================================================================
 if tool_profile in ("standard", "full"):
@@ -273,7 +273,7 @@ else:
 # ============================================================
 
 def _save_http_server_port(port: int) -> None:
-    """Save HTTP server port for proxy clients to discover."""
+    """Save HTTP server port for client discovery."""
     _HTTP_PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     _HTTP_PORT_FILE.write_text(str(port))
 
@@ -328,12 +328,12 @@ def run_server(
         atexit.register(lambda: asyncio.run(shutdown_handler()))
         start_prewarm_task()
 
-        # Save port for proxy clients to discover
+        # Save port for client discovery
         _save_http_server_port(port)
         atexit.register(lambda: _HTTP_PORT_FILE.unlink(missing_ok=True))
 
         auth_endpoints = ["/auth/register"] if config.auth_enabled else []
-        log.info("server_starting", transport="http", host=host, port=port, endpoints=auth_endpoints, proxy_enabled=True)
+        log.info("server_starting", transport="http", host=host, port=port, endpoints=auth_endpoints)
         mcp.run(transport="http", host=host, port=port)
 
     elif transport == "sse":

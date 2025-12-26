@@ -497,7 +497,7 @@ async def init_project(
     force: bool = False,
     skip_index: bool = False,
     parallel: int = 4,
-    use_calling_agent: bool = True,
+    use_calling_agent: bool = False,
 ) -> str:
     """
     Initialize a project with Delia Framework.
@@ -1098,31 +1098,5 @@ def register_admin_tools(mcp: FastMCP):
         """Check health status of Delia and all configured GPU backends."""
         return await health_impl()
 
-    @mcp.tool()
-    async def dashboard_url() -> str:
-        """
-        Get the URL of the running Delia dashboard.
-
-        The dashboard auto-launches with the MCP server and provides:
-        - System health and backend status
-        - Tool usage metrics and analytics
-        - Session browser
-        - Delia Framework editor (playbooks, memories)
-        - Dependency graph visualization
-
-        Returns:
-            JSON with dashboard URL and status.
-        """
-        return await dashboard_url_impl()
-
-    @mcp.tool()
-    async def models() -> str:
-        """List all configured models across all GPU backends."""
-        return await models_impl()
-
-    # switch_backend removed - use admin(action="switch_model") instead
-
-    @mcp.tool()
-    async def get_model_info_tool(model_name: str) -> str:
-        """Get detailed information about a specific model."""
-        return await get_model_info_impl(model_name)
+    # ADR-010: dashboard_url, models, get_model_info_tool moved to admin(action=...)
+    # See consolidated.py for: admin(action="dashboard|models|model_info")

@@ -1062,7 +1062,7 @@ async def project_tool(
         force = kwargs.get("force", False)
         skip_index = kwargs.get("skip_index", False)
         parallel = kwargs.get("parallel", 4)
-        use_calling_agent = kwargs.get("use_calling_agent", True)
+        use_calling_agent = kwargs.get("use_calling_agent", False)
 
         # Import and call init_project implementation
         from ..tools.admin import init_project
@@ -1520,7 +1520,7 @@ def register_consolidated_tools(mcp):
         force: bool = False,
         skip_index: bool = False,
         parallel: int = 4,
-        use_calling_agent: bool = True,
+        use_calling_agent: bool = False,
         max_files: int = 20,
         preview_chars: int = 500,
         phase: str = "overview",

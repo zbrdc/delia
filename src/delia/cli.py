@@ -796,29 +796,13 @@ def run(
     """
     Start the Delia MCP server.
 
-    For stdio transport (default): Runs a lightweight proxy that auto-starts
-    and connects to a shared HTTP backend. This is memory-efficient when
-    multiple AI tools are running.
-
-    For http/sse transport: Runs the full MCP server directly.
+    Transports:
+        stdio: For single-client local use (default)
+        http:  For multi-client shared server (recommended)
+        sse:   Legacy SSE transport
     """
     transport = transport.lower().strip()
-
-    # Import server module
     from .mcp_server import run_server
-
-    if transport == "stdio":
-        # Check if we can use lightweight proxy (returns True if handled)
-        from .proxy import run_stdio_via_proxy
-        if run_stdio_via_proxy():
-            return  # Proxy handled it
-
-        # No proxy - run full server with stdio transport
-        # (lazy loading in container keeps memory reasonable)
-        run_server(transport="stdio", port=port, host=host)
-        return
-
-    # For HTTP/SSE, run the full server directly
     run_server(transport=transport, port=port, host=host)
 
 

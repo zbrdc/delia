@@ -4,7 +4,7 @@
 """
 Service Container for Delia - Dependency Injection and Lifecycle Management.
 
-Uses lazy initialization to reduce memory footprint for proxy/secondary instances.
+Uses lazy initialization to reduce memory footprint.
 Heavy services (model_queue, model_router, etc.) are only created when first accessed.
 """
 

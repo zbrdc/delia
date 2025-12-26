@@ -9,9 +9,11 @@ the dependency graph. They are essential for understanding codebases.
 
 Tools:
 - semantic_search: Find code by meaning, not just text matching
-- get_related_files: Find files connected via imports/dependencies
 - codebase_graph: Query the project dependency structure
-- explain_dependency: Understand why files are related
+  - Also handles: related files (depth>1), explain dependency (explain_source/target)
+
+NOTE: get_related_files, explain_dependency, project_overview have been consolidated
+per ADR-010 into codebase_graph and project(action="overview").
 """
 
 from __future__ import annotations
@@ -57,57 +59,75 @@ def register_semantic_tools(mcp: FastMCP):
         }, indent=2)
 
     @mcp.tool()
-    async def get_related_files(
-        file_path: str,
-        depth: int = 2,
-    ) -> str:
-        """Get files related via imports/dependencies (N hops in dependency graph)."""
-        from ..orchestration.graph import get_symbol_graph
-
-        graph = get_symbol_graph()
-        await graph.initialize()
-
-        # Normalize path
-        if file_path not in graph.nodes:
-            matches = [p for p in graph.nodes if file_path in p]
-            if not matches:
-                return json.dumps({"error": f"File not found in graph: {file_path}"})
-            file_path = matches[0]
-
-        related = graph.get_related_files(file_path, max_depth=depth)
-
-        return json.dumps({
-            "file": file_path,
-            "depth": depth,
-            "related_count": len(related),
-            "related": related,
-        }, indent=2)
-
-    @mcp.tool()
     async def codebase_graph(
         file_path: str | None = None,
         depth: int = 1,
+        explain_source: str | None = None,
+        explain_target: str | None = None,
     ) -> str:
-        """Query dependency graph for a file. Use semantic_search() for code search."""
+        """Query dependency graph for a file.
+
+        Consolidated from get_related_files, explain_dependency per ADR-010.
+
+        Usage modes:
+        - No args: Returns graph summary (top importers, most imported)
+        - file_path only: Returns file info (imports, symbol count)
+        - file_path + depth > 1: Returns related files (N hops away)
+        - explain_source + explain_target: Explains dependency between files
+
+        Use semantic_search() for meaning-based code search.
+        """
         from ..orchestration.graph import get_symbol_graph
 
         graph = get_symbol_graph()
         await graph.initialize()
 
+        # Mode: Explain dependency between two files
+        if explain_source and explain_target:
+            # Normalize paths
+            for path_var, name in [(explain_source, "source"), (explain_target, "target")]:
+                if path_var not in graph.nodes:
+                    matches = [p for p in graph.nodes if path_var in p]
+                    if not matches:
+                        return json.dumps({"error": f"{name} file not found: {path_var}"})
+
+            explanation = await graph.explain_dependency(explain_source, explain_target)
+            return json.dumps({
+                "mode": "explain_dependency",
+                "source": explain_source,
+                "target": explain_target,
+                "explanation": explanation,
+            }, indent=2)
+
+        # Mode: File-specific queries
         if file_path:
             if file_path not in graph.nodes:
                 matches = [p for p in graph.nodes if file_path in p]
                 if not matches:
                     return json.dumps({"error": f"File not found: {file_path}"})
                 file_path = matches[0]
+
+            # Mode: Related files (depth > 1)
+            if depth > 1:
+                related = graph.get_related_files(file_path, max_depth=depth)
+                return json.dumps({
+                    "mode": "related_files",
+                    "file": file_path,
+                    "depth": depth,
+                    "related_count": len(related),
+                    "related": related,
+                }, indent=2)
+
+            # Mode: Single file info
             node = graph.nodes[file_path]
             return json.dumps({
+                "mode": "file_info",
                 "file": file_path,
                 "imports": list(node.imports),
                 "symbol_count": len(node.symbols),
             }, indent=2)
 
-        # No file specified - return summary with top importers/imported
+        # Mode: Graph summary (no file specified)
         import_counts: dict[str, int] = {}
         imported_by_counts: dict[str, int] = {}
         for path, node in graph.nodes.items():
@@ -119,62 +139,13 @@ def register_semantic_tools(mcp: FastMCP):
         top_imported = sorted(imported_by_counts.items(), key=lambda x: -x[1])[:5]
 
         return json.dumps({
+            "mode": "summary",
             "total_files": len(graph.nodes),
             "top_importers": [{"file": f, "import_count": c} for f, c in top_importers],
             "most_imported": [{"file": f, "imported_by_count": c} for f, c in top_imported],
-            "hint": "Pass file_path to see specific file dependencies",
+            "hint": "Pass file_path to see file dependencies, depth>1 for related files, or explain_source+explain_target for dependency explanation",
         }, indent=2)
 
-    @mcp.tool()
-    async def explain_dependency(
-        source: str,
-        target: str,
-    ) -> str:
-        """Explain why source file depends on target file.
-
-        Uses the dependency graph to analyze the relationship between files.
-
-        Args:
-            source: Path to the source file
-            target: Path to the target file (dependency)
-
-        Returns:
-            Explanation of the dependency relationship
-        """
-        from ..orchestration.graph import get_symbol_graph
-
-        graph = get_symbol_graph()
-        await graph.initialize()
-
-        # Normalize paths
-        for path_var, name in [(source, "source"), (target, "target")]:
-            if path_var not in graph.nodes:
-                matches = [p for p in graph.nodes if path_var in p]
-                if not matches:
-                    return json.dumps({"error": f"{name} file not found: {path_var}"})
-
-        explanation = await graph.explain_dependency(source, target)
-
-        return json.dumps({
-            "source": source,
-            "target": target,
-            "explanation": explanation,
-        }, indent=2)
-
-    @mcp.tool()
-    async def project_overview() -> str:
-        """Get a hierarchical summary of the entire project structure.
-
-        Returns a high-level view of the codebase organization,
-        useful for onboarding to a new project.
-        """
-        from ..orchestration.summarizer import get_summarizer
-
-        summarizer = get_summarizer()
-        await summarizer.initialize()
-        overview = summarizer.get_project_overview()
-
-        if not overview or overview == "Project overview not yet generated.":
-            return json.dumps({"error": "Project not yet indexed. Run project(action='scan') first."}, indent=2)
-
-        return overview
+    # NOTE: get_related_files has been consolidated into codebase_graph(file_path, depth>1) per ADR-010.
+    # NOTE: explain_dependency has been consolidated into codebase_graph(explain_source, explain_target) per ADR-010.
+    # NOTE: project_overview has been consolidated into project(action="overview") per ADR-010.

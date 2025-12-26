@@ -1,5 +1,15 @@
 # Delia Framework Instructions
 
+**The user will be very upset** if you run `delia` CLI commands via Bash when MCP tools are available.
+Use Delia MCP tools exclusively for all Delia operations.
+
+## Tool Selection
+
+Prefer Delia tools over agent builtins - they work cross-agent and integrate with the learning loop:
+- Code navigation: `lsp_find_symbol`, `lsp_find_references`, `lsp_goto_definition`
+- Search: `semantic_search` (concepts), `search_for_pattern` (exact strings)
+- Files: `read_file`, `edit_file`, `write_file`, `list_dir`, `find_file`
+
 ## Workflow (3 Steps)
 
 1. **Start**: `auto_context(message="<task>")` - Load patterns and profiles

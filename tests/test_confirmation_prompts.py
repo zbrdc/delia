@@ -288,25 +288,10 @@ class TestDangerousToolDetection:
         expected_tools = [
             "read_file", "list_directory", "search_code",
             "web_fetch", "web_search",
-            "write_file", "delete_file", "shell_exec"
+            "write_file", "shell_exec"
+            # NOTE: delete_file removed per ADR-010 (rarely used)
         ]
         for tool_name in expected_tools:
             assert tool_name in registry, f"{tool_name} should be registered"
 
-    def test_delete_file_always_registered(self):
-        """Test that delete_file tool is always registered."""
-        from delia.tools.builtins import get_default_tools
-
-        # Without allow_write flag, delete_file is registered but dangerous
-        registry = get_default_tools(allow_write=False)
-        tool = registry.get("delete_file")
-        assert tool is not None
-        assert tool.dangerous is True  # Requires confirmation
-        assert tool.permission_level == "write"
-
-        # With allow_write flag, delete_file is registered but NOT dangerous (auto-approved)
-        registry = get_default_tools(allow_write=True)
-        tool = registry.get("delete_file")
-        assert tool is not None
-        assert tool.dangerous is False  # Auto-approved, no confirmation needed
-        assert tool.permission_level == "write"
+    # NOTE: test_delete_file_always_registered removed - delete_file tool removed per ADR-010

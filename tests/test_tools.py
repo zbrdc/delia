@@ -335,12 +335,11 @@ class TestBuiltinTools:
         assert "web_fetch" in registry
         assert "web_search" in registry
         assert "write_file" in registry
-        assert "delete_file" in registry
+        # NOTE: delete_file removed per ADR-010 (rarely used)
         assert "shell_exec" in registry
 
         # Verify dangerous tools are marked as such
         assert registry.get("write_file").dangerous is True
-        assert registry.get("delete_file").dangerous is True
         assert registry.get("shell_exec").dangerous is True
 
     @pytest.mark.asyncio

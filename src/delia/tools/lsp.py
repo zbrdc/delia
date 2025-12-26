@@ -10,7 +10,8 @@ Exposes Language Server Protocol capabilities as tools for agents.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
+import json
 
 import structlog
 from fastmcp import FastMCP
@@ -288,8 +289,23 @@ def register_lsp_tools(mcp: FastMCP):
         return await lsp_goto_definition(path, line, character)
 
     @mcp.tool(name="lsp_find_references")
-    async def _mcp_find_references(path: str, line: int, character: int) -> str:
-        """Find all references to a symbol at position."""
+    async def _mcp_find_references(
+        path: str,
+        line: int,
+        character: int,
+        include_symbols: bool = False,
+        kinds: list[str] | None = None,
+        include_body: bool = False,
+    ) -> str:
+        """Find all references to a symbol at position.
+
+        Args:
+            include_symbols: Also find containing symbols (replaces lsp_find_referencing_symbols)
+            kinds: Filter to specific symbol kinds when include_symbols=True
+            include_body: Include symbol body when include_symbols=True
+        """
+        if include_symbols:
+            return await lsp_find_referencing_symbols(path, line, character, kinds=kinds, include_body=include_body)
         return await lsp_find_references(path, line, character)
 
     @mcp.tool(name="lsp_hover")
@@ -314,145 +330,123 @@ def register_lsp_tools(mcp: FastMCP):
         """Find symbols by name. Supports path syntax: 'Class.method' or 'mod::func'."""
         return await lsp_find_symbol(name, path=path, kind=kind, kinds=kinds, depth=depth, include_body=include_body)
 
-    @mcp.tool(name="lsp_find_referencing_symbols")
-    async def _mcp_find_referencing_symbols(
+    # === CONSOLIDATED LSP TOOLS (ADR-010) ===
+    # These action-based tools replace 14 individual tools
+
+    @mcp.tool()
+    async def lsp_edit(
+        action: Literal["rename", "replace", "insert_before", "insert_after"],
         path: str,
-        line: int,
-        character: int,
-        kinds: list[str] | None = None,
-        include_body: bool = False,
+        symbol_name: str | None = None,
+        line: int | None = None,
+        character: int | None = None,
+        new_name: str | None = None,
+        new_body: str | None = None,
+        content: str | None = None,
+        apply: bool = False,
     ) -> str:
-        """Find symbols containing references to the symbol at position."""
-        return await lsp_find_referencing_symbols(path, line, character, kinds=kinds, include_body=include_body)
+        """Edit symbols: rename, replace body, or insert content.
 
-    @mcp.tool(name="lsp_find_symbol_semantic")
-    async def _mcp_find_symbol_semantic(
-        query: str,
-        top_k: int = 10,
-        kinds: list[str] | None = None,
-        include_body: bool = False,
-        boost_recent: bool = True,
-    ) -> str:
-        """Find symbols by natural language query using semantic search + LSP."""
-        return await lsp_find_symbol_semantic(query, top_k=top_k, kinds=kinds, include_body=include_body, boost_recent=boost_recent)
+        Actions:
+        - rename: Rename symbol at position (requires line, character, new_name)
+        - replace: Replace symbol body (requires symbol_name, new_body)
+        - insert_before: Insert before symbol (requires symbol_name, content)
+        - insert_after: Insert after symbol (requires symbol_name, content)
+        """
+        # Checkpoint gating for all edit actions
+        checkpoint_error = check_checkpoint_gate("lsp_edit", path)
+        if checkpoint_error:
+            return checkpoint_error
 
-    @mcp.tool(name="lsp_get_hot_files")
-    async def _mcp_get_hot_files(limit: int = 10, since_hours: float = 24) -> str:
-        """Get recently modified files."""
-        return await lsp_get_hot_files(limit=limit, since_hours=since_hours)
+        if action == "rename":
+            if line is None or character is None or new_name is None:
+                return json.dumps({"error": "rename requires line, character, new_name"})
+            return await lsp_rename_symbol_impl(path, line, character, new_name, apply)
 
-    @mcp.tool(name="lsp_move_symbol")
-    async def _mcp_move_symbol(
-        source_path: str,
-        symbol_name: str,
-        dest_path: str,
+        elif action == "replace":
+            if symbol_name is None or new_body is None:
+                return json.dumps({"error": "replace requires symbol_name, new_body"})
+            return await lsp_replace_symbol_body_impl(path, symbol_name, new_body)
+
+        elif action == "insert_before":
+            if symbol_name is None or content is None:
+                return json.dumps({"error": "insert_before requires symbol_name, content"})
+            return await lsp_insert_before_symbol_impl(path, symbol_name, content)
+
+        elif action == "insert_after":
+            if symbol_name is None or content is None:
+                return json.dumps({"error": "insert_after requires symbol_name, content"})
+            return await lsp_insert_after_symbol_impl(path, symbol_name, content)
+
+        return json.dumps({"error": f"Unknown action: {action}"})
+
+    @mcp.tool()
+    async def lsp_refactor(
+        action: Literal["move", "extract", "organize"],
+        path: str,
+        symbol_name: str | None = None,
+        dest_path: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        new_name: str | None = None,
         update_imports: bool = True,
         cleanup_imports: bool = True,
-    ) -> str:
-        """Move a symbol to another file, updating imports across codebase."""
-        return await lsp_move_symbol(source_path, symbol_name, dest_path, update_imports=update_imports, cleanup_imports=cleanup_imports)
-
-    @mcp.tool(name="lsp_extract_method")
-    async def _mcp_extract_method(
-        path: str,
-        start_line: int,
-        end_line: int,
-        new_name: str | None = None,
-    ) -> str:
-        """Extract lines into a new method, replacing original with a call."""
-        return await lsp_extract_method(path, start_line, end_line, new_name=new_name)
-
-    @mcp.tool(name="lsp_batch")
-    async def _mcp_batch(operations: str) -> str:
-        """Execute multiple LSP operations in sequence with undo support."""
-        return await lsp_batch(operations)
-
-    @mcp.tool(name="lsp_organize_imports")
-    async def _mcp_organize_imports(
-        path: str,
         remove_unused: bool = True,
         sort_imports: bool = True,
     ) -> str:
-        """Organize imports in a Python file using Ruff."""
-        return await lsp_organize_imports(path, remove_unused=remove_unused, sort_imports=sort_imports)
+        """Refactor code: move symbols, extract methods, organize imports.
 
-    @mcp.tool(name="lsp_get_dependencies")
-    async def _mcp_get_dependencies(
-        path: str,
-        include_symbols: bool = True,
-        max_depth: int = 2,
-    ) -> str:
-        """Show file exports, imports, and dependents."""
-        return await lsp_get_dependencies(path, include_symbols=include_symbols, max_depth=max_depth)
-
-    @mcp.tool(name="lsp_batch_history")
-    async def _mcp_batch_history(limit: int = 10) -> str:
-        """List recent batch operations available for undo."""
-        return await lsp_batch_history(limit=limit)
-
-    @mcp.tool(name="lsp_batch_undo")
-    async def _mcp_batch_undo(batch_id: str | None = None) -> str:
-        """Undo a batch operation, restoring files to previous state."""
-        return await lsp_batch_undo(batch_id=batch_id)
-    
-    # These have gating, so we wrap them to include the check
-    @mcp.tool()
-    async def lsp_rename_symbol(
-        path: str,
-        line: int,
-        character: int,
-        new_name: str,
-        apply: bool = False,
-    ) -> str:
-        """Rename a symbol across the codebase. Preview by default, set apply=True to execute."""
-        # Checkpoint Gating
-        checkpoint_error = check_checkpoint_gate("lsp_rename_symbol", path)
+        Actions:
+        - move: Move symbol to another file (requires symbol_name, dest_path)
+        - extract: Extract lines into new method (requires start_line, end_line)
+        - organize: Organize imports in file (path only)
+        """
+        # Checkpoint gating for refactoring
+        checkpoint_error = check_checkpoint_gate("lsp_refactor", path)
         if checkpoint_error:
             return checkpoint_error
 
-        return await lsp_rename_symbol_impl(path, line, character, new_name, apply)
+        if action == "move":
+            if symbol_name is None or dest_path is None:
+                return json.dumps({"error": "move requires symbol_name, dest_path"})
+            return await lsp_move_symbol_impl(path, symbol_name, dest_path, update_imports, cleanup_imports)
+
+        elif action == "extract":
+            if start_line is None or end_line is None:
+                return json.dumps({"error": "extract requires start_line, end_line"})
+            return await lsp_extract_method_impl(path, start_line, end_line, new_name)
+
+        elif action == "organize":
+            return await lsp_organize_imports_impl(path, remove_unused, sort_imports)
+
+        return json.dumps({"error": f"Unknown action: {action}"})
 
     @mcp.tool()
-    async def lsp_replace_symbol_body(
-        path: str,
-        symbol_name: str,
-        new_body: str,
+    async def lsp_batch(
+        action: Literal["execute", "history", "undo"] = "execute",
+        operations: str | None = None,
+        batch_id: str | None = None,
+        limit: int = 10,
     ) -> str:
-        """Replace a symbol's complete definition with new code."""
-        # Checkpoint Gating
-        checkpoint_error = check_checkpoint_gate("lsp_replace_symbol_body", path)
-        if checkpoint_error:
-            return checkpoint_error
+        """Batch LSP operations with undo support.
 
-        return await lsp_replace_symbol_body_impl(path, symbol_name, new_body)
+        Actions:
+        - execute: Run batch operations (requires operations JSON)
+        - history: List recent batches
+        - undo: Undo a batch (requires batch_id or uses latest)
+        """
+        if action == "execute":
+            if operations is None:
+                return json.dumps({"error": "execute requires operations JSON"})
+            return await lsp_batch_impl(operations)
 
-    @mcp.tool()
-    async def lsp_insert_before_symbol(
-        path: str,
-        symbol_name: str,
-        content: str,
-    ) -> str:
-        """Insert code before a symbol (imports, decorators, etc.)."""
-        # Checkpoint Gating
-        checkpoint_error = check_checkpoint_gate("lsp_insert_before_symbol", path)
-        if checkpoint_error:
-            return checkpoint_error
+        elif action == "history":
+            return await lsp_batch_history_impl(limit)
 
-        return await lsp_insert_before_symbol_impl(path, symbol_name, content)
+        elif action == "undo":
+            return await lsp_batch_undo_impl(batch_id)
 
-    @mcp.tool()
-    async def lsp_insert_after_symbol(
-        path: str,
-        symbol_name: str,
-        content: str,
-    ) -> str:
-        """Insert code after a symbol."""
-        # Checkpoint Gating
-        checkpoint_error = check_checkpoint_gate("lsp_insert_after_symbol", path)
-        if checkpoint_error:
-            return checkpoint_error
-
-        return await lsp_insert_after_symbol_impl(path, symbol_name, content)
+        return json.dumps({"error": f"Unknown action: {action}"})
 
 
 def get_lsp_tools(workspace: Workspace | None = None) -> ToolRegistry:

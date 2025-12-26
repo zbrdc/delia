@@ -326,7 +326,7 @@ def get_default_tools(
 
     # Mutation tools (Dangerous if not explicitly allowed)
     registry.register(ToolDefinition("write_file", "Write file", {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}, write_file, dangerous=not allow_write, permission_level="write", requires_workspace=True))
-    registry.register(ToolDefinition("delete_file", "Delete file", {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}, delete_file, dangerous=not allow_write, permission_level="write", requires_workspace=True))
+    # NOTE: delete_file removed per ADR-010 (rarely used) - agents can use bash
     registry.register(ToolDefinition("replace_in_file", "Replace in file", {"type": "object", "properties": {"path": {"type": "string"}, "search": {"type": "string"}, "replace": {"type": "string"}}, "required": ["path", "search", "replace"]}, replace_in_file, dangerous=not allow_write, permission_level="write", requires_workspace=True))
     registry.register(ToolDefinition("insert_into_file", "Insert into file", {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}, "line": {"type": "integer"}}, "required": ["path", "content", "line"]}, insert_into_file, dangerous=not allow_write, permission_level="write", requires_workspace=True))
     

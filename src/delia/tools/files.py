@@ -163,36 +163,8 @@ def register_file_tools(mcp: FastMCP):
         """
         return await search_for_pattern_impl(pattern, path, file_pattern, context_lines)
 
-    @mcp.tool()
-    async def delete_file(path: str) -> str:
-        """
-        Delete a file.
-
-        Args:
-            path: Path to the file to delete
-
-        Returns:
-            Success message or error
-        """
-        # Checkpoint Gating
-        checkpoint_error = check_checkpoint_gate("delete_file", path)
-        if checkpoint_error:
-            return checkpoint_error
-
-        return await delete_file_impl(path)
-
-    @mcp.tool()
-    async def create_directory(path: str) -> str:
-        """
-        Create a directory.
-
-        Args:
-            path: Path to the directory to create
-
-        Returns:
-            Success message or error
-        """
-        return await create_directory_impl(path)
+    # NOTE: delete_file and create_directory removed per ADR-010 (rarely used).
+    # Agents can use bash for deletion, write_file creates directories automatically.
 
 
 def _get_project_root() -> Path:

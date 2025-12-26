@@ -75,8 +75,8 @@ For the latest bullets, use `auto_context()` or read `.delia/playbooks/*.json` d
 ### Architecture
 - MCP server is the primary interface - tools are registered via decorators
 - Playbooks store per-project learned patterns in .delia/playbooks/
-- LSP integration provides semantic code navigation
 - Memories persist knowledge in .delia/memories/ as markdown
+- LSP integration provides semantic code navigation
 - Profiles are starter templates copied to .delia/profiles/
 
 ### Debugging
