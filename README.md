@@ -4,11 +4,14 @@ MCP server that adds persistent learning and semantic code intelligence to AI co
 
 ## What It Does
 
-- **Playbooks** - Per-project patterns learned over time (`.delia/playbooks/`)
-- **Memories** - Persistent knowledge stored as markdown (`.delia/memories/`)
-- **Profiles** - Framework-specific guidance loaded automatically (`.delia/profiles/`)
+- **Playbooks** - Per-project patterns learned over time, indexed in ChromaDB for semantic retrieval
+- **Memories** - Persistent knowledge (markdown), searchable via embeddings
+- **Profiles** - Framework-specific guidance, semantically matched to your task
+- **Code Index** - Codebase summaries and symbols indexed for intelligent navigation
 - **LSP Tools** - Semantic code navigation: find references, go to definition, rename symbols
 - **Learning Loop** - Extracts insights from completed tasks and updates playbooks
+
+All knowledge is stored in `.delia/chroma/` for fast semantic search.
 
 ## Quick Start
 
@@ -137,10 +140,10 @@ complete_task(success=True, bullets_applied=["id1"])  # Record feedback
 ```
 your-project/
 ├── .delia/
-│   ├── playbooks/      # Learned patterns (JSON)
-│   ├── memories/       # Persistent knowledge (Markdown)
-│   ├── profiles/       # Framework guides (Markdown)
-│   └── chroma/         # Vector database (optional)
+│   ├── chroma/         # Vector database (primary storage)
+│   ├── playbooks/      # Learned patterns (JSON, indexed to ChromaDB)
+│   ├── memories/       # Persistent knowledge (Markdown, indexed to ChromaDB)
+│   └── profiles/       # Framework guides (Markdown, indexed to ChromaDB)
 └── CLAUDE.md           # Instructions for AI assistants
 ```
 
