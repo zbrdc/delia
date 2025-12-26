@@ -26,9 +26,13 @@ venv/
 ENV/
 env/
 
-# IDE
+# IDE & Editor configs
 .idea/
 .vscode/
+.claude/
+.gemini/
+.cursor/
+.windsurf/
 *.swp
 *.swo
 
@@ -37,20 +41,21 @@ env/
 .env.local
 .env.*.local
 
-# Delia runtime data (created at startup)
-/data/
+# Delia project data (generated per-project)
+.delia/
 
 # User-specific backend configuration
 settings.json
 .serena
 
-# Legacy data directories (before centralization)
+# Legacy
 /.user_data/
 /.serena/
 *.mcp
 
-# Node.js (dashboard)
+# Node.js
 node_modules/
+package-lock.json
 .next/
 out/
 .turbo/
@@ -61,7 +66,6 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .hypothesis/
-log
 fuzz/
 
 # OS files
@@ -80,7 +84,7 @@ tmp_lora/
 *.onnx
 *.weights
 
-# Datasets & Large Data
+# Data files
 data/
 *.jsonl
 *.csv
@@ -90,29 +94,12 @@ data/
 .cache/
 .huggingface/
 
-# Fuzz test logs
+# Logs & temp files
 logs/
 outputs/
-
-# Temp/debug files
 *.log
 *.err
-*.txt
-!requirements.txt
-!LICENSE.txt
 
-# Playbook files in root (should be in .delia/playbooks/)
-/api.json
-/architecture.json
-/coding.json
-/debugging.json
-/deployment.json
-/git.json
-/orchestration.json
-/performance.json
-/project.json
-/security.json
-/testing.json
-
-# Modelfiles
-Modelfile.*
+# Development directories
+benchmarks/
+scripts/

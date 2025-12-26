@@ -1,29 +1,12 @@
-# Delia Framework
+# Delia Framework - Quick Reference
 
-## The Loop
-
-```
-START  →  auto_context(message)     # Get playbook bullets for your task
-WORK   →  Apply bullets, use tools  # Do the task
-END    →  complete_task(success, bullets_applied)
-```
-
-## Context Shift Reminders
-
-Delia will remind you when your actions suggest you've shifted tasks. When you see:
+## Workflow
 
 ```
-🔄 Context Shift Detected: You loaded `project` context but are now doing `coding` work.
-→ Call auto_context() to refresh playbook bullets.
+START  →  auto_context(message)              # Load playbook for task
+WORK   →  Apply bullets, use tools           # Do the task
+END    →  complete_task(success, bullets)    # Record feedback
 ```
-
-**Refresh your context.** The reminder means your playbook bullets may be stale.
-
-Common shifts:
-- Verification → Coding (found issues, now fixing)
-- Coding → Testing (wrote code, now testing)
-- Any → Git (about to commit/push)
-- Debugging → Coding (found root cause, now fixing)
 
 ## Avoiding Context Loss
 

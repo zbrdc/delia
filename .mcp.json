@@ -26,16 +26,8 @@
       }
     },
     "delia": {
-      "type": "stdio",
-      "command": "/home/dan/.local/bin/uv",
-      "args": [
-        "--directory",
-        "/home/dan/git/delia",
-        "run",
-        "delia",
-        "serve"
-      ],
-      "env": {}
+      "type": "http",
+      "url": "http://localhost:8765/mcp"
     },
     "memory": {
       "type": "stdio",
