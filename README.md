@@ -96,13 +96,22 @@ Per-project server, managed by the AI client. Shows in `/mcp` list.
 
 ### Step 4: Initialize Your Project
 
-From your project directory:
-```bash
-# Using uv (no venv activation needed)
-uv run --directory /path/to/delia delia init-project
+**Option A: Via MCP (Recommended)**
 
-# Or if delia is in PATH
-delia init-project
+Let the AI agent initialize the project - it handles summarization:
+```
+# In Claude Code or Cursor, just ask:
+"Initialize this project with Delia"
+# Or use the MCP tool directly:
+project(action="init", path="/path/to/your-project")
+```
+
+**Option B: Via CLI (requires Ollama)**
+
+If you have Ollama running locally with a model:
+```bash
+cd ~/your-project
+uv run --directory /path/to/delia delia init-project
 ```
 
 This creates `.delia/` with playbooks tailored to your tech stack.
@@ -138,28 +147,45 @@ your-project/
 ## CLI Commands
 
 ```bash
-delia run -t http        # Start HTTP server
-delia serve              # Start stdio server
-delia init               # Initialize globally
-delia init .             # Initialize project
+delia run -t http        # Start HTTP server (MCP)
+delia serve              # Start stdio server (MCP)
 delia doctor             # Health check
+delia init-project       # Initialize project (requires Ollama)
 delia chat               # Interactive chat (requires Ollama)
 delia agent "task"       # Single-shot task (requires Ollama)
 ```
 
-## Embedding Providers
+## Configuration
 
-For semantic search in playbooks (optional):
+### Embeddings (for semantic search)
 
-1. **Voyage AI** - Set `DELIA_VOYAGE_API_KEY` in `~/.delia/.env`
-2. **Ollama** - Run `ollama pull mxbai-embed-large`
-3. **Sentence Transformers** - CPU fallback, works offline
+Create `~/.delia/.env`:
+```bash
+DELIA_VOYAGE_API_KEY=your-key-here
+```
+
+Fallback options (no API key needed):
+- **Ollama** - Run `ollama pull mxbai-embed-large`
+- **Sentence Transformers** - CPU fallback, works offline
+
+### LLM Backends (for CLI features)
+
+For `init-project`, `chat`, `agent` commands, configure backends in `~/.delia/settings.json`:
+```json
+{
+  "backends": [{
+    "name": "ollama-local",
+    "url": "http://localhost:11434",
+    "model": "llama3.2"
+  }]
+}
+```
 
 ## Requirements
 
 - Python 3.11+
 - uv (package manager)
-- Ollama (optional, for local LLM features)
+- Ollama (optional, for CLI LLM features - not needed if using MCP only)
 
 ## License
 
