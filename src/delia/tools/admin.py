@@ -388,7 +388,17 @@ async def health_impl() -> str:
     
     # Format as Markdown for better readability in CLI/Chat
     lines = ["# Backend Health Status\n"]
-    lines.append(f"**System Status**: {status['status'].upper()}")
+    delegation_enabled = health_status.get("delegation_enabled", False)
+    status_note = health_status.get("status_note", "")
+
+    status_display = status['status'].upper()
+    if status_note == "delegation_disabled":
+        status_display += " (delegation disabled - backends not in use)"
+    elif status_note:
+        status_display += f" ({status_note})"
+
+    lines.append(f"**System Status**: {status_display}")
+    lines.append(f"**Delegation**: {'enabled' if delegation_enabled else 'disabled (set DELIA_DELEGATION=true to enable)'}")
     lines.append(f"**Active Backend**: `{status['active_backend']}`")
     
     lines.append("\n## Backends")

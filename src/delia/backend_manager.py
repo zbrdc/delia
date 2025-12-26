@@ -748,6 +748,9 @@ class BackendManager:
 
     async def get_health_status(self) -> dict[str, Any]:
         """Get comprehensive health status for all backends."""
+        # Check if delegation is enabled - if not, backends aren't used
+        delegation_enabled = os.getenv("DELIA_DELEGATION", "false").lower() in ("true", "1", "yes")
+
         health = await self.check_all_health()
 
         backends_status = []
@@ -770,19 +773,30 @@ class BackendManager:
         active_available = health.get(active.id, False) if active else False
         any_available = any(health.values())
 
-        if active_available:
+        # If delegation is disabled, backend availability doesn't matter
+        if not delegation_enabled:
             status = "healthy"
+            status_note = "delegation_disabled"
+        elif active_available:
+            status = "healthy"
+            status_note = None
         elif any_available:
             status = "degraded"
+            status_note = "active_backend_unavailable"
         else:
             status = "unhealthy"
+            status_note = "no_backends_available"
 
-        return {
+        result: dict[str, Any] = {
             "status": status,
             "active_backend": active.id if active else None,
             "backends": backends_status,
             "routing": self.routing_config,
+            "delegation_enabled": delegation_enabled,
         }
+        if status_note:
+            result["status_note"] = status_note
+        return result
 
     def add_backend(self, backend_data: dict[str, Any] | BackendConfig) -> BackendConfig:
         """Add a new backend."""
