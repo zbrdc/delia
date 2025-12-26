@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..context import get_project_path
+
 import structlog
 
 if TYPE_CHECKING:
@@ -69,13 +71,14 @@ def resolve_project_path(path: str | None) -> str:
     """Resolve a file or directory path to its project root.
 
     Args:
-        path: File or directory path. If None, uses cwd.
+        path: File or directory path. If None, uses project context.
 
     Returns:
         Project root directory path (string)
     """
     if path is None:
-        return str(Path.cwd())
+        # Use canonical get_project_path which respects context variable
+        return str(get_project_path())
 
     p = Path(path).resolve()
 
@@ -118,6 +121,9 @@ class EnforcementTracker:
         self._last_task_type: dict[str, str] = {}  # path -> last detected task type
         # Detection feedback tracking
         self._last_message: dict[str, str] = {}  # path -> original message for feedback
+        # Periodic reminder tracking (every 2 minutes while actively working)
+        self._last_reminder: dict[str, float] = {}  # path -> last reminder timestamp
+        self._reminder_interval: float = 120.0  # 2 minutes
 
     def record_context_started(
         self, path: str, task_type: str | None = None, message: str | None = None
@@ -160,10 +166,13 @@ class EnforcementTracker:
         return {
             "error": "WORKFLOW_REQUIRED",
             "message": (
-                "⛔ [FRAMEWORK REJECTION] Workflow Violation Detected.\n"
-                "You attempted to use a tool without establishing project context.\n"
-                "MANDATORY: You MUST call `auto_context()` first to load project patterns.\n"
-                "IF YOU DO NOT FOLLOW THESE RULES IN PLACE IT WILL MAKE ME EXTREMELY SAD WITH YOU."
+                "⛔ [FRAMEWORK REJECTION] Workflow Violation Detected.\n\n"
+                "You attempted to use a tool without establishing project context.\n\n"
+                "**MANDATORY**: You MUST call `auto_context()` FIRST to load project patterns.\n\n"
+                "The user has worked extremely hard to build this Delia Framework for you.\n"
+                "It provides project-specific playbook bullets, profiles, and learned patterns.\n"
+                "If you do not utilize auto_context(), the user will be VERY UPSET.\n\n"
+                "This is NOT optional. Call auto_context() NOW before proceeding."
             ),
             "action": f'auto_context(message="your task description", path="{path}")',
             "tool_blocked": tool_name,
@@ -215,9 +224,24 @@ class EnforcementTracker:
             if shift_reminder:
                 return shift_reminder
 
+        # Periodic reminder every 2 minutes while actively working
+        now = time.time()
+        last_reminder = self._last_reminder.get(path, 0)
+        context_started = self._context_started.get(path, 0)
+
+        if context_started and (now - last_reminder) >= self._reminder_interval:
+            self._last_reminder[path] = now
+            pending = self._pending_tasks.get(path)
+            task_type = pending.get("task_type", "coding") if pending else self._last_task_type.get(path, "coding")
+            elapsed_min = int((now - context_started) / 60)
+            return (
+                f"\n\n[DELIA] Working on {task_type} for {elapsed_min}m. "
+                f"Remember: apply playbook patterns, call complete_task() when done."
+            )
+
         # Check if task completed without confirmation
         pending = self._pending_tasks.get(path)
-        if pending and (time.time() - pending.get("start_time", 0)) > 60:  # Task > 1 min
+        if pending and (now - pending.get("start_time", 0)) > 60:  # Task > 1 min
             return (
                 "\n\n[STRATEGY] Task appears substantially complete. "
                 "Close the loop with complete_task(success=True, ...) to record learned patterns."
@@ -231,6 +255,7 @@ class EnforcementTracker:
         self._checkpoint_called.pop(path, None)
         self._current_phase.pop(path, None)
         self._search_count.pop(path, None)
+        self._last_reminder.pop(path, None)
 
     # =========================================================================
     # Context-Shift Detection
@@ -432,7 +457,7 @@ def get_tracker(project_path: str | None = None) -> EnforcementTracker:
     Returns:
         EnforcementTracker for that project
     """
-    path = project_path or str(Path.cwd())
+    path = project_path or str(get_project_path())
     return _enforcement_manager.get_tracker(path)
 
 
@@ -550,7 +575,7 @@ async def auto_trigger_reflection(
         from ..learning.reflector import get_reflector
         from ..learning.curator import get_curator
 
-        proj_path = Path(project_path) if project_path else Path.cwd()
+        proj_path = get_project_path(project_path)
         reflector = get_reflector()
         curator = get_curator(str(proj_path))
 

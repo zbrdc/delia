@@ -22,6 +22,24 @@ from lsprotocol import types as lsp
 
 log = structlog.get_logger()
 
+# Language-specific installation hints
+LANGUAGE_SERVER_HINTS = {
+    "python": "Install pyright: uv add pyright",
+    "typescript": "Install typescript-language-server: npm install -g typescript-language-server typescript",
+    "javascript": "Install typescript-language-server: npm install -g typescript-language-server typescript",
+    "rust": "Install rust-analyzer: rustup component add rust-analyzer",
+    "go": "Install gopls: go install golang.org/x/tools/gopls@latest",
+}
+
+
+def _get_install_hint(language_id: str) -> str:
+    """Get installation hint for a language server."""
+    return LANGUAGE_SERVER_HINTS.get(
+        language_id,
+        f"No language server configured for '{language_id}'"
+    )
+
+
 class DeliaLSPClient:
     """
     A unified LSP client that can manage multiple language servers.
@@ -218,7 +236,7 @@ class DeliaLSPClient:
         lang_id = self._guess_language(file_path)
         client = await self.get_client(lang_id)
         if not client:
-            return {"error": f"No language server for '{lang_id}'. Install pyright: uv add pyright"}
+            return {"error": f"No language server for '{lang_id}'. {_get_install_hint(lang_id)}"}
 
         abs_path = (self.root_path / file_path).resolve()
         if not abs_path.exists():
@@ -254,7 +272,7 @@ class DeliaLSPClient:
         """
         client = await self.get_client(language_id)
         if not client:
-            return {"error": f"No language server for '{language_id}'. Install pyright: uv add pyright"}
+            return {"error": f"No language server for '{language_id}'. {_get_install_hint(language_id)}"}
 
         params = lsp.WorkspaceSymbolParams(query=query)
 
@@ -659,8 +677,8 @@ class DeliaLSPClient:
                 await client.shutdown_async()
                 client.exit()
                 log.info("lsp_server_stopped", language=lang)
-            except:
-                pass
+            except Exception as e:
+                log.debug("lsp_server_stop_error", language=lang, error=str(e))
         self.clients.clear()
 
 # Singleton

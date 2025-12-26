@@ -193,41 +193,66 @@ def _build_dynamic_instructions(project_path: str | None = None) -> str:
 
 mcp = FastMCP("delia", instructions=_build_dynamic_instructions())
 
-# ============================================================ 
+# ============================================================
 # TOOL REGISTRATION (Profile-based)
-# ============================================================ 
-# Profiles: minimal (~15 tools), standard (~35 tools), full (~67 tools)
+# ============================================================
+# Profiles:
+# - light (~35 tools): Files, LSP, Framework, Semantic - MINIMUM VIABLE
+# - standard (~50 tools): + Consolidated, Git, Admin, Batch ops [DEFAULT]
+# - full: + MCP resources
+#
+# Local model delegation (delegate, think, batch, chain, workflow, agent)
+# is OPTIONAL and controlled separately by DELIA_DELEGATION=true
 
-from .tools.handlers import register_tool_handlers
-from .tools.admin import register_admin_tools
-from .tools.resources import register_resource_tools
-from .tools.consolidated import register_consolidated_tools
 from .tools.files import register_file_tools
 from .tools.lsp import register_lsp_tools
+from .tools.framework import register_framework_tools
+from .tools.semantic import register_semantic_tools
+from .tools.consolidated import register_consolidated_tools
+from .tools.admin import register_admin_tools
+from .tools.handlers import register_tool_handlers
+from .tools.resources import register_resource_tools
 from .tools.mcp_management import register_mcp_management_tools
+from .tools.delegation import register_delegation_tools
 
 tool_profile = config.tool_profile
-log.info("tool_profile_selected", profile=tool_profile)
+delegation_enabled = os.getenv("DELIA_DELEGATION", "false").lower() in ("true", "1", "yes")
+log.info("tool_profile_selected", profile=tool_profile, delegation=delegation_enabled)
 
-# Profile-based tool registration
-# minimal: ~20 tools (file ops, LSP, delegate)
-# standard: ~45 tools (+ framework, consolidated, admin)  
-# full: ~67 tools (everything)
+# =========================================================================
+# LIGHT PROFILE (~35 tools) - ALWAYS REGISTERED
+# These are the minimum viable tools for Delia to function
+# =========================================================================
+register_file_tools(mcp)       # read_file, write_file, edit_file, list_dir, etc.
+register_lsp_tools(mcp)        # lsp_*, semantic code navigation
+register_framework_tools(mcp)  # auto_context, complete_task, think_about_*, etc.
+register_semantic_tools(mcp)   # semantic_search, get_related_files, codebase_graph
 
-# MINIMAL: Always register core tools
-register_file_tools(mcp)
-register_lsp_tools(mcp)
-
+# =========================================================================
+# STANDARD PROFILE (~50 tools) - DEFAULT
+# Adds consolidated tools, admin, git, batch operations
+# =========================================================================
 if tool_profile in ("standard", "full"):
-    # STANDARD: Add framework and admin tools
-    register_consolidated_tools(mcp)
-    register_admin_tools(mcp)
-    register_tool_handlers(mcp)  # orchestration + framework
+    register_consolidated_tools(mcp)  # playbook, memory, session, profiles, project, admin
+    register_admin_tools(mcp)         # health, models, switch_model, queue_status
+    register_tool_handlers(mcp)       # git_log, git_blame, git_show, read_files, edit_files, list_tools, describe_tool
 
+# =========================================================================
+# FULL PROFILE - All tools
+# Adds MCP resources and management
+# =========================================================================
 if tool_profile == "full":
-    # FULL: Add resources and MCP management
     register_resource_tools(mcp)
     register_mcp_management_tools(mcp)
+
+# =========================================================================
+# LOCAL MODEL DELEGATION (Optional)
+# Only registered if DELIA_DELEGATION=true
+# These tools delegate work to local LLM backends (Ollama, vLLM, etc.)
+# =========================================================================
+if delegation_enabled:
+    register_delegation_tools(mcp)
+    log.info("delegation_tools_registered", tools=["delegate", "think", "batch", "chain", "workflow", "agent"])
 
 log.info("tools_registered", profile=tool_profile, count=len(mcp._tool_manager._tools))
 

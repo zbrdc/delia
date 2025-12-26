@@ -16,8 +16,9 @@ import structlog
 from fastmcp import FastMCP
 
 from ..types import Workspace
+from ..context import get_project_path
 from .registry import ToolDefinition, ToolRegistry
-from .handlers import check_checkpoint_gate
+from .handlers_enforcement import check_checkpoint_gate
 from .. import lsp_client
 
 log = structlog.get_logger()
@@ -298,22 +299,7 @@ def register_lsp_tools(mcp: FastMCP):
         new_name: str,
         apply: bool = False,
     ) -> str:
-        """
-        Rename a symbol across the entire codebase.
-
-        Uses LSP to find all references and rename them consistently.
-        By default shows a preview; set apply=True to execute the rename.
-
-        Args:
-            path: Path to file containing the symbol
-            line: Line number (1-indexed)
-            character: Character position (0-indexed)
-            new_name: The new name for the symbol
-            apply: If True, apply changes. If False, preview only.
-
-        Returns:
-            Preview of changes, or confirmation if apply=True
-        """
+        """Rename a symbol across the codebase. Preview by default, set apply=True to execute."""
         # Checkpoint Gating
         checkpoint_error = check_checkpoint_gate("lsp_rename_symbol", path)
         if checkpoint_error:
@@ -327,20 +313,7 @@ def register_lsp_tools(mcp: FastMCP):
         symbol_name: str,
         new_body: str,
     ) -> str:
-        """
-        Replace the entire body of a symbol (function, class, method).
-
-        Finds the symbol by name and replaces its complete definition
-        with the provided new code.
-
-        Args:
-            path: Path to the file containing the symbol
-            symbol_name: Name of the symbol (e.g., "MyClass", "my_function")
-            new_body: The complete new code for the symbol
-
-        Returns:
-            Confirmation of replacement or error message
-        """
+        """Replace a symbol's complete definition with new code."""
         # Checkpoint Gating
         checkpoint_error = check_checkpoint_gate("lsp_replace_symbol_body", path)
         if checkpoint_error:
@@ -354,20 +327,7 @@ def register_lsp_tools(mcp: FastMCP):
         symbol_name: str,
         content: str,
     ) -> str:
-        """
-        Insert code before a symbol.
-
-        Useful for adding imports, decorators, or new functions/classes
-        before an existing symbol.
-
-        Args:
-            path: Path to the file
-            symbol_name: Name of the symbol to insert before
-            content: The code to insert
-
-        Returns:
-            Confirmation or error message
-        """
+        """Insert code before a symbol (imports, decorators, etc.)."""
         # Checkpoint Gating
         checkpoint_error = check_checkpoint_gate("lsp_insert_before_symbol", path)
         if checkpoint_error:
@@ -381,20 +341,7 @@ def register_lsp_tools(mcp: FastMCP):
         symbol_name: str,
         content: str,
     ) -> str:
-        """
-        Insert code after a symbol.
-
-        Useful for adding new functions, classes, or code blocks
-        after an existing symbol.
-
-        Args:
-            path: Path to the file
-            symbol_name: Name of the symbol to insert after
-            content: The code to insert
-
-        Returns:
-            Confirmation or error message
-        """
+        """Insert code after a symbol."""
         # Checkpoint Gating
         checkpoint_error = check_checkpoint_gate("lsp_insert_after_symbol", path)
         if checkpoint_error:
@@ -483,27 +430,14 @@ async def lsp_goto_definition(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """
-    Find the definition of a symbol at the given file position.
-
-    Uses Language Server Protocol to provide semantic code navigation.
-    Supports Python (pyright/pylsp), TypeScript, Rust, and Go.
-
-    Args:
-        path: Path to the file
-        line: Line number (1-indexed)
-        character: Character position (0-indexed)
-
-    Returns:
-        File path and line number where the symbol is defined
-    """
+    """Find the definition of a symbol at position. Supports Python, TS, Rust, Go."""
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
     
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
-    
+
     results = await client.goto_definition(path, line, character)
     if not results:
         return "No definition found."
@@ -520,25 +454,12 @@ async def lsp_find_references(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """
-    Find all references to a symbol at the given file position.
-
-    Uses Language Server Protocol to find all usages of a symbol
-    across the codebase. Supports Python, TypeScript, Rust, and Go.
-
-    Args:
-        path: Path to the file
-        line: Line number (1-indexed)
-        character: Character position (0-indexed)
-
-    Returns:
-        List of locations where the symbol is used
-    """
+    """Find all references to a symbol at position."""
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
 
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     results = await client.find_references(path, line, character)
@@ -558,25 +479,12 @@ async def lsp_hover(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """
-    Get documentation and type information for a symbol.
-
-    Uses Language Server Protocol to retrieve docstrings, type signatures,
-    and other documentation for the symbol at the given position.
-
-    Args:
-        path: Path to the file
-        line: Line number (1-indexed)
-        character: Character position (0-indexed)
-
-    Returns:
-        Documentation and type info in markdown format
-    """
+    """Get documentation and type info for a symbol at position."""
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
 
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     result = await client.hover(path, line, character)
@@ -591,24 +499,12 @@ async def lsp_get_symbols(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """
-    Get all symbols in a file (classes, functions, methods, variables).
-
-    Returns a hierarchical view of the file's structure, similar to an
-    IDE's outline view. Use this to understand a file's organization
-    before making edits.
-
-    Args:
-        path: Path to the file to analyze
-
-    Returns:
-        Hierarchical list of symbols with their types and line ranges
-    """
+    """Get all symbols in a file (classes, functions, methods, variables)."""
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
 
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     result = await client.document_symbols(path)
@@ -653,7 +549,7 @@ async def lsp_rename_symbol_impl(
     workspace: Workspace | None = None,
 ) -> str:
     import json
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     # Get the rename edits
@@ -724,31 +620,20 @@ async def lsp_find_symbol_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Find symbols by name with support for name path syntax.
-
-    Name path syntax allows searching for nested symbols:
-        - 'Foo' - find class/function named Foo
-        - 'Foo.bar' - find 'bar' inside 'Foo' (e.g., method bar in class Foo)
-        - 'Foo.bar.baz' - find 'baz' inside 'Foo.bar'
-        - 'module::Class::method' - Rust-style path syntax
+    """Find symbols by name. Supports path syntax: 'Class.method' or 'mod::func'.
 
     Args:
         name: Symbol name or path (e.g., 'MyClass.my_method')
-        path: Optional file path to search within
-        kind: Optional single kind filter ('function', 'class', 'method', etc.)
-        kinds: Optional list of kinds to include (e.g., ['function', 'method'])
-        depth: Optional depth filter (0=top-level, 1=nested once, etc.)
-        include_body: If True, include the source code body of each symbol
-        workspace: Workspace context
-
-    Returns:
-        Formatted string with matching symbols
+        path: File path to search within
+        kind/kinds: Filter by symbol kind (function, class, method)
+        depth: Nesting depth filter (0=top-level)
+        include_body: Include source code
     """
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
 
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     # Parse name path to get leaf name and container path
@@ -879,28 +764,22 @@ async def lsp_find_referencing_symbols_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Find symbols that reference the symbol at the given position.
+    """Find symbols containing references to the symbol at position.
 
-    Unlike lsp_find_references which returns raw locations, this returns
-    the containing symbols (functions, classes, methods) that contain
-    each reference, providing better context for understanding usage.
+    Returns containing functions/classes rather than raw locations.
 
     Args:
-        path: Path to the file containing the symbol
+        path: File path
         line: Line number (1-indexed)
         character: Character position (0-indexed)
-        kinds: Optional filter for containing symbol kinds (e.g., ['function', 'method'])
-        include_body: If True, include source code of containing symbols
-        workspace: Workspace context
-
-    Returns:
-        Formatted string with symbols that reference the target
+        kinds: Filter by containing symbol kind
+        include_body: Include source code
     """
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
-    
-    root = workspace.root if workspace else Path.cwd()
+
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     # Build kind filter set
@@ -1058,26 +937,19 @@ async def lsp_find_symbol_semantic_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Find symbols semantically using embeddings + LSP fusion.
-
-    Combines semantic search (embeddings) with LSP symbol resolution.
-    Use natural language queries like "authentication logic" or "database connection".
+    """Find symbols by natural language query using semantic search + LSP.
 
     Args:
-        query: Natural language search query
-        top_k: Maximum number of results (default 10)
-        kinds: Filter by symbol kinds (e.g., ["function", "class", "method"])
-        include_body: Include source code of matched symbols
-        boost_recent: Boost recently modified files in ranking (default True)
-        workspace: Workspace context
-
-    Returns:
-        Structured list of symbols ranked by semantic relevance
+        query: Natural language query (e.g., "authentication logic")
+        top_k: Max results (default 10)
+        kinds: Filter by symbol kind
+        include_body: Include source code
+        boost_recent: Boost recent files (default True)
     """
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
 
     # 1. Use semantic search to find relevant files
     from ..orchestration.summarizer import get_summarizer
@@ -1192,23 +1064,16 @@ async def lsp_get_hot_files_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Get recently modified files (hot files).
-
-    Returns files that have been recently modified, useful for focusing
-    on actively worked-on code areas.
+    """Get recently modified files.
 
     Args:
-        limit: Maximum number of files to return (default 10)
-        since_hours: Only include files modified within this many hours (default 24)
-        workspace: Workspace context
-
-    Returns:
-        List of recently modified files with modification times
+        limit: Max files to return
+        since_hours: Time window in hours
     """
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
 
     from ..orchestration.graph import get_symbol_graph
     import datetime
@@ -1246,7 +1111,7 @@ async def lsp_replace_symbol_body_impl(
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
 
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     # Find the symbol
@@ -1289,13 +1154,13 @@ async def lsp_replace_symbol_body_impl(
     abs_path.write_text("".join(lines))
 
     result = f"Replaced {target['kind']} '{symbol_name}' (lines {start_line + 1}-{end_line + 1}) in {path}"
-    
+
     # Add profile-aware warnings if applicable
     warnings = get_profile_warnings(path, symbol_name)
     if warnings:
         warning_context = await get_profile_context_for_warnings(warnings, root)
         result += warning_context
-    
+
     return result
 
 
@@ -1310,7 +1175,7 @@ async def lsp_insert_before_symbol_impl(
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
 
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     # Find the symbol
@@ -1365,7 +1230,7 @@ async def lsp_insert_after_symbol_impl(
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     # Find the symbol
@@ -1424,26 +1289,19 @@ async def lsp_move_symbol_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Move a symbol from one file to another with import updates.
-
-    Extracts the symbol from the source file, inserts it into the destination,
-    and optionally updates all import statements across the codebase.
+    """Move a symbol to another file, updating imports across codebase.
 
     Args:
-        source_path: Path to the source file containing the symbol
-        symbol_name: Name of the symbol to move
-        dest_path: Path to the destination file
-        update_imports: Whether to update imports in referencing files (default True)
-        cleanup_imports: Whether to remove unused imports from source file (default True)
-        workspace: Workspace context
-
-    Returns:
-        Summary of the move operation and import updates
+        source_path: Source file path
+        symbol_name: Symbol to move
+        dest_path: Destination file path
+        update_imports: Update imports in referencing files
+        cleanup_imports: Remove unused imports from source
     """
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
 
     # 1. Find the symbol in source file
@@ -1702,30 +1560,24 @@ async def lsp_organize_imports_impl(
     workspace: Workspace | None = None,
 ) -> str:
     """Organize imports in a Python file using Ruff.
-    
-    Removes unused imports and sorts remaining imports according to PEP 8.
-    
+
     Args:
-        path: Path to the Python file
-        remove_unused: Remove unused imports (default True)
-        sort_imports: Sort and organize imports (default True)
-        workspace: Workspace context
-        
-    Returns:
-        Summary of changes made
+        path: Python file path
+        remove_unused: Remove unused imports
+        sort_imports: Sort imports (PEP 8)
     """
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
-    root = workspace.root if workspace else Path.cwd()
-    
+    root = workspace.root if workspace else get_project_path()
+
     file_path = root / path
     if not file_path.exists():
         return f"File not found: {path}"
-    
+
     if not path.endswith(".py"):
         return f"Not a Python file: {path}"
-    
+
     import subprocess
     
     results = []
@@ -1779,29 +1631,23 @@ async def lsp_get_dependencies_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Visualize cross-file symbol dependencies for a file.
-    
-    Shows what the file exports, what it imports, and who depends on it.
-    
+    """Show file exports, imports, and dependents.
+
     Args:
-        path: Path to the file to analyze
-        include_symbols: Include per-symbol dependency details (default True)
-        max_depth: How many levels of dependencies to show (default 2)
-        workspace: Workspace context
-        
-    Returns:
-        Formatted dependency visualization
+        path: File to analyze
+        include_symbols: Show per-symbol details
+        max_depth: Dependency levels to traverse
     """
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
     client = lsp_client.get_lsp_client(root)
-    
+
     file_abs = root / path
     if not file_abs.exists():
         return f"File not found: {path}"
-    
+
     # Get symbols in this file
     symbols = await client.document_symbols(path)
     
@@ -1912,27 +1758,18 @@ async def lsp_extract_method_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Extract a code block into a new method.
-
-    Extracts lines from start_line to end_line into a new method,
-    replacing the original code with a call to the new method.
-    
-    If new_name is not provided, generates a name based on the code content.
+    """Extract lines into a new method, replacing original with a call.
 
     Args:
-        path: Path to the file
-        start_line: First line to extract (1-indexed)
-        end_line: Last line to extract (1-indexed)
-        new_name: Name for the extracted method (optional, will suggest if not provided)
-        workspace: Workspace context
-
-    Returns:
-        Summary of the extraction with the generated method
+        path: File path
+        start_line: First line (1-indexed)
+        end_line: Last line (1-indexed)
+        new_name: Method name (auto-generated if omitted)
     """
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
 
     # Read the file
     abs_path = root / path
@@ -2178,29 +2015,10 @@ async def lsp_batch_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Execute multiple LSP operations in sequence.
-
-    Runs a batch of LSP operations and tracks the sequence for learning.
-    Useful for complex refactoring that requires multiple steps.
-    
-    Modifying operations are automatically saved for undo support.
-    Use lsp_batch_history() to see recent batches and lsp_batch_undo() to revert.
+    """Execute multiple LSP operations in sequence with undo support.
 
     Args:
-        operations: JSON array of operations, each with:
-            - op: Operation name (find_symbol, find_references, rename, move, etc.)
-            - args: Arguments for the operation
-        workspace: Workspace context
-
-    Example operations:
-        [
-            {"op": "find_symbol", "args": {"name": "MyClass"}},
-            {"op": "find_references", "args": {"path": "src/mod.py", "line": 10, "character": 5}},
-            {"op": "rename", "args": {"path": "src/mod.py", "line": 10, "character": 5, "new_name": "NewClass"}}
-        ]
-
-    Returns:
-        Combined results of all operations with sequence summary
+        operations: JSON array of {op, args} where op is find_symbol, rename, move, etc.
     """
     import json as json_module
     import uuid
@@ -2208,7 +2026,7 @@ async def lsp_batch_impl(
     # Convert dict to Workspace if needed (for MCP compatibility)
     if isinstance(workspace, dict):
         workspace = Workspace(**workspace)
-    root = workspace.root if workspace else Path.cwd()
+    root = workspace.root if workspace else get_project_path()
 
     # Parse operations
     try:
@@ -2321,15 +2139,7 @@ async def lsp_batch_history_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """List recent batch operations available for undo.
-    
-    Args:
-        limit: Maximum number of entries to show (default 10)
-        workspace: Workspace context
-        
-    Returns:
-        List of recent batch operations with their IDs
-    """
+    """List recent batch operations available for undo."""
     import time
     
     history = _get_batch_history()[:limit]
@@ -2351,15 +2161,7 @@ async def lsp_batch_undo_impl(
     *,
     workspace: Workspace | None = None,
 ) -> str:
-    """Undo a batch operation by restoring files to their previous state.
-    
-    Args:
-        batch_id: ID of the batch to undo (default: most recent)
-        workspace: Workspace context
-        
-    Returns:
-        Summary of restored files
-    """
+    """Undo a batch operation, restoring files to previous state."""
     import json as json_module
     
     if not _BATCH_HISTORY_DIR.exists():

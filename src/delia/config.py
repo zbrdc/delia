@@ -376,10 +376,12 @@ class Config:
         default_factory=lambda: os.getenv("DELIA_STRICT_MODE", "true").lower() in ("true", "1", "yes")
     )
 
-    # Tool profile: minimal (core only), standard (default), full (all tools)
-    # minimal: ~15 tools - file ops, basic LSP, delegate
-    # standard: ~35 tools - adds framework, git, search
-    # full: ~67 tools - everything including legacy
+    # Tool profile: light (minimum), standard (default), full (all tools)
+    # light: ~35 tools - files, LSP, Framework (ALWAYS), semantic search
+    # standard: ~50 tools - adds consolidated, git, admin, batch ops
+    # full: adds MCP resources and management
+    # Note: Local model delegation (delegate, think, batch, etc.) is separate
+    #       and controlled by DELIA_DELEGATION=true environment variable
     tool_profile: str = field(
         default_factory=lambda: os.getenv("DELIA_TOOLS", "standard").lower()
     )

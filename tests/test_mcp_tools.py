@@ -91,7 +91,7 @@ class TestBatchFunction:
     async def test_batch_parses_json_tasks(self):
         """batch() should parse JSON task array."""
         from delia import delegation
-        from delia.tools.handlers import batch_impl as batch_tool
+        from delia.tools.delegation import batch_impl as batch_tool
     
         # Mock the actual LLM call to avoid needing a real backend
         with patch.object(delegation, '_delegate_impl', new_callable=AsyncMock) as mock_execute:
@@ -109,7 +109,7 @@ class TestBatchFunction:
     @pytest.mark.asyncio
     async def test_batch_rejects_invalid_json(self):
         """batch() should handle invalid JSON gracefully."""
-        from delia.tools.handlers import batch_impl as batch_tool
+        from delia.tools.delegation import batch_impl as batch_tool
 
         result = await batch_tool(tasks="not valid json")
         assert "Error: Invalid JSON" in result
@@ -117,7 +117,7 @@ class TestBatchFunction:
     @pytest.mark.asyncio
     async def test_batch_rejects_non_array(self):
         """batch() should reject non-array JSON."""
-        from delia.tools.handlers import batch_impl as batch_tool
+        from delia.tools.delegation import batch_impl as batch_tool
     
         result = await batch_tool(tasks='{"task": "summarize"}')
         assert "Error: tasks must be a JSON array" in result
@@ -165,7 +165,7 @@ class TestDryRunFunction:
     @pytest.mark.asyncio
     async def test_dry_run_returns_json(self):
         """dry_run=True should return JSON with estimation signals."""
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
 
         with patch("delia.tools.handlers_orchestration.check_context_gate", return_value=None):
             result = await delegate_tool(
@@ -182,7 +182,7 @@ class TestDryRunFunction:
     @pytest.mark.asyncio
     async def test_dry_run_contains_required_fields(self):
         """dry_run should return all required estimation fields."""
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
     
         result = await delegate_tool(
             task="analyze",
@@ -203,7 +203,7 @@ class TestDryRunFunction:
     @pytest.mark.asyncio
     async def test_dry_run_token_estimation(self):
         """dry_run should provide reasonable token estimates."""
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
     
         content = "x" * 1000  # ~250 tokens
         result = await delegate_tool(
@@ -220,7 +220,7 @@ class TestDryRunFunction:
     @pytest.mark.asyncio
     async def test_dry_run_invalid_task(self):
         """dry_run should report validation errors."""
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
     
         result = await delegate_tool(
             task="invalid_task_type",
@@ -273,7 +273,7 @@ class TestStreamingFunction:
     @pytest.mark.asyncio
     async def test_stream_parameter_exists(self):
         """delegate() should accept stream parameter."""
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
     
         # Verify the delegate function has stream parameter
         import inspect
@@ -285,7 +285,7 @@ class TestStreamingFunction:
     async def test_stream_with_mocked_provider(self):
         """stream=True should use streaming mode and collect response."""
         from delia import llm
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
         from delia.providers import StreamChunk
     
         # Create an async generator that yields streaming chunks
@@ -308,7 +308,7 @@ class TestStreamingFunction:
     async def test_stream_includes_metadata(self):
         """stream=True with include_metadata should show streaming marker."""
         from delia import llm
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
         from delia.providers import StreamChunk
     
         async def mock_stream(*args, **kwargs):
@@ -331,7 +331,7 @@ class TestStreamingFunction:
     async def test_stream_error_handling(self):
         """stream=True should handle errors from streaming."""
         from delia import llm
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
         from delia.providers import StreamChunk
 
         async def mock_stream_error(*args, **kwargs):
@@ -350,7 +350,7 @@ class TestStreamingFunction:
     async def test_stream_false_uses_normal_path(self):
         """stream=False should use non-streaming implementation."""
         from delia import delegation, llm
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
         from delia.queue import ModelQueue
         from unittest.mock import MagicMock
         
@@ -675,7 +675,7 @@ class TestDelegateModelSelection:
     async def test_delegate_with_model_override(self):
         """delegate() should respect explicit model override."""
         from delia import mcp_server, llm
-        from delia.tools.handlers import delegate_tool_impl as delegate_tool
+        from delia.tools.delegation import delegate_tool_impl as delegate_tool
         from delia.queue import ModelQueue
         from unittest.mock import MagicMock
         
@@ -735,7 +735,7 @@ class TestThinkDepthLevels:
     async def test_think_quick_depth(self):
         """think() with quick depth should work."""
         from delia import mcp_server, llm
-        from delia.tools.handlers import think_impl as think_tool
+        from delia.tools.delegation import think_impl as think_tool
         from delia.queue import ModelQueue
         from unittest.mock import MagicMock
         
@@ -756,7 +756,7 @@ class TestThinkDepthLevels:
     async def test_think_deep_depth(self):
         """think() with deep depth should use thinking model."""
         from delia import mcp_server, llm
-        from delia.tools.handlers import think_impl as think_tool
+        from delia.tools.delegation import think_impl as think_tool
         from delia.queue import ModelQueue
         from unittest.mock import MagicMock
         

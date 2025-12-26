@@ -19,8 +19,9 @@ from pathlib import Path
 import structlog
 from fastmcp import FastMCP
 
+from ..context import get_project_path
 from ..types import Workspace
-from .handlers import check_context_gate, check_checkpoint_gate
+from .handlers_enforcement import check_context_gate, check_checkpoint_gate
 
 log = structlog.get_logger()
 
@@ -196,7 +197,7 @@ def register_file_tools(mcp: FastMCP):
 
 def _get_project_root() -> Path:
     """Get the base directory for file operations."""
-    return Path.cwd()
+    return get_project_path()
 
 
 def _resolve_path(path: str, workspace: Workspace | None = None) -> Path:

@@ -7,7 +7,7 @@ import asyncio
 from hypothesis import given, strategies as st, settings, HealthCheck
 from unittest.mock import AsyncMock, MagicMock, patch
 from delia.delegation import delegate_impl as delegate
-from delia.tools.handlers import think_impl as think, batch_impl as batch
+from delia.tools.delegation import think_impl as think, batch_impl as batch
 
 # Mock results for the orchestration service
 mock_success_result = MagicMock()

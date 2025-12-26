@@ -11,11 +11,18 @@ into action-based tools.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Literal, Any
 
 import structlog
 
+from ..context import get_project_path
+
 log = structlog.get_logger()
+
+
+# Use canonical get_project_path from context module
+_resolve_project_path = get_project_path
 
 
 # =============================================================================
@@ -51,7 +58,6 @@ async def playbook_tool(
         JSON string with operation result
     """
     from ..playbook import playbook_manager
-    from pathlib import Path
 
     # Set project context if path provided
     if path:
@@ -143,7 +149,7 @@ async def playbook_tool(
         playbook_manager.save_playbook(task_type, bullet_objects)
 
         # Sync to ChromaDB - re-index this task_type
-        project_path = Path(path) if path else Path.cwd()
+        project_path = _resolve_project_path(path)
         try:
             from delia.learning.retrieval import get_retriever
             retriever = get_retriever()
@@ -173,7 +179,7 @@ async def playbook_tool(
 
         # Also remove from ChromaDB
         if success:
-            project_path = Path(path) if path else Path.cwd()
+            project_path = _resolve_project_path(path)
             try:
                 from delia.orchestration.vector_store import get_vector_store
                 store = get_vector_store(project_path)
@@ -264,7 +270,7 @@ async def playbook_tool(
             return json.dumps({"error": "query required for search action"})
 
         limit = kwargs.get("limit", 5)
-        project_path = Path(path) if path else Path.cwd()
+        project_path = _resolve_project_path(path)
 
         try:
             from delia.learning.retrieval import get_retriever
@@ -302,7 +308,7 @@ async def playbook_tool(
 
     elif action == "index":
         # Index all playbook bullets to ChromaDB
-        project_path = Path(path) if path else Path.cwd()
+        project_path = _resolve_project_path(path)
 
         try:
             from delia.learning.retrieval import get_retriever
@@ -372,15 +378,8 @@ async def memory_tool(
     Returns:
         JSON string or markdown content
     """
-    from pathlib import Path
-
-    # Determine memory directory and project path
-    if path:
-        project_path = Path(path)
-        memory_dir = project_path / ".delia" / "memories"
-    else:
-        project_path = Path.cwd()
-        memory_dir = project_path / ".delia" / "memories"
+    project_path = _resolve_project_path(path)
+    memory_dir = project_path / ".delia" / "memories"
 
     memory_dir.mkdir(parents=True, exist_ok=True)
 
@@ -671,9 +670,8 @@ async def profiles_tool(
     Returns:
         JSON string with operation result
     """
-    from pathlib import Path
 
-    project_path = Path(path) if path else Path.cwd()
+    project_path = _resolve_project_path(path)
 
     if action == "recommend":
         analyze_gaps = kwargs.get("analyze_gaps", True)
@@ -805,7 +803,6 @@ async def project_tool(
     Returns:
         JSON string with operation result
     """
-    from pathlib import Path
 
     project_path = Path(path)
 
@@ -874,9 +871,26 @@ async def project_tool(
         return json.dumps(result)
 
     elif action == "read_instructions":
-        # read_instruction_files(path)
-        from ..agent_sync import read_instruction_files
-        result = read_instruction_files(project_path)
+        # List DELIA.md instruction files loaded into context
+        from ..project_memory import get_project_memory, list_project_memories
+
+        memories = list_project_memories()
+        pm = get_project_memory()
+        state = pm._state
+
+        result = {
+            "status": "success",
+            "instruction_files": memories,
+            "total_size": state.total_size if state else 0,
+            "load_hierarchy": [
+                "1. ~/.delia/DELIA.md (user defaults)",
+                "2. ./DELIA.md (project instructions)",
+                "3. ./.delia/DELIA.md (project config)",
+                "4. ./.delia/rules/*.md (modular rules)",
+                "5. ./DELIA.local.md (local overrides)",
+            ],
+            "message": "Use project(action='sync', content='...') to update instruction files.",
+        }
         return json.dumps(result)
 
     else:
@@ -946,12 +960,11 @@ async def admin_tool(
 
     elif action == "cleanup_project":
         # Clean up a project's .delia/ directory
-        from pathlib import Path
         from ..cleanup import cleanup_project_delia_dir
 
-        project_path = kwargs.get("path") or str(Path.cwd())
+        project_path = _resolve_project_path(kwargs.get("path"))
         dry_run = kwargs.get("dry_run", True)
-        results = cleanup_project_delia_dir(Path(project_path), dry_run=dry_run)
+        results = cleanup_project_delia_dir(project_path, dry_run=dry_run)
         return json.dumps(results, indent=2)
 
     elif action == "cleanup_all":
@@ -964,9 +977,8 @@ async def admin_tool(
     elif action == "vector_store":
         # Get ChromaDB vector store statistics for current project
         try:
-            from pathlib import Path
             from ..orchestration.vector_store import get_vector_store
-            project_path = kwargs.get("path") or Path.cwd()
+            project_path = _resolve_project_path(kwargs.get("path"))
             store = get_vector_store(project_path)
             stats = store.get_stats()
             stats["project"] = str(project_path)
@@ -1007,17 +1019,7 @@ def register_consolidated_tools(mcp):
         query: str | None = None,
         limit: int = 5,
     ) -> str:
-        """Unified playbook management (ADR-009).
-
-        Consolidates 9 operations: add, write, delete, prune, list, stats, confirm, search, index.
-
-        Examples:
-            playbook(action="add", task_type="coding", content="Use async for I/O")
-            playbook(action="list")
-            playbook(action="stats", task_type="coding")
-            playbook(action="search", query="error handling patterns")
-            playbook(action="index")  # Index all playbooks to ChromaDB
-        """
+        """Manage playbooks: add, write, delete, prune, list, stats, confirm, search, index."""
         return await playbook_tool(
             action=action,
             task_type=task_type,
@@ -1045,19 +1047,7 @@ def register_consolidated_tools(mcp):
         query: str | None = None,
         limit: int = 5,
     ) -> str:
-        """Unified memory management (ADR-009).
-
-        Consolidates 6 operations: list, read, write, delete, search, index.
-        Manages markdown files in .delia/memories/ for persistent project knowledge.
-        ChromaDB-backed semantic search available via search action.
-
-        Examples:
-            memory(action="list")
-            memory(action="read", name="architecture")
-            memory(action="write", name="decisions", content="# Key Decisions...")
-            memory(action="search", query="authentication patterns")
-            memory(action="index")  # Re-index all memories to ChromaDB
-        """
+        """Manage memories (.delia/memories/): list, read, write, delete, search, index."""
         return await memory_tool(
             action=action,
             name=name,
