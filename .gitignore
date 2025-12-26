@@ -103,3 +103,6 @@ outputs/
 # Development directories
 benchmarks/
 scripts/
+tests/
+tui/
+docs/
