@@ -1479,15 +1479,7 @@ def register_consolidated_tools(mcp):
         next_steps: str | None = None,
         path: str | None = None,
     ) -> str:
-        """Unified session management (ADR-010).
-
-        Consolidates 5 operations: list, stats, compact, delete, snapshot.
-
-        Examples:
-            session(action="list")
-            session(action="stats", session_id="abc123")
-            session(action="compact", session_id="abc123", force=True)
-            session(action="snapshot", task_summary="...", pending_items='["item1", "item2"]')"""
+        """Unified session management (ADR-010). Actions: list, stats, compact, delete, snapshot."""
         return await session_tool(
             action=action,
             session_id=session_id,
@@ -1510,17 +1502,7 @@ def register_consolidated_tools(mcp):
         query: str | None = None,
         limit: int = 5,
     ) -> str:
-        """Unified profile/evaluation management (ADR-009).
-
-        Consolidates 6 operations: recommend, check, reevaluate, cleanup, index, search.
-
-        Examples:
-            profiles(action="recommend", path="/home/user/project")
-            profiles(action="check")
-            profiles(action="reevaluate", force=True)
-            profiles(action="index")  # Index profiles to ChromaDB
-            profiles(action="search", query="API security best practices")
-        """
+        """Unified profile/evaluation management (ADR-009). Actions: recommend, check, reevaluate, cleanup, index, search."""
         return await profiles_tool(
             action=action,
             path=path,
@@ -1547,17 +1529,7 @@ def register_consolidated_tools(mcp):
         content: str | None = None,
         name: str | None = None,
     ) -> str:
-        """Unified project initialization and management (ADR-009).
-
-        Consolidates 7 operations: init, scan, analyze, sync, read_instructions, profile, overview.
-
-        Examples:
-            project(action="init", path="/home/user/myapp")
-            project(action="scan", path="/home/user/myapp", phase="overview")
-            project(action="sync", path="/home/user/myapp", content="# Instructions...")
-            project(action="profile", path="/home/user/myapp", name="security.md")
-            project(action="overview", path="/home/user/myapp")
-        """
+        """Unified project initialization and management (ADR-009). Actions: init, scan, analyze, sync, read_instructions, profile, overview."""
         return await project_tool(
             action=action,
             path=path,
@@ -1592,23 +1564,7 @@ def register_consolidated_tools(mcp):
         category: str | None = None,
         max_age_hours: float = 1.0,
     ) -> str:
-        """Unified admin/system management (ADR-010).
-
-        Actions:
-        - switch_model, queue_status, mcp_servers, vector_store (existing)
-        - models: List all configured models
-        - dashboard: Get dashboard URL
-        - model_info: Get info about specific model (requires model_name)
-        - tools: List available tools (optional category filter)
-        - describe: Get tool details (requires tool_name)
-        - framework_stats: Get framework enforcement stats
-        - framework_cleanup: Clean stale trackers (optional max_age_hours)
-
-        Examples:
-            admin(action="models")
-            admin(action="dashboard")
-            admin(action="model_info", model_name="qwen3:14b")
-            admin(action="framework_stats")"""
+        """Unified admin/system management (ADR-010). Actions: switch_model, queue_status, mcp_servers, vector_store, models, dashboard, model_info, tools, describe, framework_stats, framework_cleanup."""
         return await admin_tool(
             action=action,
             tier=tier,
