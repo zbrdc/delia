@@ -107,7 +107,23 @@ def register_semantic_tools(mcp: FastMCP):
                 "symbol_count": len(node.symbols),
             }, indent=2)
 
-        return json.dumps({"total_files": len(graph.nodes)}, indent=2)
+        # No file specified - return summary with top importers/imported
+        import_counts: dict[str, int] = {}
+        imported_by_counts: dict[str, int] = {}
+        for path, node in graph.nodes.items():
+            import_counts[path] = len(node.imports)
+            for imp in node.imports:
+                imported_by_counts[imp] = imported_by_counts.get(imp, 0) + 1
+
+        top_importers = sorted(import_counts.items(), key=lambda x: -x[1])[:5]
+        top_imported = sorted(imported_by_counts.items(), key=lambda x: -x[1])[:5]
+
+        return json.dumps({
+            "total_files": len(graph.nodes),
+            "top_importers": [{"file": f, "import_count": c} for f, c in top_importers],
+            "most_imported": [{"file": f, "imported_by_count": c} for f, c in top_imported],
+            "hint": "Pass file_path to see specific file dependencies",
+        }, indent=2)
 
     @mcp.tool()
     async def explain_dependency(

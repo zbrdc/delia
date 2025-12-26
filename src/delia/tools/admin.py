@@ -410,7 +410,7 @@ async def health_impl() -> str:
 
 async def dashboard_url_impl() -> str:
     """Get the URL of the running Delia dashboard."""
-    from ..mcp_server import _dashboard_port, _dashboard_process
+    from ..lifecycle import _dashboard_port, _dashboard_process
 
     if _dashboard_process is None or _dashboard_port is None:
         return json.dumps({
