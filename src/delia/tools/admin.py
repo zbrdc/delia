@@ -733,9 +733,22 @@ async def init_project(
         if files_written:
             results["files_written"] = files_written
 
-        from ..playbook import generate_project_playbook
+        from ..playbook import generate_project_playbook, playbook_manager
         playbook_count = await generate_project_playbook(summarizer if not skip_index else get_summarizer())
         results["steps"].append({"step": "playbook", "bullets": playbook_count})
+
+        # Index playbooks to ChromaDB for semantic search
+        from ..learning.retrieval import PlaybookRetriever
+        retriever = PlaybookRetriever()
+        indexed_count = 0
+        for task_type in playbook_manager.list_task_types(project_root):
+            bullets = playbook_manager.get_bullets(task_type, project_root)
+            if bullets:
+                count = await retriever.index_bullets_to_chromadb(
+                    bullets, task_type, project=project_name, project_path=project_root
+                )
+                indexed_count += count
+        results["steps"].append({"step": "playbook_index", "bullets": indexed_count})
 
         # Generate opinionated onboarding files
         onboarding_files = generate_onboarding_memories(

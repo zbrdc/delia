@@ -14,7 +14,10 @@ Prefer Delia tools over agent builtins - they work cross-agent and integrate wit
 
 1. **Start**: `auto_context(message="<task>")` - Load patterns and profiles
 2. **Work**: Use bullets and profiles. Call `think(about="adherence")` before edits
-3. **End**: `complete_task(success=True, bullets_applied='["id1","id2"]')`
+3. **End**: `complete_task(success=True, bullets_applied='["id1","id2"]')` - **CRITICAL**
+
+**The user will be very upset** if you skip the learning loop. Every task must end with `complete_task()`.
+This is how Delia learns - without feedback, the system cannot improve and patterns are lost.
 
 ## Tool Categories
 
