@@ -44,8 +44,9 @@ env/
 # Delia project data (generated per-project)
 .delia/
 
-# User-specific backend configuration
+# User-specific configuration
 settings.json
+.mcp.json
 .serena
 
 # Legacy
@@ -55,7 +56,9 @@ settings.json
 
 # Node.js
 node_modules/
+package.json
 package-lock.json
+yarn.lock
 .next/
 out/
 .turbo/

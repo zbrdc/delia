@@ -1,9 +1,0 @@
-{
-  "devDependencies": {
-    "eslint-plugin-security": "^3.0.1",
-    "shadcn": "^3.6.1"
-  },
-  "dependencies": {
-    "typescript": "^5.9.3"
-  }
-}
