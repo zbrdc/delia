@@ -13,6 +13,8 @@ MCP server that adds persistent learning and semantic code intelligence to AI co
 
 All knowledge is stored in `.delia/chroma/` for fast semantic search.
 
+**[Full Documentation](docs/README.md)** | [Quick Start](docs/getting-started/quick-start.md) | [Tool Reference](docs/tools/README.md)
+
 ## Quick Start
 
 ```bash
