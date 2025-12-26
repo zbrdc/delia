@@ -12,8 +12,10 @@ Wraps existing PlaybookManager - no new storage layer.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
@@ -25,6 +27,273 @@ from delia.learning.deduplication import SemanticDeduplicator, get_deduplicator
 from delia.learning.reflector import ReflectionResult, ExtractedInsight, InsightType
 
 log = structlog.get_logger()
+
+
+# =============================================================================
+# Quality Gate: Stale Snapshot Detection
+# =============================================================================
+
+# Patterns that indicate point-in-time observations (not prescriptive guidance)
+STALE_SNAPSHOT_PATTERNS = [
+    r"\b\d+\s+files?\s+(?:need|require|should|must|to)\s+(?:migration|update|fix)",  # "71 files need migration"
+    r"\bcurrently\s+(?:have|has|using|at)\b",  # "currently using X"
+    r"\b(?:today|yesterday|this\s+week|last\s+(?:week|month))\b",  # Time references
+    r"\b\d{4}-\d{2}-\d{2}\b",  # ISO dates
+    r"\bcommit\s+[a-f0-9]{6,40}\b",  # Git commit hashes
+    r"\bversion\s+\d+\.\d+",  # "version 1.2.3" without context
+    r"\bwas\s+(?:slow|fast|broken|working|failing)\b",  # Past state observations
+    r"\bfound\s+\d+\s+(?:errors?|issues?|bugs?|problems?)\b",  # Discovery counts
+]
+
+STALE_SNAPSHOT_COMPILED = [re.compile(p, re.IGNORECASE) for p in STALE_SNAPSHOT_PATTERNS]
+
+
+def is_stale_snapshot(content: str) -> str | None:
+    """
+    Detect point-in-time observations that shouldn't become permanent bullets.
+
+    Returns rejection reason if stale, None if OK.
+
+    Examples (REJECT):
+    - "71 files need migration" → snapshot of current state
+    - "Fixed in commit abc123" → tied to specific commit
+    - "Currently using React 18" → version will change
+
+    Examples (ACCEPT):
+    - "Prefer styled() over StyleSheet.create" → prescriptive
+    - "React 18+ requires concurrent mode" → version-qualified guidance
+    """
+    for pattern in STALE_SNAPSHOT_COMPILED:
+        match = pattern.search(content)
+        if match:
+            return f"Stale snapshot detected: '{match.group()}'"
+    return None
+
+
+# =============================================================================
+# Quality Gate: Generic/Obvious Advice Detection
+# =============================================================================
+
+# Patterns for overly vague guidance
+GENERIC_ADVICE_PATTERNS = [
+    r"^(?:always\s+)?(?:write|use|do|add|follow|ensure)\s+(?:good|proper|correct|best|right)\s+\w+\.?$",
+    r"^(?:be|stay)\s+(?:careful|aware|mindful|cautious)\.?$",
+    r"^(?:remember|note|don't forget)\s+to\s+\w+\.?$",
+    r"^(?:make\s+sure|ensure)\s+(?:to\s+)?(?:test|check|verify)\.?$",
+    r"^(?:optimize|improve)\s+(?:for\s+)?performance\.?$",
+    r"^(?:handle|catch)\s+(?:all\s+)?(?:errors?|exceptions?)\.?$",
+    r"^(?:use|follow)\s+(?:the\s+)?(?:best\s+practices?|standards?)\.?$",
+    r"^(?:keep|maintain)\s+(?:code\s+)?(?:clean|readable|simple)\.?$",
+    r"^(?:document|comment)\s+(?:your\s+)?(?:code|changes?)\.?$",
+]
+
+GENERIC_ADVICE_COMPILED = [re.compile(p, re.IGNORECASE) for p in GENERIC_ADVICE_PATTERNS]
+
+# Words that indicate specific, actionable guidance (should be present)
+SPECIFICITY_MARKERS = {
+    # Tech terms
+    "async", "await", "callback", "promise", "observable",
+    "path", "file", "directory", "import", "export", "module",
+    "api", "http", "rest", "graphql", "rpc", "endpoint",
+    "database", "query", "schema", "migration", "index",
+    "cache", "redis", "memory", "storage", "session",
+    "auth", "token", "jwt", "oauth", "permission", "role",
+    "component", "hook", "state", "props", "context", "reducer",
+    "class", "function", "method", "interface", "type", "generic",
+    # Framework/tool names
+    "react", "vue", "angular", "svelte", "next", "nuxt",
+    "fastapi", "django", "flask", "express", "nest",
+    "postgres", "mysql", "mongo", "redis", "supabase",
+    "jest", "pytest", "vitest", "playwright", "cypress",
+    "docker", "kubernetes", "nginx", "aws", "gcp",
+    # Specific patterns
+    "pathlib", "os.path", "httpx", "requests", "axios",
+    "zod", "pydantic", "yup", "joi",
+}
+
+
+def is_generic_advice(content: str) -> str | None:
+    """
+    Filter obvious or overly vague patterns that don't add value.
+
+    Returns rejection reason if generic, None if OK.
+
+    Examples (REJECT):
+    - "Always write good code" → no specific guidance
+    - "Handle errors properly" → too vague
+    - "Follow best practices" → meaningless
+
+    Examples (ACCEPT):
+    - "Use pathlib.Path over os.path" → specific recommendation
+    - "Handle async errors with try/catch and user feedback" → actionable
+    """
+    content_lower = content.lower()
+
+    # Check against generic patterns
+    for pattern in GENERIC_ADVICE_COMPILED:
+        if pattern.match(content.strip()):
+            return "Too generic: lacks specific guidance"
+
+    # Check for specificity markers
+    has_specificity = any(marker in content_lower for marker in SPECIFICITY_MARKERS)
+
+    # Short content without specificity markers is likely generic
+    word_count = len(content.split())
+    if word_count < 10 and not has_specificity:
+        # Additional check: does it have actionable structure?
+        has_action = any(word in content_lower for word in [
+            "use", "avoid", "prefer", "never", "always", "must", "should",
+            "instead of", "rather than", "over", "not"
+        ])
+        if not has_action:
+            return "Too generic: short content without specific terms"
+
+    return None
+
+
+# =============================================================================
+# Quality Gate: Contradiction Detection
+# =============================================================================
+
+# Simple opposing keyword pairs (no regex backreferences)
+OPPOSING_TERMS = [
+    ("named export", "default export"),
+    ("default export", "named export"),
+    ("async", "sync"),
+    ("sync", "async"),
+    ("class component", "functional component"),
+    ("functional component", "class component"),
+]
+
+
+def detect_contradiction(
+    new_content: str,
+    existing_bullets: list["PlaybookBullet"],
+) -> tuple[str, str] | None:
+    """
+    Detect if new content contradicts existing bullets.
+
+    Returns (conflicting_bullet_id, explanation) if contradiction found, None if OK.
+
+    Examples:
+    - New: "Use default exports" vs Existing: "Use named exports" → CONFLICT
+    - New: "Always use async" vs Existing: "Prefer sync for simple ops" → CONFLICT
+    """
+    new_lower = new_content.lower()
+
+    for bullet in existing_bullets:
+        existing_lower = bullet.content.lower()
+
+        # Check for opposing term pairs
+        for term_a, term_b in OPPOSING_TERMS:
+            # New recommends A, existing recommends B
+            new_has_a = term_a in new_lower and any(
+                w in new_lower for w in ["use", "prefer", "always"]
+            )
+            existing_has_b = term_b in existing_lower and any(
+                w in existing_lower for w in ["use", "prefer", "always"]
+            )
+            if new_has_a and existing_has_b:
+                return (bullet.id, f"Recommends '{term_a}' but existing recommends '{term_b}'")
+
+        # Check for "use X" vs "avoid X" or "never X"
+        use_match = re.search(r"\buse\s+(\w+(?:\s+\w+)?)", new_lower)
+        if use_match:
+            term = use_match.group(1)
+            if re.search(rf"\b(?:avoid|never|don't)\s+.*{re.escape(term)}", existing_lower):
+                return (bullet.id, f"Says 'use {term}' but existing says avoid it")
+
+        avoid_match = re.search(r"\b(?:avoid|never)\s+(\w+(?:\s+\w+)?)", new_lower)
+        if avoid_match:
+            term = avoid_match.group(1)
+            if re.search(rf"\buse\s+.*{re.escape(term)}", existing_lower):
+                return (bullet.id, f"Says 'avoid {term}' but existing says use it")
+
+    return None
+
+
+# =============================================================================
+# Quality Gate: CLAUDE.md Alignment Check
+# =============================================================================
+
+# Cache for loaded CLAUDE.md content per project
+_claude_md_cache: dict[str, str] = {}
+
+
+def load_claude_md(project_path: Path | None = None) -> str | None:
+    """Load CLAUDE.md content from project, with caching."""
+    path = (project_path or Path.cwd()) / "CLAUDE.md"
+    path_str = str(path)
+
+    if path_str in _claude_md_cache:
+        return _claude_md_cache[path_str]
+
+    if not path.exists():
+        return None
+
+    try:
+        content = path.read_text(encoding="utf-8")
+        _claude_md_cache[path_str] = content
+        return content
+    except Exception:
+        return None
+
+
+def check_claude_alignment(
+    content: str,
+    project_path: Path | None = None,
+) -> str | None:
+    """
+    Check if bullet duplicates what's already in CLAUDE.md.
+
+    Returns rejection reason if redundant, None if OK.
+
+    This prevents the learning loop from re-learning what's already
+    explicitly documented in project instructions.
+    """
+    claude_content = load_claude_md(project_path)
+    if not claude_content:
+        return None
+
+    content_lower = content.lower()
+    claude_lower = claude_content.lower()
+
+    # Extract key terms from the new bullet
+    # Look for framework/tool names that might already be documented
+    key_patterns = [
+        r"\b(tamagui|react\s+native|expo)\b",
+        r"\b(mobx|mst|mobx-state-tree|swr)\b",
+        r"\b(react\s+hook\s+form|zod)\b",
+        r"\b(date-fns|moment)\b",
+        r"\b(supabase|postgres|rls)\b",
+        r"\b(conventional\s+commits?)\b",
+        r"\b(jest|playwright|maestro)\b",
+        r"\b(pathlib|httpx|pydantic)\b",
+    ]
+
+    for pattern in key_patterns:
+        match = re.search(pattern, content_lower)
+        if match:
+            term = match.group(1)
+            # Check if CLAUDE.md already mentions this
+            if term in claude_lower:
+                # Check if CLAUDE.md has a directive about it
+                # Look for the term in a prescriptive context
+                claude_has_directive = re.search(
+                    rf"(?:use|prefer|always|only|must|should).*{re.escape(term)}|{re.escape(term)}.*(?:for|only|must|should)",
+                    claude_lower
+                )
+                if claude_has_directive:
+                    return f"Redundant with CLAUDE.md: already documents '{term}'"
+
+    # Check for near-exact content matches (fuzzy)
+    # Split into significant phrases
+    phrases = re.findall(r'\b\w+(?:\s+\w+){1,3}\b', content_lower)
+    for phrase in phrases:
+        if len(phrase) > 15 and phrase in claude_lower:
+            return f"Redundant with CLAUDE.md: contains '{phrase[:30]}...'"
+
+    return None
 
 
 class CurationAction(str, Enum):
@@ -263,6 +532,62 @@ class Curator:
 
         existing_bullets = self.playbook.load_playbook(task_type)
 
+        # Get project path for CLAUDE.md check
+        project_path = Path(self.playbook.playbook_dir).parent
+
+        # =====================================================================
+        # Quality Gate 1: Stale Snapshot Detection
+        # =====================================================================
+        if not skip_validation:
+            stale_reason = is_stale_snapshot(content)
+            if stale_reason:
+                log.debug("bullet_stale_snapshot", task_type=task_type, reason=stale_reason)
+                result["quality_rejected"] = True
+                result["reason"] = stale_reason
+                return result
+
+        # =====================================================================
+        # Quality Gate 2: Generic/Obvious Advice Detection
+        # =====================================================================
+        if not skip_validation:
+            generic_reason = is_generic_advice(content)
+            if generic_reason:
+                log.debug("bullet_too_generic", task_type=task_type, reason=generic_reason)
+                result["quality_rejected"] = True
+                result["reason"] = generic_reason
+                return result
+
+        # =====================================================================
+        # Quality Gate 3: CLAUDE.md Alignment Check
+        # =====================================================================
+        if not skip_validation:
+            claude_reason = check_claude_alignment(content, project_path)
+            if claude_reason:
+                log.debug("bullet_claude_redundant", task_type=task_type, reason=claude_reason)
+                result["quality_rejected"] = True
+                result["reason"] = claude_reason
+                return result
+
+        # =====================================================================
+        # Quality Gate 4: Contradiction Detection
+        # =====================================================================
+        if not skip_validation and existing_bullets:
+            contradiction = detect_contradiction(content, existing_bullets)
+            if contradiction:
+                bullet_id, conflict_reason = contradiction
+                log.debug(
+                    "bullet_contradiction",
+                    task_type=task_type,
+                    conflicts_with=bullet_id,
+                    reason=conflict_reason,
+                )
+                result["quality_rejected"] = True
+                result["reason"] = f"Contradiction: {conflict_reason}"
+                return result
+
+        # =====================================================================
+        # Quality Gate 5: Semantic Deduplication (existing)
+        # =====================================================================
         if not skip_dedup and existing_bullets:
             dedup_result = await self.dedup.check_similarity(
                 new_content=content,
@@ -297,7 +622,9 @@ class Curator:
                 result["reason"] = "Merged with existing (boosted utility)"
                 return result
 
-        # Add the bullet using existing PlaybookManager (now with quality gate)
+        # =====================================================================
+        # Add bullet via PlaybookManager (includes basic quality validation)
+        # =====================================================================
         bullet = self.playbook.add_bullet(
             task_type=task_type,
             content=content,
@@ -316,8 +643,6 @@ class Curator:
         # Generate embedding for new bullet (if embeddings available)
         try:
             from delia.learning.retrieval import get_retriever
-            from pathlib import Path
-            project_path = Path(self.playbook.playbook_dir).parent
             retriever = get_retriever()
             await retriever.add_bullet_embedding(bullet.id, content, project_path)
         except Exception as e:
