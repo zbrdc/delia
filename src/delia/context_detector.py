@@ -864,6 +864,8 @@ import json
 from pathlib import Path
 from datetime import datetime
 
+from .context import get_project_path
+
 
 @dataclass
 class LearnedPattern:
@@ -949,7 +951,7 @@ class PatternLearner:
     """
 
     def __init__(self, project_path: Path | None = None):
-        self.project_path = project_path or Path.cwd()
+        self.project_path = project_path or get_project_path()
         self._patterns: list[LearnedPattern] = []
         self._negative_patterns: list[NegativePattern] = []
         self._compiled: dict[TaskType, list[tuple[re.Pattern, int]]] = {}

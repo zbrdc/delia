@@ -26,17 +26,40 @@ from pathlib import Path
 import structlog
 
 from .config import config
+from .context import get_project_path
 
 log = structlog.get_logger()
 
 
-def get_memory_dir() -> Path:
-    """Get project-specific memory directory (.delia/memories/ in CWD)."""
-    return Path.cwd() / ".delia" / "memories"
+def get_memory_dir(project_path: Path | None = None) -> Path:
+    """Get project-specific memory directory (.delia/memories/).
+
+    Args:
+        project_path: Project root. Defaults to project context.
+    """
+    return get_project_path(project_path) / ".delia" / "memories"
 
 
-# Directory for Delia's memory files (project-specific)
-MEMORY_DIR = get_memory_dir()
+# NOTE: MEMORY_DIR is kept for backwards compatibility
+# Callers should prefer get_memory_dir() for proper project isolation
+@property
+def _memory_dir_property():
+    return get_memory_dir()
+
+
+class _LazyMemoryDir:
+    """Lazy MEMORY_DIR that respects project context."""
+    def __truediv__(self, other):
+        return get_memory_dir() / other
+
+    def exists(self):
+        return get_memory_dir().exists()
+
+    def glob(self, pattern):
+        return get_memory_dir().glob(pattern)
+
+
+MEMORY_DIR = _LazyMemoryDir()
 
 
 def read_file_safe(file_path: str, max_size: int | None = None) -> tuple[str | None, str | None]:
@@ -117,9 +140,9 @@ def read_files(file_paths: str, max_size_bytes: int = 500_000) -> list[tuple[str
         try:
             file_path = Path(path_str)
 
-            # Try relative to cwd if not absolute
+            # Try relative to project path if not absolute
             if not file_path.is_absolute():
-                file_path = Path.cwd() / file_path
+                file_path = get_project_path() / file_path
 
             # Fallback: try relative to project root (for cross-directory contexts)
             if not file_path.exists():

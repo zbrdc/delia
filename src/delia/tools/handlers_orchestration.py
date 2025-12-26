@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from ..container import get_container
+from ..context import get_project_path
 from ..orchestration.service import get_orchestration_service
 from ..text_utils import strip_thinking_tags
 from .. import llm
@@ -68,7 +69,7 @@ async def think_impl(
 ) -> str:
     """Implementation of the think tool."""
     # Framework Enforcement
-    project_path = str(Path.cwd())
+    project_path = str(get_project_path())
     tracker = get_tracker()
     tracker.record_task_start(project_path, "think")
 
@@ -122,7 +123,7 @@ async def batch_impl(
 ) -> str:
     """Implementation of the batch tool."""
     # Framework Enforcement
-    project_path = str(Path.cwd())
+    project_path = str(get_project_path())
     tracker = get_tracker()
     tracker.record_task_start(project_path, "batch")
 
@@ -220,7 +221,7 @@ async def delegate_tool_impl(
     from ..prompts import build_system_prompt
 
     # Context Gating: Require auto_context before delegation
-    project_path = str(Path(file).parent) if file else str(Path.cwd())
+    project_path = str(Path(file).parent) if file else str(get_project_path())
     gate_error = check_context_gate("delegate", project_path)
     if gate_error:
         return gate_error
@@ -448,7 +449,7 @@ async def chain_impl(
 ) -> str:
     """Implementation of the chain tool."""
     # Framework Enforcement
-    project_path = str(Path.cwd())
+    project_path = str(get_project_path())
     tracker = get_tracker()
     tracker.record_task_start(project_path, "chain")
 
@@ -466,7 +467,7 @@ async def workflow_impl(
 ) -> str:
     """Implementation of the workflow tool."""
     # Framework Enforcement
-    project_path = str(Path.cwd())
+    project_path = str(get_project_path())
     tracker = get_tracker()
     tracker.record_task_start(project_path, "workflow")
 
@@ -490,7 +491,7 @@ async def agent_impl(
 ) -> str:
     """Implementation of the agent tool."""
     # Framework Enforcement
-    project_path = str(Path.cwd())
+    project_path = str(get_project_path())
     tracker = get_tracker()
     tracker.record_task_start(project_path, "agent")
 

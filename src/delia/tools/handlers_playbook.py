@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from ..context import get_project_path
 from .handlers_enforcement import get_tracker
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ async def get_playbook_impl(
     from ..playbook import playbook_manager
 
     # Set project path if provided (ensures project-specific playbooks)
-    project_path = path or str(Path.cwd())
+    project_path = path or str(get_project_path())
     if path:
         playbook_manager.set_project(Path(path))
 

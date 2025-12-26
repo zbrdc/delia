@@ -64,7 +64,8 @@ async def switch_model_impl(tier: str, model_name: str) -> str:
             data = json.loads(res)
             if "error" in data:
                 return f"**Error**: {data['error']}"
-        except: pass
+        except (json.JSONDecodeError, KeyError):
+            pass
 
     return f"**Success**: Updated `{tier}` tier to use `{model_name}`"
 

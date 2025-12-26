@@ -20,13 +20,18 @@ from typing import Any
 
 import structlog
 
+from ..context import get_project_path
 from ..file_helpers import read_file_safe
 from ..routing import select_model
+from .vector_store import get_vector_store
 
 log = structlog.get_logger()
 
-# Project-specific summary index (.delia/ in CWD)
-SUMMARY_INDEX_FILE = Path.cwd() / ".delia" / "project_summary.json"
+
+def _get_summary_index_file(project_path: Path | None = None) -> Path:
+    """Get the summary index file path for a project."""
+    root = get_project_path(project_path)
+    return root / ".delia" / "project_summary.json"
 
 @dataclass
 class FileSummary:
@@ -36,6 +41,7 @@ class FileSummary:
     summary: str | None = None
     exports: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
     embedding: list[float] | None = None
 
 class CodeSummarizer:
@@ -43,16 +49,20 @@ class CodeSummarizer:
     Generates and maintains a hierarchical index of the codebase.
     """
 
-    def __init__(self, call_llm_fn: Any):
+    def __init__(self, call_llm_fn: Any, project_path: Path | None = None):
         self.call_llm = call_llm_fn
         self.summaries: dict[str, FileSummary] = {}
         self._lock = asyncio.Lock()
-        self.root = Path.cwd()
+        self.root = get_project_path(project_path)
         # Automatic Root Discovery: Look for .git or PROJECT_ROOT
         for parent in [self.root] + list(self.root.parents):
             if (parent / ".git").exists() or (parent / "pyproject.toml").exists():
                 self.root = parent
                 break
+
+    def _summary_file(self) -> Path:
+        """Get the summary index file path for this summarizer."""
+        return _get_summary_index_file(self.root)
 
     def _extract_key_sections(self, rel_path: str, content: str) -> str:
         """
@@ -182,15 +192,16 @@ class CodeSummarizer:
 
     async def initialize(self) -> None:
         """Load existing summaries from disk."""
-        if SUMMARY_INDEX_FILE.exists():
+        summary_file = self._summary_file()
+        if summary_file.exists():
             try:
-                data = json.loads(SUMMARY_INDEX_FILE.read_text())
+                data = json.loads(summary_file.read_text())
                 for path, s_data in data.items():
                     self.summaries[path] = FileSummary(**s_data)
                 log.info("summarizer_loaded", files=len(self.summaries))
             except Exception as e:
                 log.warning("summarizer_load_failed", error=str(e))
-                
+
         # Trigger background sync (non-blocking for fast startup)
         asyncio.create_task(self.sync_project())
         self._initialized = True
@@ -203,7 +214,7 @@ class CodeSummarizer:
             from .constants import CODE_EXTENSIONS, should_ignore_file
 
             # PER-PROJECT ISOLATION: Use project-specific memories directory
-            memories_dir = Path.cwd() / ".delia" / "memories"
+            memories_dir = self.root / ".delia" / "memories"
 
             # Use olmo-3:7b-instruct for code summarization
             # Reliably outputs JSON (with markdown fences which we handle)
@@ -266,16 +277,147 @@ class CodeSummarizer:
             updated_count = sum(1 for r in results if r is True)
 
             self._save_index()
+
+            # Sync embeddings to ChromaDB for efficient vector search
+            await self._sync_to_chromadb()
+
             if updated_count > 0:
                 log.info("project_sync_complete", updated=updated_count)
             return updated_count
 
+    async def _sync_to_chromadb(self) -> None:
+        """Sync all file embeddings to ChromaDB for efficient vector search."""
+        store = get_vector_store(self.root)
+        project_name = self.root.name
 
+        synced = 0
+        for rel_path, summary in self.summaries.items():
+            if summary.embedding is None:
+                continue
+
+            try:
+                # Ensure exports are strings (some files may have dict exports)
+                exports = [
+                    str(e) if not isinstance(e, str) else e
+                    for e in (summary.exports or [])
+                ]
+                store.add_code_file(
+                    file_path=rel_path,
+                    content=summary.summary or f"File: {rel_path}",
+                    embedding=summary.embedding,
+                    summary=summary.summary,
+                    exports=exports,
+                    project=project_name,
+                    skip_quality_check=True,  # Summaries are text, not code
+                )
+                synced += 1
+            except Exception as e:
+                log.debug("chromadb_sync_error", path=rel_path, error=str(e))
+
+        if synced > 0:
+            log.info("chromadb_code_synced", files=synced, project=project_name)
+
+    def _build_contextual_prefix(self, rel_path: str, summary: "FileSummary") -> str:
+        """Build contextual prefix for embedding (Anthropic's contextual retrieval).
+
+        Prepends source/document/section context to help embeddings understand
+        what this chunk is about in relation to the broader project.
+        """
+        parts = []
+
+        # Project context
+        parts.append(f"From {self.root.name} project.")
+
+        # File type context
+        suffix = Path(rel_path).suffix.lower()
+        file_type_map = {
+            ".py": "Python source file",
+            ".ts": "TypeScript source file",
+            ".tsx": "TypeScript React component",
+            ".js": "JavaScript source file",
+            ".jsx": "JavaScript React component",
+            ".rs": "Rust source file",
+            ".go": "Go source file",
+            ".md": "Markdown documentation",
+            ".json": "JSON configuration",
+            ".yaml": "YAML configuration",
+            ".yml": "YAML configuration",
+        }
+        file_type = file_type_map.get(suffix, "source file")
+        parts.append(f"File type: {file_type}.")
+
+        # Summary context if available
+        if summary.summary:
+            parts.append(f"Purpose: {summary.summary}")
+
+        # Keywords for semantic matching
+        if summary.keywords:
+            keywords_str = ", ".join(summary.keywords[:8])
+            parts.append(f"Concepts: {keywords_str}.")
+
+        # Exports context if available
+        if summary.exports:
+            exports_str = ", ".join(summary.exports[:5])
+            parts.append(f"Exports: {exports_str}.")
+
+        return " ".join(parts)
+
+    def _is_low_value_content(self, content: str, rel_path: str) -> bool:
+        """Check if content is low-value boilerplate that should be skipped.
+
+        Filters out:
+        - License headers and boilerplate
+        - Empty or nearly empty files
+        - Auto-generated files
+        - Lock files and binary-looking content
+        """
+        import re
+
+        # Skip very small files
+        if len(content.strip()) < 50:
+            return True
+
+        # Skip lock files
+        if rel_path.endswith(('.lock', '-lock.json', '.lockb')):
+            return True
+
+        # Skip auto-generated markers
+        auto_gen_patterns = [
+            r'^# AUTO-?GENERATED',
+            r'^// AUTO-?GENERATED',
+            r'^/\* AUTO-?GENERATED',
+            r'DO NOT EDIT',
+            r'Generated by',
+        ]
+        for pattern in auto_gen_patterns:
+            if re.search(pattern, content[:500], re.IGNORECASE | re.MULTILINE):
+                return True
+
+        # Skip if mostly license text
+        license_patterns = [
+            r'^MIT License',
+            r'^Apache License',
+            r'^BSD License',
+            r'^GNU General Public License',
+            r'Permission is hereby granted, free of charge',
+        ]
+        for pattern in license_patterns:
+            if re.match(pattern, content.strip(), re.IGNORECASE):
+                return True
+
+        return False
 
     async def _index_file(self, rel_path: str, full_path: Path, mtime: float) -> bool:
-        """Generate vector embedding for a file using direct Ollama API (CPU-bound)."""
+        """Generate vector embedding for a file using configured embeddings provider."""
+        from ..embeddings import get_embeddings_client
+
         content, error = read_file_safe(str(full_path))
         if not content:
+            return False
+
+        # Skip low-value content
+        if self._is_low_value_content(content, rel_path):
+            log.debug("skipping_low_value_content", file=rel_path)
             return False
 
         summary = self.summaries.get(rel_path, FileSummary(
@@ -283,79 +425,32 @@ class CodeSummarizer:
         ))
 
         # Sanitize content for embedding API
-        # Remove null bytes and normalize unicode
         content = content.replace('\x00', '')
         content = content.encode('utf-8', errors='replace').decode('utf-8')
 
+        # Build contextual prefix (Anthropic's contextual retrieval technique)
+        context_prefix = self._build_contextual_prefix(rel_path, summary)
+
         # For large files (>5KB), extract key sections using AST
-        # This gives better semantic representation than raw truncation
         if len(content) > 5000:
             extracted = self._extract_key_sections(rel_path, content)
-            embed_content = f"File: {rel_path}\n{extracted[:1500]}"
+            embed_content = f"{context_prefix}\n\nFile: {rel_path}\n{extracted[:1500]}"
         else:
-            # Truncate to ~512 tokens (~1500 chars) for embedding model limit
-            embed_content = f"File: {rel_path}\n{content[:1500]}"
+            embed_content = f"{context_prefix}\n\nFile: {rel_path}\n{content[:1500]}"
 
-        # Direct HTTP call to Ollama to bypass all provider/queue logic
-        import httpx
-        from ..backend_manager import backend_manager
-
-        # Find an Ollama backend for embeddings (prefer local)
-        url = "http://localhost:11434"  # Default fallback
-        for backend in backend_manager.backends.values():
-            if backend.enabled and backend.provider == "ollama" and backend.type == "local":
-                url = backend.url.rstrip("/")
-                break
-        else:
-            # Try any ollama backend
-            for backend in backend_manager.backends.values():
-                if backend.enabled and backend.provider == "ollama":
-                    url = backend.url.rstrip("/")
-                    break
-
-        for attempt in range(3):
-            try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    response = await client.post(
-                        f"{url}/api/embed",
-                        json={
-                            "model": "mxbai-embed-large",
-                            "input": embed_content
-                        }
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        if "embeddings" in data and len(data["embeddings"]) > 0:
-                            summary.embedding = data["embeddings"][0]
-                            summary.mtime = mtime
-                            self.summaries[rel_path] = summary
-                            return True
-                    elif response.status_code == 400:
-                        # Bad request - likely model not found or input issue
-                        try:
-                            err_data = response.json()
-                            err_msg = err_data.get("error", "unknown")
-                        except Exception:
-                            err_msg = response.text[:200]
-                        log.debug(
-                            "ollama_embedding_bad_request",
-                            file=rel_path,
-                            error=err_msg,
-                            input_len=len(embed_content),
-                        )
-                        # Don't retry 400s - they won't succeed
-                        return False
-                    elif response.status_code == 500 and attempt < 2:
-                        log.debug("ollama_retry", attempt=attempt+1, file=rel_path)
-                        await asyncio.sleep(2 * (attempt + 1))
-                        continue
-                    else:
-                        log.debug("ollama_embedding_failed", status=response.status_code, file=rel_path)
-            except Exception as e:
-                if attempt < 2:
-                    await asyncio.sleep(1)
-                    continue
-                log.debug("direct_embedding_exception", error=str(e), file=rel_path)
+        try:
+            client = await get_embeddings_client()
+            embedding = await client.embed(embed_content)
+            if embedding is not None and len(embedding) > 0:
+                # Convert to list if numpy array
+                if hasattr(embedding, 'tolist'):
+                    embedding = embedding.tolist()
+                summary.embedding = embedding
+                summary.mtime = mtime
+                self.summaries[rel_path] = summary
+                return True
+        except Exception as e:
+            log.debug("embedding_failed", file=rel_path, error=str(e))
 
         return False
 
@@ -365,14 +460,16 @@ class CodeSummarizer:
         if not content or len(content) < 50:
             return False
 
-        prompt = f"""Summarize the purpose of this file in ONE short sentence.
-Identify main classes/functions exported.
+        prompt = f"""Analyze this source file and provide:
+1. A one-sentence summary explaining WHAT problem this solves and WHY it exists (not just what it does mechanically)
+2. Main exported classes/functions
+3. Key conceptual keywords for search (e.g., "learning", "caching", "validation")
 
 FILE: {rel_path}
 CONTENT:
 {content[:4000]}
 
-Output ONLY valid JSON: {{"summary": "...", "exports": [...], "deps": [...]}}"""
+Output ONLY valid JSON: {{"summary": "...", "exports": [...], "keywords": [...], "deps": [...]}}"""
 
         # Direct HTTP call to Ollama - bypasses queue for parallel efficiency
         import httpx
@@ -439,6 +536,7 @@ Output ONLY valid JSON: {{"summary": "...", "exports": [...], "deps": [...]}}"""
                 if rel_path in self.summaries:
                     self.summaries[rel_path].summary = data.get("summary", "")
                     self.summaries[rel_path].exports = data.get("exports", [])
+                    self.summaries[rel_path].keywords = data.get("keywords", [])
                     self.summaries[rel_path].dependencies = data.get("deps", [])
 
                 return True
@@ -474,23 +572,108 @@ Output ONLY valid JSON: {{"summary": "...", "exports": [...], "deps": [...]}}"""
         self,
         query: str,
         top_k: int = 10,
+        use_hybrid: bool = True,
+        use_rerank: bool = True,
     ) -> list[dict[str, Any]]:
-        """
-        Semantic search over indexed files using cosine similarity.
+        """Semantic search over indexed files with hybrid + reranking.
 
-        Math: O(n × d) where n=files, d=1024 dimensions
-        For 500 files: ~0.04ms raw compute, ~1ms with Python overhead
+        Uses nebnet-optimized search pipeline:
+        1. Embed query with Voyage (query input_type, cached)
+        2. Hybrid search: semantic (70%) + keyword (30%)
+        3. Rerank top candidates with Voyage rerank-2
 
         Args:
-            query: Natural language query (e.g., "authentication logic")
+            query: Search query
             top_k: Number of results to return
-
-        Returns:
-            List of {path, score, summary, exports} sorted by relevance
+            use_hybrid: Use hybrid semantic+keyword search (default True)
+            use_rerank: Apply Voyage reranking (default True)
         """
+        from ..embeddings import get_embeddings_client
+
+        # Embed the query using configured provider (Voyage AI, Ollama, etc.)
+        try:
+            client = await get_embeddings_client()
+            query_embedding = await client.embed_query(query)
+            if query_embedding is None or len(query_embedding) == 0:
+                log.warning("semantic_search_embed_failed")
+                return []
+        except Exception as e:
+            log.warning("semantic_search_query_embed_error", error=str(e))
+            return []
+
+        # Convert numpy array to list if needed
+        if hasattr(query_embedding, 'tolist'):
+            query_embedding = query_embedding.tolist()
+
+        # Query ChromaDB with hybrid search
+        store = get_vector_store(self.root)
+        project_name = self.root.name
+
+        try:
+            if use_hybrid:
+                # Hybrid search: semantic + keyword
+                results = store.hybrid_search(
+                    collection_name=store.COLLECTION_CODE,
+                    query_embedding=query_embedding,
+                    query_text=query,
+                    n_results=top_k * 2 if use_rerank else top_k,  # Get more for reranking
+                    where={"project": project_name} if project_name else None,
+                    semantic_weight=0.7,
+                )
+            else:
+                results = store.search_code(
+                    query_embedding=query_embedding,
+                    project=project_name,
+                    n_results=top_k * 2 if use_rerank else top_k,
+                )
+        except Exception as e:
+            log.warning("chromadb_search_error", error=str(e))
+            # Fallback to in-memory search if ChromaDB fails
+            return self._fallback_search(query_embedding, top_k)
+
+        if not results:
+            return []
+
+        # Apply Voyage reranking for better result ordering
+        if use_rerank and len(results) > 1:
+            try:
+                documents = [r.get("content", "") or r.get("metadata", {}).get("summary", "") for r in results]
+                rerank_results = await client.rerank(query, documents, top_k=top_k)
+
+                # Reorder based on rerank scores
+                reranked = []
+                for idx, score in rerank_results:
+                    if idx < len(results):
+                        r = results[idx]
+                        r["rerank_score"] = score
+                        r["score"] = round(score * 100, 1)  # Use rerank score as primary
+                        reranked.append(r)
+                results = reranked
+                log.debug("rerank_applied", count=len(results))
+            except Exception as e:
+                log.debug("rerank_skipped", error=str(e))
+                results = results[:top_k]
+        else:
+            results = results[:top_k]
+
+        # Convert to expected format
+        formatted = []
+        for r in results:
+            meta = r.get("metadata", {})
+            exports_str = meta.get("exports", "")
+            formatted.append({
+                "path": meta.get("path", r.get("id", "")),
+                "score": round(r.get("score", 0), 4),
+                "summary": meta.get("summary", ""),
+                "exports": exports_str.split(",") if exports_str else [],
+            })
+
+        return formatted
+
+    def _fallback_search(self, query_embedding: list[float], top_k: int) -> list[dict[str, Any]]:
+        """Fallback to in-memory numpy search if ChromaDB fails."""
         import numpy as np
 
-        # Get files with embeddings
         files_with_embeddings = [
             (path, summary)
             for path, summary in self.summaries.items()
@@ -498,49 +681,14 @@ Output ONLY valid JSON: {{"summary": "...", "exports": [...], "deps": [...]}}"""
         ]
 
         if not files_with_embeddings:
-            log.warning("semantic_search_no_embeddings")
             return []
 
-        # Embed the query
-        import httpx
-        from ..backend_manager import backend_manager
-
-        # Find an Ollama backend for embeddings (prefer local)
-        url = "http://localhost:11434"  # Default fallback
-        for backend in backend_manager.backends.values():
-            if backend.enabled and backend.provider == "ollama" and backend.type == "local":
-                url = backend.url.rstrip("/")
-                break
-        else:
-            for backend in backend_manager.backends.values():
-                if backend.enabled and backend.provider == "ollama":
-                    url = backend.url.rstrip("/")
-                    break
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{url}/api/embed",
-                    json={"model": "mxbai-embed-large", "input": query}
-                )
-                if response.status_code != 200:
-                    log.warning("semantic_search_embed_failed", status=response.status_code)
-                    return []
-                data = response.json()
-                if "embeddings" not in data or not data["embeddings"]:
-                    return []
-                query_vec = np.array(data["embeddings"][0], dtype=np.float32)
-        except Exception as e:
-            log.warning("semantic_search_query_embed_error", error=str(e))
-            return []
-
-        # Compute cosine similarity against all file embeddings
-        # This is the O(n × d) operation - ~0.04ms for 500 files
-        scores = []
+        query_vec = np.array(query_embedding, dtype=np.float32)
         query_norm = np.linalg.norm(query_vec)
         if query_norm == 0:
             return []
 
+        scores = []
         for path, summary in files_with_embeddings:
             file_vec = np.array(summary.embedding, dtype=np.float32)
             file_norm = np.linalg.norm(file_vec)
@@ -554,18 +702,19 @@ Output ONLY valid JSON: {{"summary": "...", "exports": [...], "deps": [...]}}"""
                 "exports": summary.exports,
             })
 
-        # Sort by score descending, return top_k
         scores.sort(key=lambda x: -x["score"])
         return scores[:top_k]
 
     def _save_index(self) -> None:
         """Save index to disk."""
         try:
+            summary_file = self._summary_file()
+            summary_file.parent.mkdir(parents=True, exist_ok=True)
             data = {path: s.__dict__ for path, s in self.summaries.items()}
-            temp_file = SUMMARY_INDEX_FILE.with_suffix(".tmp")
+            temp_file = summary_file.with_suffix(".tmp")
             with open(temp_file, "w") as f:
                 json.dump(data, f, indent=2)
-            temp_file.replace(SUMMARY_INDEX_FILE)
+            temp_file.replace(summary_file)
         except Exception as e:
             log.warning("summarizer_save_error", error=str(e))
 

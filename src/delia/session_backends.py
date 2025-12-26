@@ -39,6 +39,7 @@ from typing import Iterator
 import structlog
 
 from . import paths
+from .context import get_project_path
 
 log = structlog.get_logger()
 
@@ -137,7 +138,7 @@ class JSONSessionBackend(SessionBackend):
     def __init__(self, session_dir: Path | None = None):
         # PER-PROJECT ISOLATION: Default to project-specific sessions
         if session_dir is None:
-            session_dir = Path.cwd() / ".delia" / "sessions"
+            session_dir = get_project_path() / ".delia" / "sessions"
         self.session_dir = session_dir
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()

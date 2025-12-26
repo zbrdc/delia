@@ -1158,6 +1158,11 @@ def init_project(
             print_info("Generating project-specific playbook bullets...")
             await generate_project_playbook(summarizer)
 
+            # Index profiles to ChromaDB for semantic search
+            print_info("Indexing profiles for semantic search...")
+            from .tools.consolidated import profiles_tool
+            await profiles_tool(action="index", path=str(project_root))
+
             print_success("Codebase analysis complete.")
         else:
             print_info("Skipping indexing (using existing analysis)...")
@@ -2007,6 +2012,98 @@ def validate(
         print_warning(f"Validation passed with {len(warnings)} warnings")
     else:
         print_success(f"Validation passed: {valid_count} bullets valid")
+
+
+@app.command()
+def migrate(
+    path: str = typer.Argument(None, help="Project path to migrate (defaults to current directory)"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Show what would be done without making changes"),
+    cleanup_global: bool = typer.Option(False, "--cleanup-global", help="Remove legacy global ~/.delia/chroma/ if exists"),
+) -> None:
+    """
+    Migrate project to per-project ChromaDB storage.
+
+    This command initializes ChromaDB vector store at <project>/.delia/chroma/
+    and indexes playbooks and memories for semantic search.
+
+    Run this after upgrading Delia to enable per-project semantic search.
+
+    Examples:
+        delia migrate                    # Migrate current directory
+        delia migrate /path/to/project   # Migrate specific project
+        delia migrate --dry-run          # Preview without changes
+    """
+    from pathlib import Path
+
+    project_path = Path(path) if path else Path.cwd()
+    delia_dir = project_path / ".delia"
+
+    print_header(f"Migrating project: {project_path.name}")
+
+    # Check if project has .delia/
+    if not delia_dir.exists():
+        print_error(f"No .delia/ directory found at {project_path}")
+        print_info("Run 'delia init-project' first to initialize Delia for this project")
+        raise typer.Exit(1)
+
+    # Check for legacy global ChromaDB
+    global_chroma = Path.home() / ".delia" / "chroma"
+    if global_chroma.exists():
+        print_warning(f"Found legacy global ChromaDB at {global_chroma}")
+        if cleanup_global and not dry_run:
+            import shutil
+            shutil.rmtree(global_chroma)
+            print_success("Removed legacy global ChromaDB")
+        elif cleanup_global:
+            print_info(f"Would remove: {global_chroma}")
+        else:
+            print_info("Use --cleanup-global to remove it")
+
+    # Initialize per-project ChromaDB
+    chroma_dir = delia_dir / "chroma"
+    if chroma_dir.exists():
+        print_info(f"ChromaDB already exists at {chroma_dir}")
+    else:
+        if dry_run:
+            print_info(f"Would create: {chroma_dir}")
+        else:
+            chroma_dir.mkdir(parents=True, exist_ok=True)
+            print_success(f"Created ChromaDB directory: {chroma_dir}")
+
+    # Count existing playbooks and memories
+    playbooks_dir = delia_dir / "playbooks"
+    memories_dir = delia_dir / "memories"
+
+    playbook_count = len(list(playbooks_dir.glob("*.json"))) if playbooks_dir.exists() else 0
+    memory_count = len(list(memories_dir.glob("*.md"))) if memories_dir.exists() else 0
+
+    print_info(f"Found {playbook_count} playbook files, {memory_count} memory files")
+
+    if dry_run:
+        print_info("Would index playbooks and memories to ChromaDB")
+        print_info("(Re-run without --dry-run to execute)")
+        return
+
+    # Index to ChromaDB
+    import asyncio
+
+    async def run_migration():
+        from .orchestration.vector_store import get_vector_store
+
+        store = get_vector_store(project_path)
+        print_info(f"ChromaDB store initialized at {store.persist_dir}")
+
+        # Get current stats
+        stats = store.get_stats()
+        for collection, count in stats.get("collections", {}).items():
+            if count > 0:
+                print_info(f"  {collection}: {count} items")
+
+        print_success("Migration complete!")
+        print_info("ChromaDB is now ready for semantic search.")
+        print_info("Playbooks and memories will be indexed on first search.")
+
+    asyncio.run(run_migration())
 
 
 @app.callback(invoke_without_command=True)

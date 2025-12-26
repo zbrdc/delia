@@ -406,6 +406,55 @@ class VoyageEmbeddingsProvider:
         """Embed multiple documents efficiently."""
         return await self.embed_batch(texts, input_type="document")
 
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int = 10,
+    ) -> list[tuple[int, float]]:
+        """Rerank documents using Voyage rerank-2 API.
+
+        Returns list of (original_index, relevance_score) tuples, sorted by score descending.
+        This provides a second-pass refinement after initial semantic search.
+
+        Args:
+            query: The search query
+            documents: List of document texts to rerank
+            top_k: Number of top results to return
+
+        Returns:
+            List of (index, score) tuples sorted by relevance
+        """
+        if not self.api_key:
+            raise RuntimeError("DELIA_VOYAGE_API_KEY not set")
+
+        if not documents:
+            return []
+
+        client = await self._get_client()
+        try:
+            response = await client.post(
+                "https://api.voyageai.com/v1/rerank",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "rerank-2",
+                    "query": query,
+                    "documents": documents,
+                    "top_k": min(top_k, len(documents)),
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            # Returns list of {index, relevance_score}
+            return [(item["index"], item["relevance_score"]) for item in data["data"]]
+        except Exception as e:
+            log.warning("voyage_rerank_failed", error=str(e))
+            # Fallback: return original order with dummy scores
+            return [(i, 1.0 - i * 0.01) for i in range(min(top_k, len(documents)))]
+
     async def health_check(self) -> bool:
         """Check if Voyage AI is available."""
         if not self.api_key:
@@ -583,6 +632,36 @@ class HybridEmbeddingsClient:
         if self.active_provider:
             return await self.active_provider.health_check()
         return await self.initialize()
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int = 10,
+    ) -> list[tuple[int, float]]:
+        """Rerank documents using Voyage rerank-2 API if available.
+
+        Provides a second-pass refinement after initial semantic search,
+        significantly improving result quality.
+
+        Args:
+            query: The search query
+            documents: List of document texts to rerank
+            top_k: Number of top results to return
+
+        Returns:
+            List of (index, score) tuples sorted by relevance.
+            Falls back to original ordering if Voyage is unavailable.
+        """
+        if not self.active_provider:
+            await self.initialize()
+
+        # Only Voyage supports reranking
+        if self.active_provider == self.voyage_provider:
+            return await self.voyage_provider.rerank(query, documents, top_k)
+
+        # Fallback: return original order with distance-based dummy scores
+        return [(i, 1.0 - i * 0.05) for i in range(min(top_k, len(documents)))]
 
     async def close(self) -> None:
         """Clean up resources."""

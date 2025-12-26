@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import structlog
 
+from ..context import get_project_path
+
 if TYPE_CHECKING:
     from delia.playbook import PlaybookBullet, PlaybookManager
 
@@ -307,7 +309,7 @@ class HybridRetriever:
     ) -> list[ScoredBullet]:
         """Retrieve from a PlaybookManager."""
         bullets = manager.load_playbook(task_type)
-        project_path = Path(manager.playbook_dir).parent if manager.playbook_dir else Path.cwd()
+        project_path = Path(manager.playbook_dir).parent if manager.playbook_dir else get_project_path()
         return await self.retrieve(
             bullets=bullets,
             query=query,
@@ -440,7 +442,9 @@ class HybridRetriever:
 
         scored = []
         for r in results:
-            if r["score"] < min_score:
+            # Use raw_score (0-1) for internal comparisons, score is 0-100 for display
+            raw_score = r.get("raw_score", r.get("score", 0) / 100)
+            if raw_score < min_score:
                 continue
 
             # Reconstruct bullet from metadata
@@ -451,8 +455,8 @@ class HybridRetriever:
                 section=meta.get("task_type", "coding"),
             )
 
-            # Apply hybrid scoring
-            relevance = r["score"]
+            # Apply hybrid scoring (using 0-1 scale)
+            relevance = raw_score
             utility = meta.get("utility_score", 0.5)
             recency = 0.8  # ChromaDB doesn't store recency, use default
 

@@ -650,7 +650,7 @@ async def session_tool(
 # =============================================================================
 
 async def profiles_tool(
-    action: Literal["recommend", "check", "reevaluate", "cleanup"],
+    action: Literal["recommend", "check", "reevaluate", "cleanup", "index", "search"],
     path: str | None = None,
     **kwargs
 ) -> str:
@@ -661,11 +661,13 @@ async def profiles_tool(
         check - Check if pattern re-evaluation is needed
         reevaluate - Re-analyze project for pattern gaps
         cleanup - Remove obsolete profile templates
+        index - Index profiles to ChromaDB for semantic search
+        search - Search profiles semantically by query
 
     Args:
         action: The operation to perform
         path: Optional project path (defaults to cwd)
-        **kwargs: Action-specific parameters
+        **kwargs: Action-specific parameters (query, limit for search)
 
     Returns:
         JSON string with operation result
@@ -772,6 +774,86 @@ async def profiles_tool(
                 removed.append(f.stem)
         result = {"status": "cleaned" if auto_remove else "preview", "removed": removed}
         return json.dumps(result)
+
+    elif action == "index":
+        # Index all profiles to ChromaDB for semantic search
+        from ..embeddings import get_embeddings_client
+        from ..orchestration.vector_store import get_vector_store
+
+        profiles_dir = project_path / ".delia" / "profiles"
+        if not profiles_dir.exists():
+            return json.dumps({"error": "No profiles directory found", "indexed": 0})
+
+        store = get_vector_store(project_path)
+        client = await get_embeddings_client()
+        project_name = project_path.name
+
+        indexed = 0
+        profiles_found = list(profiles_dir.glob("*.md"))
+
+        for profile_file in profiles_found:
+            try:
+                content = profile_file.read_text()
+                if not content.strip():
+                    continue
+
+                # Generate embedding
+                embedding = await client.embed(content[:2000])  # Limit for embedding
+                if embedding is None:
+                    continue
+
+                # Convert numpy array to list if needed
+                if hasattr(embedding, 'tolist'):
+                    embedding = embedding.tolist()
+
+                store.add_profile(
+                    profile_id=f"{project_name}:{profile_file.stem}",
+                    content=content,
+                    embedding=embedding,
+                    name=profile_file.stem,
+                    project=project_name,
+                )
+                indexed += 1
+            except Exception as e:
+                log.debug("profile_index_error", profile=profile_file.stem, error=str(e))
+
+        log.info("profiles_indexed_to_chromadb", count=indexed, project=project_name)
+        return json.dumps({"indexed": indexed, "total": len(profiles_found)})
+
+    elif action == "search":
+        # Search profiles semantically
+        query = kwargs.get("query")
+        limit = kwargs.get("limit", 5)
+
+        if not query:
+            return json.dumps({"error": "query parameter required for search"})
+
+        from ..embeddings import get_embeddings_client
+        from ..orchestration.vector_store import get_vector_store
+
+        client = await get_embeddings_client()
+        store = get_vector_store(project_path)
+        project_name = project_path.name
+
+        # Embed query
+        query_embedding = await client.embed_query(query)
+        if query_embedding is None:
+            return json.dumps({"error": "Failed to embed query", "results": []})
+
+        if hasattr(query_embedding, 'tolist'):
+            query_embedding = query_embedding.tolist()
+
+        results = store.search_profiles(
+            query_embedding=query_embedding,
+            project=project_name,
+            n_results=limit,
+        )
+
+        return json.dumps({
+            "query": query,
+            "count": len(results),
+            "results": results,
+        })
 
     else:
         return json.dumps({"error": f"Unknown action: {action}"})
@@ -1081,20 +1163,24 @@ def register_consolidated_tools(mcp):
 
     @mcp.tool()
     async def profiles(
-        action: Literal["recommend", "check", "reevaluate", "cleanup"],
+        action: Literal["recommend", "check", "reevaluate", "cleanup", "index", "search"],
         path: str | None = None,
         analyze_gaps: bool = True,
         force: bool = False,
         auto_remove: bool = False,
+        query: str | None = None,
+        limit: int = 5,
     ) -> str:
         """Unified profile/evaluation management (ADR-009).
 
-        Consolidates 4 operations: recommend, check, reevaluate, cleanup.
+        Consolidates 6 operations: recommend, check, reevaluate, cleanup, index, search.
 
         Examples:
             profiles(action="recommend", path="/home/user/project")
             profiles(action="check")
             profiles(action="reevaluate", force=True)
+            profiles(action="index")  # Index profiles to ChromaDB
+            profiles(action="search", query="API security best practices")
         """
         return await profiles_tool(
             action=action,
@@ -1102,6 +1188,8 @@ def register_consolidated_tools(mcp):
             analyze_gaps=analyze_gaps,
             force=force,
             auto_remove=auto_remove,
+            query=query,
+            limit=limit,
         )
 
     @mcp.tool()

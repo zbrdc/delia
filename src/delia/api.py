@@ -41,15 +41,13 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from .backend_manager import backend_manager, shutdown_backends
+from .context import get_project_path
 from .llm import call_llm, init_llm_module
-from .routing import select_model, detect_chat_task_type, get_router
-from .orchestration import detect_intent, get_orchestration_executor
-from .stats import StatsService
 from .queue import ModelQueue
+from .routing import detect_chat_task_type, get_router, select_model
+from .stats import StatsService
 from .tools.agent import AgentConfig, AgentResult, run_agent_loop
 from .tools.builtins import get_default_tools
-from .tools.parser import ParsedToolCall
-from .tools.executor import ToolResult
 from .types import Workspace
 
 log = structlog.get_logger()
@@ -117,8 +115,8 @@ async def lifespan(app: Starlette):
     - Graceful handling of in-flight requests
     - Distributed discovery (mDNS)
     """
-    from .orchestration import get_orchestration_service
     from .discovery import get_discovery_engine
+    from .orchestration import get_orchestration_service
     
     log.info("api_server_startup")
     
@@ -367,7 +365,7 @@ async def agent_run_stream(
     )
 
     # Configure security manager based on API flags
-    from .security import get_security_manager, ApprovalMode
+    from .security import ApprovalMode, get_security_manager
     security_mgr = get_security_manager()
     if yolo:
         security_mgr.policy.approval_mode = ApprovalMode.YOLO
@@ -772,8 +770,8 @@ async def status_handler(request: Request) -> JSONResponse:
     - Routing configuration
     - Usage statistics
     """
+    from .config import get_backend_metrics
     from .routing import BackendScorer
-    from .config import get_backend_metrics, config
     from .voting_stats import get_voting_stats_tracker
 
     # Get health status from BackendManager
@@ -892,8 +890,8 @@ async def backends_handler(request: Request) -> JSONResponse:
     - Live metrics (success rate, latency, throughput)
     - Affinity scores
     """
+    from .config import get_affinity_tracker, get_backend_metrics
     from .routing import BackendScorer
-    from .config import get_backend_metrics, get_affinity_tracker
 
     weights = backend_manager.get_scoring_weights()
     scorer = BackendScorer(weights=weights)
@@ -1115,8 +1113,8 @@ async def chat_stream(
 
     # Add system prompt for chat context
     # Import Delia's identity and time context
-    from .prompts import build_system_prompt, ModelRole
     from .language import get_current_time_context
+    from .prompts import ModelRole, build_system_prompt
 
     time_context = get_current_time_context()
     base_prompt = build_system_prompt(role=ModelRole.ASSISTANT)
@@ -1430,10 +1428,10 @@ async def chat_agent_stream(
         - error: Error occurred
         - done: Complete with metadata
     """
+    from .prompts import ModelRole, build_system_prompt
     from .session_manager import SessionManager
-    from .tools.orchestration import get_orchestration_tools
     from .tools.builtins import get_default_tools
-    from .prompts import build_system_prompt, ModelRole
+    from .tools.orchestration import get_orchestration_tools
 
     start_time = time.time()
     manager = SessionManager()
@@ -1600,7 +1598,7 @@ async def chat_agent_stream(
     # Track tool calls for real-time display
     from .tools.agent import build_system_prompt as agent_build_system_prompt
     from .tools.executor import execute_tools
-    from .tools.parser import parse_tool_calls, has_tool_calls
+    from .tools.parser import has_tool_calls, parse_tool_calls
 
     # Simple helper to build messages list
     def build_messages(prompt: str) -> list[dict[str, Any]]:
@@ -1856,9 +1854,9 @@ async def chat_nlp_orchestrated_stream(
         - error: Error occurred
         - done: Complete with metadata
     """
-    from .session_manager import SessionManager
-    from .orchestration import get_orchestration_service, detect_intent
+    from .orchestration import detect_intent, get_orchestration_service
     from .orchestration.result import OrchestrationMode
+    from .session_manager import SessionManager
     
     start_time = time.time()
     manager = SessionManager()
@@ -2032,8 +2030,8 @@ async def session_compact_handler(request: Request) -> JSONResponse:
     Query params:
         - force: If true, force compaction even if below threshold
     """
-    from .session_manager import SessionManager
     from .semantic import ConversationCompressor as ConversationCompactor
+    from .session_manager import SessionManager
 
     session_id = request.path_params.get("session_id")
     if not session_id:
@@ -2074,8 +2072,8 @@ async def session_stats_handler(request: Request) -> JSONResponse:
 
     Returns current token usage and whether compaction is recommended.
     """
-    from .session_manager import SessionManager
     from .semantic import ConversationCompressor as ConversationCompactor
+    from .session_manager import SessionManager
 
     session_id = request.path_params.get("session_id")
     if not session_id:
@@ -2145,12 +2143,11 @@ async def framework_metrics_handler(request: Request) -> JSONResponse:
         - bullet_effectiveness: Overall effectiveness metrics
     """
     try:
-        from delia.playbook import get_playbook_manager
         from pathlib import Path
-        import os
 
-        # Determine project path (use current working directory or home)
-        project_path = os.getcwd()
+        from delia.playbook import get_playbook_manager
+        # Determine project path using canonical function
+        project_path = str(get_project_path())
 
         # Get playbook stats
         pm = get_playbook_manager()
@@ -2256,6 +2253,7 @@ def run_api(host: str = "0.0.0.0", port: int = 34589) -> None:
     """
     import signal
     import socket
+
     import uvicorn
 
     log.info("api_server_starting", host=host, port=port)

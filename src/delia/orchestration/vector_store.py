@@ -21,6 +21,8 @@ from typing import Any
 
 import structlog
 
+from ..context import get_project_path
+
 log = structlog.get_logger()
 
 # Lazy imports for ChromaDB to avoid startup penalty
@@ -103,11 +105,9 @@ class VectorStore:
 
         Args:
             project_path: Project root directory. ChromaDB stored at <project>/.delia/chroma/
-                         Defaults to current working directory.
+                         Defaults to project context or current working directory.
         """
-        if project_path is None:
-            project_path = Path.cwd()
-        self.project_path = Path(project_path)
+        self.project_path = get_project_path(project_path)
         self.persist_dir = self.project_path / ".delia" / "chroma"
         self._client = None
         self._collections: dict[str, Any] = {}
@@ -134,6 +134,65 @@ class VectorStore:
             )
             log.debug("Using collection", name=name, count=self._collections[name].count())
         return self._collections[name]
+
+    # =========================================================================
+    # CONTEXTUAL HEADERS (LLM-friendly result formatting)
+    # =========================================================================
+
+    def _build_context(
+        self,
+        collection_name: str,
+        doc_id: str,
+        metadata: dict[str, Any],
+    ) -> str:
+        """Build LLM-friendly contextual breadcrumb for search results.
+
+        Adapted from nebnet-mcp optimization: provides hierarchical context
+        so LLMs understand where content comes from without redundant metadata.
+
+        Examples:
+            "Playbook > coding > Use pathlib over os.path"
+            "Code > src/auth.py > login()"
+            "Memory > architecture > Database design decisions"
+        """
+        parts = []
+
+        if collection_name == self.COLLECTION_PLAYBOOK:
+            parts.append("Playbook")
+            if task_type := metadata.get("task_type"):
+                parts.append(task_type)
+            # Add truncated content hint
+            if doc_id and len(doc_id) > 20:
+                parts.append(doc_id[:20] + "...")
+            else:
+                parts.append(doc_id or "bullet")
+
+        elif collection_name == self.COLLECTION_CODE:
+            parts.append("Code")
+            if path := metadata.get("path"):
+                # Use relative path
+                parts.append(path.split("/")[-1] if "/" in path else path)
+            if exports := metadata.get("exports"):
+                # Show first export as hint
+                first_export = exports.split(",")[0] if "," in exports else exports
+                if first_export:
+                    parts.append(first_export)
+
+        elif collection_name == self.COLLECTION_MEMORIES:
+            parts.append("Memory")
+            if name := metadata.get("name"):
+                parts.append(name)
+
+        elif collection_name == self.COLLECTION_PROFILES:
+            parts.append("Profile")
+            if name := metadata.get("name"):
+                parts.append(name)
+
+        else:
+            parts.append(collection_name.replace("delia_", "").title())
+            parts.append(doc_id[:30] if doc_id else "item")
+
+        return " > ".join(parts)
 
     # =========================================================================
     # GENERIC OPERATIONS
@@ -205,18 +264,21 @@ class VectorStore:
             include=["documents", "metadatas", "distances"],
         )
 
-        # Format results
+        # Format results with contextual headers (nebnet-mcp optimization)
         formatted = []
         if results["ids"] and results["ids"][0]:
             for i, doc_id in enumerate(results["ids"][0]):
                 meta = results["metadatas"][0][i] if results["metadatas"] else {}
                 distance = results["distances"][0][i] if results["distances"] else 0
+                similarity = max(0.0, min(1.0, 1 - distance))
+
                 formatted.append({
                     "id": doc_id,
+                    "context": self._build_context(collection_name, doc_id, meta),
                     "content": results["documents"][0][i] if results["documents"] else "",
                     "metadata": meta,
-                    "distance": distance,
-                    "score": 1 - distance,  # Convert distance to similarity
+                    "score": round(similarity * 100, 1),  # Normalized 0-100 scale
+                    "raw_score": similarity,  # Keep original for internal use
                 })
 
         return formatted
@@ -288,10 +350,11 @@ class VectorStore:
         # Merge results with hybrid scoring
         merged: dict[str, dict] = {}
 
-        # Add semantic results
+        # Add semantic results (already have context from search())
         for i, r in enumerate(semantic_results):
             doc_id = r["id"]
-            semantic_score = min(1.0, max(0.0, r.get("score", 0)))
+            raw_score = r.get("raw_score", r.get("score", 0) / 100)
+            semantic_score = min(1.0, max(0.0, raw_score))
             merged[doc_id] = {
                 **r,
                 "semantic_score": semantic_score,
@@ -311,12 +374,16 @@ class VectorStore:
                 merged[doc_id]["matched_keywords"] = r.get("matched_keywords", [])
                 merged[doc_id]["hybrid_score"] += keyword_score * keyword_weight
             else:
+                # Add context for keyword-only results
+                meta = r.get("metadata", {})
                 merged[doc_id] = {
                     **r,
+                    "context": self._build_context(collection_name, doc_id, meta),
                     "semantic_score": 0.0,
                     "keyword_score": keyword_score,
                     "hybrid_score": keyword_score * keyword_weight,
-                    "score": keyword_score * keyword_weight,
+                    "score": round(keyword_score * keyword_weight * 100, 1),
+                    "raw_score": keyword_score * keyword_weight,
                 }
 
         # Sort by hybrid score
@@ -477,8 +544,115 @@ class VectorStore:
         return self.search(self.COLLECTION_MEMORIES, query_embedding, n_results, where)
 
     # =========================================================================
+    # PROFILE-SPECIFIC OPERATIONS
+    # =========================================================================
+
+    def add_profile(
+        self,
+        profile_id: str,
+        content: str,
+        embedding: list[float],
+        name: str,
+        project: str | None = None,
+    ) -> None:
+        """Add a reference profile to the store."""
+        self.add_items(
+            self.COLLECTION_PROFILES,
+            ids=[profile_id],
+            embeddings=[embedding],
+            documents=[content],
+            metadatas=[{
+                "name": name,
+                "project": project or "global",
+            }],
+        )
+
+    def search_profiles(
+        self,
+        query_embedding: list[float],
+        project: str | None = None,
+        n_results: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Search profiles semantically."""
+        where = None
+        if project:
+            where = {
+                "$or": [
+                    {"project": project},
+                    {"project": "global"},
+                ]
+            }
+        return self.search(self.COLLECTION_PROFILES, query_embedding, n_results, where)
+
+    # =========================================================================
     # CODE-SPECIFIC OPERATIONS
     # =========================================================================
+
+    def _is_low_value_code(self, file_path: str, content: str) -> bool:
+        """Check if code file is low-value and should be skipped.
+
+        Adapted from nebnet-mcp quality filtering. Skips:
+        - Empty or tiny files (<50 chars)
+        - Auto-generated files
+        - Files with only imports/docstrings
+        - Configuration boilerplate
+        """
+        # Skip empty/tiny files (30 chars ~ 1 meaningful line)
+        if len(content.strip()) < 30:
+            return True
+
+        # Skip auto-generated patterns
+        skip_patterns = [
+            "__pycache__",
+            ".pyc",
+            "node_modules",
+            ".min.js",
+            ".min.css",
+            "package-lock.json",
+            "yarn.lock",
+            ".egg-info",
+            "dist/",
+            "build/",
+        ]
+        for pattern in skip_patterns:
+            if pattern in file_path:
+                return True
+
+        # Skip files with only imports, docstrings, and boilerplate
+        # Check for actual code patterns (functions, classes, assignments)
+        code_patterns = [
+            "def ", "class ", "async def ",  # Python
+            "function ", "const ", "let ", "var ",  # JavaScript
+            "fn ", "impl ", "struct ", "enum ",  # Rust
+            "func ", "type ", "interface ",  # Go
+        ]
+
+        has_code = False
+        for pattern in code_patterns:
+            if pattern in content:
+                has_code = True
+                break
+
+        # Also check for meaningful assignments/operations
+        if not has_code:
+            lines = content.strip().split("\n")
+            meaningful_lines = 0
+            for line in lines:
+                stripped = line.strip()
+                # Skip empty, comments, imports only
+                if not stripped:
+                    continue
+                if stripped.startswith(("#", "//", "/*", "*", '"""', "'''")):
+                    continue
+                if stripped.startswith(("import ", "from ", "require(", "export {")):
+                    continue
+                # Count as meaningful if not a skip pattern
+                meaningful_lines += 1
+                if meaningful_lines >= 5:
+                    has_code = True
+                    break
+
+        return not has_code
 
     def add_code_file(
         self,
@@ -488,8 +662,18 @@ class VectorStore:
         summary: str | None = None,
         exports: list[str] | None = None,
         project: str | None = None,
-    ) -> None:
-        """Add a code file summary to the store."""
+        skip_quality_check: bool = False,
+    ) -> bool:
+        """Add a code file summary to the store.
+
+        Returns:
+            True if file was indexed, False if skipped due to quality filter.
+        """
+        # Quality filtering (nebnet-mcp optimization)
+        if not skip_quality_check and self._is_low_value_code(file_path, content):
+            log.debug("Skipped low-value code file", path=file_path)
+            return False
+
         self.add_items(
             self.COLLECTION_CODE,
             ids=[file_path],
@@ -502,6 +686,7 @@ class VectorStore:
                 "project": project or "unknown",
             }],
         )
+        return True
 
     def search_code(
         self,
@@ -524,17 +709,16 @@ def get_vector_store(project_path: Path | str | None = None) -> VectorStore:
     """Get the VectorStore instance for a specific project.
 
     Args:
-        project_path: Project root directory. Defaults to cwd.
+        project_path: Project root directory. Defaults to project context.
 
     Returns:
         VectorStore instance for that project (cached).
     """
-    if project_path is None:
-        project_path = Path.cwd()
-    key = str(Path(project_path).resolve())
+    resolved = get_project_path(project_path)
+    key = str(resolved.resolve())
 
     if key not in _stores:
-        _stores[key] = VectorStore(project_path)
+        _stores[key] = VectorStore(resolved)
         log.debug("created_vector_store", project=key)
 
     return _stores[key]

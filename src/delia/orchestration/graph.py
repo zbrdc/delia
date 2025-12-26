@@ -21,13 +21,17 @@ from typing import Any
 
 import structlog
 
+from ..context import get_project_path
 from ..file_helpers import read_file_safe
 from .constants import CODE_EXTENSIONS, IGNORE_DIRS
 
 log = structlog.get_logger()
 
-# Project-specific graph cache (.delia/ in CWD)
-GRAPH_CACHE_FILE = Path.cwd() / ".delia" / "symbol_graph.json"
+
+def _get_graph_cache_file(project_path: Path | None = None) -> Path:
+    """Get the graph cache file path for a project."""
+    root = get_project_path(project_path)
+    return root / ".delia" / "symbol_graph.json"
 
 @dataclass
 class Symbol:
@@ -53,7 +57,7 @@ class SymbolGraph:
     """
 
     def __init__(self, root: Path | None = None):
-        self.root = root or Path.cwd()
+        self.root = get_project_path(root)
         # Automatic Root Discovery
         if not root:
             for parent in [self.root] + list(self.root.parents):
@@ -64,13 +68,18 @@ class SymbolGraph:
         self._lock = asyncio.Lock()
         self._initialized = False
 
+    def _cache_file(self) -> Path:
+        """Get the cache file path for this graph."""
+        return _get_graph_cache_file(self.root)
+
     async def initialize(self) -> None:
         """Load graph from cache or perform initial scan."""
         async with self._lock:
             if self._initialized:
                 return
 
-            if GRAPH_CACHE_FILE.exists():
+            cache_file = self._cache_file()
+            if cache_file.exists():
                 try:
                     self._load_cache()
                     log.info("symbol_graph_loaded", files=len(self.nodes))
@@ -437,7 +446,8 @@ Output ONE short sentence of architectural context."""
 
     def _load_cache(self) -> None:
         """Load graph from disk."""
-        data = json.loads(GRAPH_CACHE_FILE.read_text())
+        cache_file = self._cache_file()
+        data = json.loads(cache_file.read_text())
         for path, n_data in data.items():
             node = FileNode(path=path, mtime=n_data["mtime"])
             node.imports = set(n_data["imports"])
@@ -448,7 +458,8 @@ Output ONE short sentence of architectural context."""
     def _save_cache(self) -> None:
         """Save graph to disk."""
         try:
-            GRAPH_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            cache_file = self._cache_file()
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
             data = {}
             for path, node in self.nodes.items():
                 data[path] = {
@@ -457,7 +468,7 @@ Output ONE short sentence of architectural context."""
                     "symbols": [asdict(s) for s in node.symbols],
                     "edge_summaries": node.edge_summaries
                 }
-            GRAPH_CACHE_FILE.write_text(json.dumps(data, indent=2))
+            cache_file.write_text(json.dumps(data, indent=2))
         except Exception as e:
             log.warning("graph_save_failed", error=str(e))
 

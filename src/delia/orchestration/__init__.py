@@ -127,6 +127,12 @@ from .critic import (
     ResponseCritic,
 )
 
+from .vector_store import (
+    VectorStore,
+    get_vector_store,
+    reset_vector_store,
+)
+
 
 __all__ = [
     # Result types
@@ -202,5 +208,10 @@ __all__ = [
     "BranchScore",
     "BranchEvaluation",
     "ResponseCritic",
+
+    # Vector Store (ChromaDB)
+    "VectorStore",
+    "get_vector_store",
+    "reset_vector_store",
 ]
 

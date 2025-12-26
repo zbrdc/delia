@@ -31,6 +31,7 @@ from typing import Literal, Optional, TYPE_CHECKING
 import structlog
 
 from . import paths
+from .context import get_project_path
 from .tokens import count_tokens
 
 if TYPE_CHECKING:
@@ -335,9 +336,9 @@ class SessionManager:
             max_messages_per_session: Maximum messages per session
             backend: Optional SessionBackend (SQLite, JSON, etc.). If None, uses JSON.
         """
-        # PER-PROJECT ISOLATION: Auto-detect project from cwd if not provided
+        # PER-PROJECT ISOLATION: Auto-detect project from context if not provided
         if session_dir is None:
-            project_path = Path.cwd()
+            project_path = get_project_path()
             session_dir = project_path / ".delia" / "sessions"
             session_dir.mkdir(parents=True, exist_ok=True)
         else:

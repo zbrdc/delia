@@ -33,6 +33,7 @@ import structlog
 from pydantic import BaseModel, Field, computed_field
 
 from . import paths
+from .context import get_project_path
 
 log = structlog.get_logger()
 
@@ -300,8 +301,8 @@ class PlaybookManager:
     """
 
     def __init__(self, playbook_dir: Path | None = None):
-        # Force project-specific: .delia/playbooks/ in CWD
-        self.playbook_dir = playbook_dir or (Path.cwd() / ".delia" / "playbooks")
+        # Force project-specific: .delia/playbooks/ in project directory
+        self.playbook_dir = playbook_dir or (get_project_path() / ".delia" / "playbooks")
         self._ensure_dir()
         # Cache for loaded bullets {task_type: [bullets]}
         self._cache: dict[str, list[PlaybookBullet]] = {}
@@ -820,7 +821,7 @@ async def generate_project_playbook(summarizer: Any = None) -> int:
     bullets = generate_project_bullets(
         tech_stack=tech_stack,
         file_summaries=summarizer.summaries,
-        project_root=str(Path.cwd()),
+        project_root=str(get_project_path()),
     )
 
     # Store in playbook manager under "project" task type

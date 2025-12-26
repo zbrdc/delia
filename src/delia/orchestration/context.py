@@ -19,6 +19,7 @@ import structlog
 import re
 from pydantic import BaseModel, Field
 
+from ..context import get_project_path
 from ..file_helpers import read_files, read_memory
 from ..language import detect_language
 from ..project_memory import get_project_context
@@ -130,7 +131,7 @@ async def get_symbols_for_files(
     """
     from ..lsp_client import get_lsp_client
     
-    root = project_root or Path.cwd()
+    root = project_root or get_project_path()
     results = {}
     
     try:

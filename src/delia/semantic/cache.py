@@ -18,24 +18,34 @@ from typing import Any
 import numpy as np
 import structlog
 
+from ..context import get_project_path
 from ..embeddings import get_embeddings_client, cosine_similarity
 
 log = structlog.get_logger()
 
-# Project-specific semantic cache (.delia/ in CWD)
-CACHE_FILE = Path.cwd() / ".delia" / "semantic_cache.json"
+
+def _get_cache_file(project_path: Path | None = None) -> Path:
+    """Get the semantic cache file path for a project."""
+    root = get_project_path(project_path)
+    return root / ".delia" / "semantic_cache.json"
+
 
 class SemanticCache:
     """
     Semantic cache for LLM responses.
     """
 
-    def __init__(self, threshold: float = 0.95):
+    def __init__(self, threshold: float = 0.95, project_path: Path | None = None):
         self.threshold = threshold
+        self.project_path = project_path
         self._client = None  # Lazy singleton
         self.entries: list[dict[str, Any]] = []
         self._initialized = False
         self._lock = asyncio.Lock()
+
+    def _cache_file(self) -> Path:
+        """Get the cache file path for this instance."""
+        return _get_cache_file(self.project_path)
 
     async def _get_client(self):
         if self._client is None:
@@ -46,10 +56,11 @@ class SemanticCache:
         async with self._lock:
             if self._initialized:
                 return
-            
-            if CACHE_FILE.exists():
+
+            cache_file = self._cache_file()
+            if cache_file.exists():
                 try:
-                    self.entries = json.loads(CACHE_FILE.read_text())
+                    self.entries = json.loads(cache_file.read_text())
                     # Convert embeddings back to numpy
                     for entry in self.entries:
                         entry["embedding"] = np.array(entry["embedding"], dtype=np.float32)
@@ -107,15 +118,44 @@ class SemanticCache:
                     "response": entry["response"],
                     "embedding": entry["embedding"].tolist()
                 })
-            CACHE_FILE.write_text(json.dumps(data))
+            cache_file = self._cache_file()
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(data))
         except Exception as e:
             log.warning("semantic_cache_save_failed", error=str(e))
 
-# Singleton
-_cache: SemanticCache | None = None
+# Per-project cache instances (keyed by resolved project path)
+_caches: dict[str, SemanticCache] = {}
 
-def get_semantic_cache() -> SemanticCache:
-    global _cache
-    if _cache is None:
-        _cache = SemanticCache()
-    return _cache
+
+def get_semantic_cache(project_path: Path | str | None = None) -> SemanticCache:
+    """Get the SemanticCache instance for a specific project.
+
+    Args:
+        project_path: Project root directory. Defaults to project context.
+
+    Returns:
+        SemanticCache instance for that project (cached).
+    """
+    resolved = get_project_path(project_path)
+    key = str(resolved.resolve())
+
+    if key not in _caches:
+        _caches[key] = SemanticCache(project_path=resolved)
+        log.debug("created_semantic_cache", project=key)
+
+    return _caches[key]
+
+
+def reset_semantic_cache(project_path: Path | str | None = None) -> None:
+    """Reset the SemanticCache instance for a project.
+
+    Args:
+        project_path: Project to reset. If None, resets all.
+    """
+    global _caches
+    if project_path is None:
+        _caches.clear()
+    else:
+        key = str(Path(project_path).resolve())
+        _caches.pop(key, None)

@@ -36,6 +36,7 @@ from typing import Any
 import structlog
 
 from . import paths
+from .context import get_project_path
 
 log = structlog.get_logger()
 
@@ -133,7 +134,7 @@ class ProjectMemory:
             project_root: Project root directory (default: cwd)
             user_dir: User config directory (default: ~/.delia)
         """
-        self.project_root = project_root or Path.cwd()
+        self.project_root = get_project_path(project_root)
         self.user_dir = user_dir or paths.USER_DELIA_DIR
         self._state: ProjectMemoryState | None = None
         self._loaded_paths: set[Path] = set()  # Track loaded files to prevent duplicates

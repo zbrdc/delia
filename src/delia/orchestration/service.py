@@ -518,7 +518,11 @@ class OrchestrationService:
                         await summarizer.initialize()
                         results = await summarizer.search(message, top_k=3)
                         if results:
-                            extra_paths = [r["path"] for r in results if r["score"] >= 0.3]
+                            # Handle both 0-1 and 0-100 score formats
+                            extra_paths = [
+                                r["path"] for r in results
+                                if r.get("raw_score", r.get("score", 0) / 100) >= 0.3
+                            ]
                             if extra_paths:
                                 # Re-prepare content with additional files
                                 extra_files = ",".join(extra_paths)

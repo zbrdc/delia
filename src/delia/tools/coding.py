@@ -167,7 +167,7 @@ def _detect_test_framework(path: Path) -> str:
             pkg = json.loads((search_dir / "package.json").read_text())
             if "jest" in pkg.get("devDependencies", {}) or "jest" in pkg.get("dependencies", {}):
                 return "jest"
-        except:
+        except (json.JSONDecodeError, OSError):
             pass
     
     if (search_dir / "Cargo.toml").exists():
