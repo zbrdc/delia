@@ -23,13 +23,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-import humanize
 import structlog
 from fastmcp import FastMCP
 
-from ..container import get_container
-from ..config import get_backend_health, VALID_MODELS
-from ..routing import BackendScorer
+from ..config import VALID_MODELS
 from ..agent_sync import sync_agent_instruction_files
 
 log = structlog.get_logger()
@@ -340,81 +337,42 @@ def _build_conventions(
 
 
 async def health_impl() -> str:
-    """Check health status of Delia and all configured GPU backends."""
-    container = get_container()
-    health_status = await container.backend_manager.get_health_status()
-    weights = container.backend_manager.get_scoring_weights()
-    scorer = BackendScorer(weights=weights)
-    backend_lookup = {b.id: b for b in container.backend_manager.backends.values()}
+    """Check health status of Delia Framework."""
+    from pathlib import Path
 
-    for backend_info in health_status["backends"]:
-        backend_obj = backend_lookup.get(backend_info["id"])
-        if backend_obj and backend_info["enabled"]:
-            backend_info["score"] = round(scorer.score(backend_obj), 3)
-            from ..config import get_backend_metrics
-            metrics = get_backend_metrics(backend_info["id"])
-            if metrics.total_requests > 0:
-                backend_info["metrics"] = {
-                    "success_rate": f"{metrics.success_rate * 100:.1f}%",
-                    "latency_p50_ms": round(metrics.latency_p50, 1),
-                    "throughput_tps": round(metrics.tokens_per_second, 1),
-                    "total_requests": metrics.total_requests,
-                }
+    # Check .delia directory exists
+    cwd = Path.cwd()
+    delia_dir = cwd / ".delia"
+    has_delia = delia_dir.exists()
 
-    model_usage, _, _, _ = container.stats_service.get_snapshot()
-    total_quick_tokens = model_usage["quick"]["tokens"]
-    total_coder_tokens = model_usage["coder"]["tokens"]
-    total_moe_tokens = model_usage["moe"]["tokens"]
-    total_thinking_tokens = model_usage["thinking"]["tokens"]
-    local_tokens = total_quick_tokens + total_coder_tokens + total_moe_tokens + total_thinking_tokens
-    local_calls = sum(model_usage[t]["calls"] for t in ("quick", "coder", "moe", "thinking"))
+    # Check for playbooks
+    playbooks_dir = delia_dir / "playbooks" if has_delia else None
+    playbook_count = len(list(playbooks_dir.glob("*.json"))) if playbooks_dir and playbooks_dir.exists() else 0
 
-    local_savings = (local_tokens / 1000) * container.config.gpt4_cost_per_1k_tokens
-    from ..voting_stats import get_voting_stats_tracker
-    voting_stats = get_voting_stats_tracker().get_stats()
+    # Check for memories
+    memories_dir = delia_dir / "memories" if has_delia else None
+    memory_count = len(list(memories_dir.glob("*.md"))) if memories_dir and memories_dir.exists() else 0
 
-    status = {
-        "status": health_status["status"],
-        "active_backend": health_status["active_backend"],
-        "backends": health_status["backends"],
-        "routing": health_status["routing"],
-        "usage": {
-            "total_calls": humanize.intcomma(local_calls),
-            "total_tokens": humanize.intword(local_tokens),
-            "estimated_savings": f"${local_savings:,.2f}",
-        },
-        "voting": voting_stats,
-    }
-    
-    # Format as Markdown for better readability in CLI/Chat
-    lines = ["# Backend Health Status\n"]
-    delegation_enabled = health_status.get("delegation_enabled", False)
-    status_note = health_status.get("status_note", "")
+    # Format as Markdown
+    lines = ["# Delia Framework Status\n"]
 
-    status_display = status['status'].upper()
-    if status_note == "delegation_disabled":
-        status_display += " (delegation disabled - backends not in use)"
-    elif status_note:
-        status_display += f" ({status_note})"
+    if has_delia:
+        lines.append("**Status**: INITIALIZED")
+        lines.append(f"**Project**: `{cwd.name}`")
+        lines.append("")
+        lines.append("## Resources")
+        lines.append(f"- Playbooks: {playbook_count} task types")
+        lines.append(f"- Memories: {memory_count} files")
+        lines.append("")
+        lines.append("## Mode")
+        lines.append("- Local LLM delegation: **disabled**")
+        lines.append("- Analysis performed by: **calling AI agent**")
+    else:
+        lines.append("**Status**: NOT INITIALIZED")
+        lines.append(f"**Directory**: `{cwd}`")
+        lines.append("")
+        lines.append("Run `delia init-project` or call `project(action='init')` to initialize.")
 
-    lines.append(f"**System Status**: {status_display}")
-    lines.append(f"**Delegation**: {'enabled' if delegation_enabled else 'disabled (set DELIA_DELEGATION=true to enable)'}")
-    lines.append(f"**Active Backend**: `{status['active_backend']}`")
-    
-    lines.append("\n## Backends")
-    for b in status['backends']:
-        status_marker = "[OK]" if b['available'] and b['enabled'] else "[--]"
-        backend_status = "available" if b['available'] else ("disabled" if not b['enabled'] else "unavailable")
-        lines.append(f"- {status_marker} **{b['id']}** ({b['provider']}): {backend_status}")
-        if "metrics" in b:
-            m = b['metrics']
-            lines.append(f"  - Success: {m['success_rate']} | Latency: {m['latency_p50_ms']}ms | Throughput: {m['throughput_tps']} t/s")
-    
-    lines.append("\n## Usage & Savings")
-    lines.append(f"- Total Calls: {status['usage']['total_calls']}")
-    lines.append(f"- Total Tokens: {status['usage']['total_tokens']}")
-    lines.append(f"- Estimated Savings: **{status['usage']['estimated_savings']}** (vs GPT-4)")
-    
     return "\n".join(lines)
 
 
@@ -442,38 +400,19 @@ async def dashboard_url_impl() -> str:
 
 
 async def models_impl() -> str:
-    """List all configured models across all GPU backends."""
-    container = get_container()
-    backends = container.backend_manager.get_enabled_backends()
-    # Get currently loaded models from the model queue
-    loaded = list(container.model_queue.loaded_models.keys())
-
-    result = {"backends": [], "currently_loaded": loaded}
-    for b in backends:
-        result["backends"].append({"id": b.id, "name": b.name, "provider": b.provider, "models": b.models})
-    
-    # Format as Markdown
-    lines = ["# Available Models\n"]
-    for b in result["backends"]:
-        lines.append(f"## {b['name']} (`{b['id']}`)")
-        for tier, model in b["models"].items():
-            lines.append(f"- **{tier.title()}**: `{model}`")
-        lines.append("")
-    
-    if loaded:
-        lines.append("## Currently Loaded in GPU")
-        for m in loaded:
-            lines.append(f"- `{m}`")
-    
+    """List models - local LLM delegation is disabled."""
+    lines = ["# Models\n"]
+    lines.append("Local LLM delegation is **disabled**.")
+    lines.append("")
+    lines.append("All analysis is performed by the calling AI agent (Claude, Copilot, etc.).")
+    lines.append("")
+    lines.append("The local LLM backend code remains in the codebase but is not wired in.")
     return "\n".join(lines)
 
 
 async def switch_backend_impl(backend_id: str) -> str:
-    """Switch the active LLM backend."""
-    container = get_container()
-    if container.backend_manager.set_active_backend(backend_id):
-        return f"Switched to backend: {backend_id}"
-    return f"Error: Backend '{backend_id}' not found or disabled."
+    """Switch backend - local LLM delegation is disabled."""
+    return "Local LLM delegation is disabled. The calling AI agent performs all analysis."
 
 
 async def get_model_info_impl(model_name: str) -> str:
@@ -495,9 +434,6 @@ async def get_model_info_impl(model_name: str) -> str:
 async def init_project(
     path: str,
     force: bool = False,
-    skip_index: bool = False,
-    parallel: int = 4,
-    use_calling_agent: bool = False,
 ) -> str:
     """
     Initialize a project with Delia Framework.
@@ -505,28 +441,17 @@ async def init_project(
     IMPORTANT: You MUST provide the 'path' parameter with the absolute path
     to the project you want to initialize. Do NOT omit this parameter.
 
-    This generates per-project instruction files customized to the detected tech stack:
-    - CLAUDE.md, .gemini/instructions.md, .github/copilot-instructions.md
-    - .delia/playbooks/*.json (strategic bullets)
-    - .delia/profiles/*.md (starter templates)
+    This sets up the .delia directory structure and detects the tech stack.
+    The calling AI agent (you) will analyze the codebase and provide summaries.
 
     Args:
         path: REQUIRED. Absolute path to the project to initialize.
         force: Overwrite existing framework files
-        skip_index: Skip indexing (use existing analysis)
-        parallel: Number of parallel summarization tasks
-        use_calling_agent: If True (default), calling agent does summarization
 
     Returns:
-        JSON with initialization results.
+        JSON with initialization results and next steps.
     """
-    from ..playbook import detect_tech_stack, playbook_manager
-    from ..orchestration.summarizer import get_summarizer
-    from ..orchestration.graph import get_symbol_graph
-    from ..llm import init_llm_module
-    from ..queue import ModelQueue
-
-    container = get_container()
+    from ..playbook import detect_tech_stack
 
     if not path:
         return json.dumps({
@@ -542,14 +467,7 @@ async def init_project(
             "message": "Provide a valid absolute path to an existing project directory.",
         })
     project_name = project_root.name
-    results: dict[str, Any] = {"project": project_name, "path": str(project_root), "steps": []}
-
-    health_status = await container.backend_manager.get_health_status()
-    available_backends = [
-        b for b in health_status["backends"]
-        if b.get("enabled") and b.get("available")
-    ]
-    has_local_backends = len(available_backends) > 0
+    results: dict[str, Any] = {"project": project_name, "path": str(project_root)}
 
     try:
         from ..orchestration.constants import CODE_EXTENSIONS, should_ignore_file
@@ -596,170 +514,117 @@ async def init_project(
             "frameworks": tech_stack.get("frameworks", []),
         }
 
-        use_manual_mode = use_calling_agent or not has_local_backends
-        reason = "use_calling_agent=True" if use_calling_agent else "no_local_backends"
+        log.info("init_project", project=project_name)
+        results["status"] = "INCOMPLETE - TOOL CALLS REQUIRED"
 
-        if use_manual_mode:
-            log.info("init_project_manual_mode", project=project_name, reason=reason)
-            results["manual_mode"] = True
-            results["status"] = "INCOMPLETE - TOOL CALLS REQUIRED"
+        results["WHAT_IS_DELIA"] = (
+            "Delia Framework: Project-specific playbooks with learned strategies. "
+            "Call get_playbook() before coding, report_feedback() after."
+        )
 
-            results["WHAT_IS_DELIA"] = (
-                "Delia Framework: Project-specific playbooks with learned strategies. "
-                "Call get_playbook() before coding, report_feedback() after."
-            )
-
-            results["STOP_AND_READ"] = (
-                "DO NOT just describe what you will do. "
-                "You MUST call the tools below RIGHT NOW to complete initialization."
-            )
-            results["REQUIRED_TOOL_CALLS"] = [
-                {
-                    "order": 1,
-                    "tool": "mcp__delia__scan_codebase",
-                    "purpose": "Read key files automatically",
-                    "args": {"path": str(project_root)},
+        results["STOP_AND_READ"] = (
+            "DO NOT just describe what you will do. "
+            "You MUST call the tools below RIGHT NOW to complete initialization."
+        )
+        results["REQUIRED_TOOL_CALLS"] = [
+            {
+                "order": 1,
+                "tool": "mcp__delia__scan_codebase",
+                "purpose": "Read key files automatically",
+                "args": {"path": str(project_root)},
+            },
+            {
+                "order": 2,
+                "tool": "mcp__delia__analyze_and_index",
+                "purpose": "Submit YOUR analysis - generates summaries, playbooks, and syncs files in ONE call",
+                "args": {
+                    "path": str(project_root),
+                    "project_summary": "<YOUR analysis as JSON>",
+                    "coding_bullets": "<YOUR bullets as JSON array>",
                 },
-                {
-                    "order": 2,
-                    "tool": "mcp__delia__analyze_and_index",
-                    "purpose": "Submit YOUR analysis - generates summaries, playbooks, and syncs files in ONE call",
-                    "args": {
-                        "path": str(project_root),
-                        "project_summary": "<YOUR analysis as JSON>",
-                        "coding_bullets": "<YOUR bullets as JSON array>",
-                    },
-                },
-            ]
-            results["FLOW"] = "scan_codebase → (you analyze) → analyze_and_index → DONE"
+            },
+        ]
+        results["FLOW"] = "scan_codebase → (you analyze) → analyze_and_index → DONE"
 
-            results["total_files"] = len(code_files)
+        results["total_files"] = len(code_files)
 
-            delia_dir = project_root / ".delia"
-            delia_dir.mkdir(parents=True, exist_ok=True)
-            playbooks_dir = delia_dir / "playbooks"
-            playbooks_dir.mkdir(exist_ok=True)
-            profiles_dir = delia_dir / "profiles"
-            profiles_dir.mkdir(exist_ok=True)
+        delia_dir = project_root / ".delia"
+        delia_dir.mkdir(parents=True, exist_ok=True)
+        playbooks_dir = delia_dir / "playbooks"
+        playbooks_dir.mkdir(exist_ok=True)
+        profiles_dir = delia_dir / "profiles"
+        profiles_dir.mkdir(exist_ok=True)
 
-            from ..agent_sync import detect_ai_agents
-            detected_agents = detect_ai_agents(project_root)
-            has_existing_instructions = (project_root / "CLAUDE.md").exists()
+        # Add Delia to .claude/mcp.json
+        claude_dir = project_root / ".claude"
+        claude_dir.mkdir(exist_ok=True)
+        mcp_json_path = claude_dir / "mcp.json"
 
-            results["detected_agents"] = [
-                info["description"] for info in detected_agents.values() if info["exists"]
-            ]
-            results["has_existing_claude_md"] = has_existing_instructions
+        mcp_config: dict = {"mcpServers": {}}
+        if mcp_json_path.exists():
+            try:
+                mcp_config = json.loads(mcp_json_path.read_text())
+            except json.JSONDecodeError:
+                pass
 
-            from ..playbook import recommend_profiles, format_recommendations
-            recommendations = recommend_profiles(tech_stack, project_root)
-            formatted = format_recommendations(recommendations)
+        if "mcpServers" not in mcp_config:
+            mcp_config["mcpServers"] = {}
 
-            template_dir = Path(__file__).parent.parent / "templates" / "profiles"
-            starter_profiles = []
-            recommended_files = {r.profile for r in recommendations}
+        # Get delia root for the command
+        from ..cli import get_delia_root
+        delia_root = get_delia_root()
 
-            if template_dir.exists():
-                for template_file in template_dir.glob("*.md"):
-                    if template_file.name in recommended_files:
-                        dest = profiles_dir / template_file.name
-                        if not dest.exists() or force:
-                            dest.write_text(template_file.read_text())
-                            starter_profiles.append(template_file.name)
-
-            results["starter_profiles_copied"] = starter_profiles
-
-            if has_existing_instructions:
-                results["UPDATE_INSTRUCTIONS"] = (
-                    "Project has existing CLAUDE.md. Review the profiles in .delia/profiles/ "
-                    "and UPDATE the existing instructions with any missing patterns or best practices."
-                )
-
-            results["profile_recommendations"] = {
-                "high_priority": formatted["high_priority"][:5],
-                "total": formatted["summary"]["total_recommendations"],
-            }
-
-            # Generate opinionated onboarding files
-            onboarding_files = generate_onboarding_memories(
-                project_root, tech_stack, dependencies, force=force
-            )
-            if onboarding_files:
-                results["onboarding_memories"] = onboarding_files
-
-            return json.dumps(results, indent=2)
-
-        # Standard path: local backends available
-        if not skip_index:
-            model_queue = ModelQueue()
-            init_llm_module(
-                stats_callback=lambda *a, **k: None,
-                save_stats_callback=lambda: None,
-                model_queue=model_queue,
-            )
-
-            summarizer = get_summarizer()
-            graph = get_symbol_graph()
-
-            graph_count = await graph.sync(force=force)
-            results["steps"].append({"step": "symbol_graph", "files": graph_count})
-
-            summary_count = await summarizer.sync_project(force=force, summarize=True, parallel=parallel)
-            results["steps"].append({"step": "summaries", "files": summary_count})
-        else:
-            results["steps"].append({"step": "indexing", "skipped": True})
+        mcp_config["mcpServers"]["delia"] = {
+            "command": "uv",
+            "args": ["--directory", str(delia_root), "run", "delia", "serve"]
+        }
+        mcp_json_path.write_text(json.dumps(mcp_config, indent=2) + "\n")
+        results["mcp_configured"] = str(mcp_json_path)
 
         from ..agent_sync import detect_ai_agents
         detected_agents = detect_ai_agents(project_root)
+        has_existing_instructions = (project_root / "CLAUDE.md").exists()
 
-        files_written = []
-        claude_md_path = project_root / "CLAUDE.md"
+        results["detected_agents"] = [
+            info["description"] for info in detected_agents.values() if info["exists"]
+        ]
+        results["has_existing_claude_md"] = has_existing_instructions
 
-        if force or not claude_md_path.exists():
-            from ..cli import _generate_claude_md
-            claude_md_content = _generate_claude_md(project_name, tech_stack, project_root)
-            files_written, detected_agents = sync_agent_instruction_files(
-                project_root, claude_md_content, force=force
+        from ..playbook import recommend_profiles, format_recommendations
+        recommendations = recommend_profiles(tech_stack, project_root)
+        formatted = format_recommendations(recommendations)
+
+        template_dir = Path(__file__).parent.parent / "templates" / "profiles"
+        starter_profiles = []
+        recommended_files = {r.profile for r in recommendations}
+
+        if template_dir.exists():
+            for template_file in template_dir.glob("*.md"):
+                if template_file.name in recommended_files:
+                    dest = profiles_dir / template_file.name
+                    if not dest.exists() or force:
+                        dest.write_text(template_file.read_text())
+                        starter_profiles.append(template_file.name)
+
+        results["starter_profiles_copied"] = starter_profiles
+
+        if has_existing_instructions:
+            results["UPDATE_INSTRUCTIONS"] = (
+                "Project has existing CLAUDE.md. Review the profiles in .delia/profiles/ "
+                "and UPDATE the existing instructions with any missing patterns or best practices."
             )
-        else:
-            log.info("skipping_instruction_files", reason="CLAUDE.md exists, use force=True to overwrite")
-            results["instruction_files_skipped"] = "Existing files preserved. Use force=True to overwrite."
 
-        results["detected_agents"] = {
-            k: {"description": v["description"], "exists": v["exists"], "updated": v.get("updated", False)}
-            for k, v in detected_agents.items()
+        results["profile_recommendations"] = {
+            "high_priority": formatted["high_priority"][:5],
+            "total": formatted["summary"]["total_recommendations"],
         }
-
-        if files_written:
-            results["files_written"] = files_written
-
-        from ..playbook import generate_project_playbook, playbook_manager
-        playbook_count = await generate_project_playbook(summarizer if not skip_index else get_summarizer())
-        results["steps"].append({"step": "playbook", "bullets": playbook_count})
-
-        # Index playbooks to ChromaDB for semantic search
-        from ..learning.retrieval import PlaybookRetriever
-        retriever = PlaybookRetriever()
-        indexed_count = 0
-        for task_type in playbook_manager.list_task_types(project_root):
-            bullets = playbook_manager.get_bullets(task_type, project_root)
-            if bullets:
-                count = await retriever.index_bullets_to_chromadb(
-                    bullets, task_type, project=project_name, project_path=project_root
-                )
-                indexed_count += count
-        results["steps"].append({"step": "playbook_index", "bullets": indexed_count})
 
         # Generate opinionated onboarding files
         onboarding_files = generate_onboarding_memories(
             project_root, tech_stack, dependencies, force=force
         )
         if onboarding_files:
-            results["steps"].append({"step": "onboarding", "files": onboarding_files})
-
-        results["status"] = "success"
-        results["manual_mode"] = False
-        log.info("init_project_complete", project=project_name, files=len(files_written))
+            results["onboarding_memories"] = onboarding_files
 
     except Exception as e:
         results["status"] = "error"

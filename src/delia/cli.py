@@ -502,126 +502,151 @@ app = typer.Typer(
 
 @app.command()
 def init(
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing configuration"),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files"),
+    skip_mcp: bool = typer.Option(False, "--skip-mcp", help="Skip adding Delia to .claude/mcp.json"),
 ) -> None:
     """
-    Interactive setup wizard for first-time configuration.
+    Initialize Delia for the current project.
 
-    Detects available backends, configures model tiers, and optionally
-    installs Delia to detected MCP clients.
+    This command:
+    1. Creates .delia/ directory structure
+    2. Detects tech stack and patterns
+    3. Generates CLAUDE.md and syncs to AI assistant configs
+    4. Adds Delia to .claude/mcp.json for this project
+
+    Run this in your project root to enable Delia-powered AI assistance.
     """
-    # Ensure all data/cache directories exist
+    import asyncio
     from .paths import ensure_directories
+    from .playbook import detect_tech_stack, playbook_manager
+
     ensure_directories()
 
-    print()
-    if RICH_AVAILABLE and console:
-        console.print(Panel.fit("[bold green]Welcome to Delia Setup![/bold green]", border_style="green"))
-    else:
-        print("Welcome to Delia Setup!")
-        print("=" * 40)
+    async def run_init():
+        project_root = Path.cwd()
+        project_name = project_root.name
+        delia_root = get_delia_root()
 
-    delia_root = get_delia_root()
-
-    # Determine target path for settings
-    # Default: Global user directory (~/.delia/settings.json)
-    target_path = USER_DELIA_DIR / "settings.json"
-
-    # Override: If local settings.json exists in CWD, use that instead
-    cwd_settings = Path.cwd() / "settings.json"
-    if cwd_settings.exists():
-        target_path = cwd_settings
-        print_info(f"Detected local configuration at {target_path}")
-    else:
-        # Ensure global directory exists
-        USER_DELIA_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Check existing settings
-    if target_path.exists() and not force:
-        print_warning(f"settings.json already exists at {target_path}")
-        if not is_interactive():
-            print_info("Non-interactive mode: use --force to overwrite existing config.")
-            raise typer.Exit(0)
-        if not prompt_confirm("Overwrite existing configuration?", default=False):
-            print_info("Setup cancelled. Use --force to overwrite.")
-            raise typer.Exit(0)
-
-    # Step 1: Detect backends
-    print_header("Checking for LLM backends...")
-
-    backends = detect_backends()
-
-    if not backends:
-        print_error("No LLM backends found!")
-        print_info("Please install and start one of:")
-        print_info("  • Ollama: https://ollama.ai")
-        print_info("  • LM Studio: https://lmstudio.ai")
-        print_info("  • llama.cpp: https://github.com/ggerganov/llama.cpp")
         print()
-        print_info("Then run 'delia init' again.")
-        raise typer.Exit(1)
+        if RICH_AVAILABLE and console:
+            console.print(Panel.fit(f"[bold green]Initializing Delia for '{project_name}'[/bold green]", border_style="green"))
+        else:
+            print(f"Initializing Delia for '{project_name}'")
+            print("=" * 40)
 
-    for backend in backends:
-        model_count = len(backend.models)
-        print_success(f"{backend.provider.title()} found at {backend.url}")
-        if backend.models:
-            print_info(f"     Models: {', '.join(backend.models[:5])}")
-            if model_count > 5:
-                print_info(f"     ... and {model_count - 5} more")
+        # Step 1: Create .delia/ structure
+        print_header("Setting up project structure...")
+        delia_dir = project_root / ".delia"
+        for subdir in ["playbooks", "memories", "profiles", "data"]:
+            (delia_dir / subdir).mkdir(parents=True, exist_ok=True)
+        print_success("Created .delia/ directory structure")
 
-    # Step 2: Generate settings
-    print_header("Configuring model tiers...")
+        # Step 2: Build symbol graph (static analysis)
+        from .orchestration.graph import get_symbol_graph
+        print_info("Building symbol graph (static analysis)...")
+        graph = get_symbol_graph()
+        await graph.sync(force=force)
+        print_success("Symbol graph built")
 
-    settings = generate_settings(backends)
+        # Step 3: Index profiles for semantic search
+        print_info("Indexing profiles...")
+        from .tools.consolidated import profiles_tool
+        await profiles_tool(action="index", path=str(project_root))
 
-    # Show tier assignments
-    if settings["backends"]:
-        first_backend = settings["backends"][0]
-        models = first_backend.get("models", {})
-        for tier, model in models.items():
-            print_info(f"  {tier:10} → {model}")
+        # Step 4: Copy memory templates
+        print_info("Setting up starter memories...")
+        templates_dir = Path(__file__).parent / "templates" / "memories"
+        memories_dir = delia_dir / "memories"
 
-    # Step 3: Save settings
+        copied_count = 0
+        if templates_dir.exists():
+            import shutil
+            for template_file in templates_dir.glob("*.md"):
+                dest = memories_dir / template_file.name
+                if not dest.exists() or force:
+                    shutil.copy(template_file, dest)
+                    copied_count += 1
+
+        if copied_count > 0:
+            print_info(f"Copied {copied_count} memory template(s)")
+            from .tools.consolidated import memory_tool
+            await memory_tool(action="index", path=str(project_root))
+
+        # Step 5: Detect tech stack
+        print_info("Detecting tech stack...")
+        tech_stack = _detect_project_tech_stack(project_root)
+        if tech_stack.get("primary_language"):
+            print_success(f"Detected: {tech_stack['primary_language']}")
+            if tech_stack.get("frameworks"):
+                print_info(f"  Frameworks: {', '.join(tech_stack['frameworks'])}")
+
+        # Step 6: Generate framework files
+        print_header("Generating framework files...")
+        claude_md_content = _generate_claude_md(project_name, tech_stack, project_root)
+
+        claude_md_path = project_root / "CLAUDE.md"
+        if claude_md_path.exists() and not force:
+            if not prompt_confirm("CLAUDE.md already exists. Overwrite?", default=False):
+                print_warning("Skipping CLAUDE.md generation")
+                claude_md_content = claude_md_path.read_text()
+
+        # Sync to all AI assistant configs
+        from .agent_sync import sync_agent_instruction_files, get_agent_summary
+        files_written, detected_agents = sync_agent_instruction_files(
+            project_root, claude_md_content, force=force
+        )
+        for file_path in files_written:
+            print_success(f"  Synced {file_path}")
+
+        # Step 7: Add Delia to .claude/mcp.json
+        if not skip_mcp:
+            print_header("Configuring MCP...")
+            claude_dir = project_root / ".claude"
+            claude_dir.mkdir(exist_ok=True)
+            mcp_json_path = claude_dir / "mcp.json"
+
+            mcp_config: dict = {"mcpServers": {}}
+            if mcp_json_path.exists():
+                try:
+                    mcp_config = json.loads(mcp_json_path.read_text())
+                except json.JSONDecodeError:
+                    pass
+
+            if "mcpServers" not in mcp_config:
+                mcp_config["mcpServers"] = {}
+
+            # Add or update Delia server
+            mcp_config["mcpServers"]["delia"] = {
+                "command": "uv",
+                "args": ["--directory", str(delia_root), "run", "delia", "serve"]
+            }
+
+            mcp_json_path.write_text(json.dumps(mcp_config, indent=2) + "\n")
+            print_success("Added Delia to .claude/mcp.json")
+
+        # Done!
+        print()
+        agent_summary = get_agent_summary(detected_agents)
+        if RICH_AVAILABLE and console:
+            console.print(Panel.fit(
+                f"[bold green]Project initialized![/bold green]\n\n"
+                f"Framework files synced:\n{agent_summary}\n\n"
+                f"[dim]Restart Claude Code to activate Delia MCP tools.[/dim]",
+                border_style="green",
+                title="Delia"
+            ))
+        else:
+            print("\nProject initialized!")
+            print(f"Framework files synced:\n{agent_summary}")
+            print("\nRestart Claude Code to activate Delia MCP tools.")
+
     try:
-        with open(target_path, "w") as f:
-            json.dump(settings, f, indent=2)
-        print_success(f"Configuration saved to {target_path}")
+        asyncio.run(run_init())
+    except KeyboardInterrupt:
+        print_warning("Initialization interrupted.")
     except Exception as e:
-        print_error(f"Failed to save settings: {e}")
-        raise typer.Exit(1) from None
-
-    # Step 4: Detect and offer to configure clients
-    print_header("Checking for MCP clients...")
-
-    clients = detect_clients()
-
-    if not clients:
-        print_info("No MCP clients detected.")
-        print_info("Supported clients: Claude Code, VS Code, Gemini CLI, Cursor, Windsurf")
-    else:
-        for client in clients:
-            if client.configured:
-                print_success(f"{client.name} (already configured)")
-            else:
-                print_info(f"{client.name} found")
-
-        # Offer to install
-        unconfigured = [c for c in clients if not c.configured]
-        if unconfigured:
-            print()
-            if prompt_confirm(f"Install Delia to {len(unconfigured)} detected client(s)?", default=True):
-                for client in unconfigured:
-                    if install_to_client(client.id, delia_root, force=force):
-                        print_success(f"{client.name} configured")
-                    else:
-                        print_error(f"Failed to configure {client.name}")
-
-    # Done!
-    print()
-    if RICH_AVAILABLE and console:
-        console.print(Panel.fit("[bold green]Setup complete![/bold green] Restart your AI assistant to use Delia.", border_style="green"))
-    else:
-        print("Setup complete! Restart your AI assistant to use Delia.")
+        print_error(f"Initialization failed: {e}")
+        raise
 
 
 @app.command()
@@ -998,76 +1023,40 @@ def agent(
 @app.command()
 def index(
     force: bool = typer.Option(False, "--force", "-f", help="Force a complete re-indexing of all files"),
-    summarize: bool = typer.Option(False, "--summarize", "-s", help="Use LLM to generate architectural summaries (Deep Scan)"),
-    parallel: int = typer.Option(4, "--parallel", "-p", help="Number of parallel summarization tasks"),
 ) -> None:
     """
-    Manually index the project for high-fidelity orchestration.
-    
+    Index the project for semantic code search.
+
     Scans the current directory to:
-    1. Generate hierarchical file summaries (Project Map)
-    2. Build a global dependency graph (Symbol Graph)
-    3. Generate project-specific playbooks (with --summarize)
-    
-    The generated playbooks contain strategic bullets about:
-    - Tech stack and frameworks detected
-    - Coding patterns and conventions
-    - Project structure and key directories
-    - Testing and verification practices
+    1. Build a symbol graph (classes, functions, imports)
+    2. Generate embeddings for semantic search
+
+    Note: LLM-based summarization has been removed. The calling AI agent
+    will analyze the codebase directly when needed.
     """
     import asyncio
     from .orchestration.summarizer import get_summarizer
     from .orchestration.graph import get_symbol_graph
-    from .llm import init_llm_module
-    from .queue import ModelQueue
 
     async def run_index():
         print_header("Initializing Delia Indexer...")
-        
-        # Initialize backends to resolve Ollama URL for embeddings
-        from .backend_manager import backend_manager
 
-        
-        # 1. Setup environment
-        if summarize:
-            print_info("Initializing Inference Engine for Summaries...")
-            model_queue = ModelQueue()
-            init_llm_module(
-                stats_callback=lambda *a, **k: None,
-                save_stats_callback=lambda: None,
-                model_queue=model_queue,
-            )
-        
-        summarizer = get_summarizer()
         graph = get_symbol_graph()
-        print_info("Building Semantic Vector Index (CPU-bound)...")
-        
-        # 2. Sync Symbol Graph (Static Analysis)
+
+        # Build Symbol Graph (Static Analysis)
         print_info("Building Symbol Graph (Classes, Functions, Imports)...")
         graph_updated = await graph.sync(force=force)
         print_success(f"Symbol Graph updated ({graph_updated} files processed).")
-        
-        # 3. Sync Summaries (LLM Analysis) - uses olmo-3 for reliable JSON
-        if summarize:
-            print_info(f"Generating Project summaries (parallel={parallel}, model=olmo-3:7b-instruct)...")
-        else:
-            print_info("Generating embeddings...")
-        summary_updated = await summarizer.sync_project(force=force, summarize=summarize, parallel=parallel)
-        print_success(f"Project Map updated ({summary_updated} files processed).")
-        
-        # 4. Generate project playbook from codebase analysis
-        if summarize:
-            print_info("Generating project playbook from analysis...")
-            from .playbook import generate_project_playbook
-            playbook_count = await generate_project_playbook(summarizer)
-            if playbook_count > 0:
-                print_success(f"Project playbook generated ({playbook_count} strategic bullets).")
-            else:
-                print_info("No new playbook bullets generated (may already exist).")
-        
+
+        # Generate embeddings (no LLM, just vector embeddings)
+        print_info("Generating embeddings for semantic search...")
+        summarizer = get_summarizer()
+        summary_updated = await summarizer.sync_project(force=force, summarize=False, parallel=1)
+        print_success(f"Embeddings generated ({summary_updated} files processed).")
+
         print()
         if RICH_AVAILABLE and console:
-            console.print(Panel.fit("[bold green]Indexing Complete![/bold green] Delia now has full architectural awareness.", border_style="green"))
+            console.print(Panel.fit("[bold green]Indexing Complete![/bold green]", border_style="green"))
         else:
             print("Index updated successfully.")
 
@@ -1077,150 +1066,6 @@ def index(
         print_warning("Indexing interrupted.")
     except Exception as e:
         print_error(f"Indexing failed: {e}")
-
-
-@app.command("init-project")
-def init_project(
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing framework files"),
-    skip_index: bool = typer.Option(False, "--skip-index", help="Skip indexing (use existing analysis)"),
-    parallel: int = typer.Option(4, "--parallel", "-p", help="Number of parallel summarization tasks"),
-) -> None:
-    """
-    Initialize a project with Delia Framework.
-
-    This command:
-    1. Indexes the codebase with LLM summarization
-    2. Detects tech stack, patterns, and conventions
-    3. Generates a customized CLAUDE.md framework file
-    4. Creates .claude/, .gemini/, .github/ directories with synced configs
-
-    Run this in your project root to enable Delia-powered AI assistance.
-    """
-    import asyncio
-    from .playbook import detect_tech_stack, playbook_manager
-
-    async def run_init_project():
-        project_root = Path.cwd()
-        project_name = project_root.name
-
-        print_header(f"Initializing Delia Framework for '{project_name}'...")
-
-        # Step 1: Index the project (unless skipped)
-        if not skip_index:
-            from .orchestration.summarizer import get_summarizer
-            from .orchestration.graph import get_symbol_graph
-            from .llm import init_llm_module
-            from .queue import ModelQueue
-            from .backend_manager import backend_manager
-
-            print_info("Analyzing codebase structure...")
-
-            model_queue = ModelQueue()
-            init_llm_module(
-                stats_callback=lambda *a, **k: None,
-                save_stats_callback=lambda: None,
-                model_queue=model_queue,
-            )
-
-            summarizer = get_summarizer()
-            graph = get_symbol_graph()
-
-            # Build symbol graph
-            print_info("Building Symbol Graph...")
-            await graph.sync(force=force)
-
-            # Generate summaries
-            print_info(f"Generating project summaries (parallel={parallel})...")
-            await summarizer.sync_project(force=force, summarize=True, parallel=parallel)
-
-            # Generate project-specific playbook bullets (from codebase analysis)
-            # NOTE: We no longer seed generic bullets from profiles - playbooks grow from LEARNING only
-            # Profiles remain as reference docs, loaded via get_profile()
-            from .playbook import generate_project_playbook
-
-            # Generate project-specific playbook bullets (tech stack, structure)
-            print_info("Generating project-specific playbook bullets...")
-            await generate_project_playbook(summarizer)
-
-            # Index profiles to ChromaDB for semantic search
-            print_info("Indexing profiles for semantic search...")
-            from .tools.consolidated import profiles_tool
-            await profiles_tool(action="index", path=str(project_root))
-
-            print_success("Codebase analysis complete.")
-        else:
-            print_info("Skipping indexing (using existing analysis)...")
-
-        # Step 1b: Copy memory templates and index memories
-        print_info("Setting up starter memories...")
-        templates_dir = Path(__file__).parent / "templates" / "memories"
-        memories_dir = project_root / ".delia" / "memories"
-        memories_dir.mkdir(parents=True, exist_ok=True)
-
-        copied_count = 0
-        if templates_dir.exists():
-            for template_file in templates_dir.glob("*.md"):
-                dest = memories_dir / template_file.name
-                if not dest.exists() or force:
-                    import shutil
-                    shutil.copy(template_file, dest)
-                    copied_count += 1
-
-        if copied_count > 0:
-            print_info(f"Copied {copied_count} memory template(s)")
-            # Index memories for semantic search (one-time batch call)
-            from .tools.consolidated import memory_tool
-            await memory_tool(action="index", path=str(project_root))
-            print_info("Indexed memories for semantic search")
-
-        # Step 2: Detect tech stack
-        print_info("Detecting tech stack and patterns...")
-        tech_stack = _detect_project_tech_stack(project_root)
-
-        # Step 3: Generate framework files and sync to all detected agents
-        print_info("Generating framework files...")
-        claude_md_content = _generate_claude_md(project_name, tech_stack, project_root)
-
-        # Check if CLAUDE.md exists and prompt for confirmation if not forcing
-        claude_md_path = project_root / "CLAUDE.md"
-        if claude_md_path.exists() and not force:
-            if not prompt_confirm(f"CLAUDE.md already exists. Overwrite?", default=False):
-                print_warning("Skipping framework file generation.")
-                return
-
-        # Sync to all detected AI agent instruction files
-        print_info("Detecting and syncing AI assistant configs...")
-        from .agent_sync import sync_agent_instruction_files, get_agent_summary
-        files_written, detected_agents = sync_agent_instruction_files(
-            project_root, claude_md_content, force=force
-        )
-
-        for file_path in files_written:
-            print_success(f"  Synced {file_path}")
-
-        # Final summary
-        print()
-        agent_summary = get_agent_summary(detected_agents)
-        if RICH_AVAILABLE and console:
-            from rich.panel import Panel
-            console.print(Panel.fit(
-                f"[bold green]Project initialized![/bold green]\n\n"
-                f"Framework files synced:\n{agent_summary}\n\n"
-                f"[dim]Delia will now provide dynamic playbook guidance for this project.[/dim]",
-                border_style="green",
-                title="Delia Framework"
-            ))
-        else:
-            print("\nProject initialized successfully!")
-            print(f"Framework files synced:\n{agent_summary}")
-
-    try:
-        asyncio.run(run_init_project())
-    except KeyboardInterrupt:
-        print_warning("Initialization interrupted.")
-    except Exception as e:
-        print_error(f"Initialization failed: {e}")
-        raise
 
 
 def _detect_project_tech_stack(project_root: Path) -> dict[str, Any]:
