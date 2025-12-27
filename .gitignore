@@ -29,12 +29,16 @@ env/
 # IDE & Editor configs
 .idea/
 .vscode/
+*.swp
+*.swo
+
+# AI Agent instruction files (generated per-project by delia init)
+CLAUDE.md
 .claude/
 .gemini/
 .cursor/
 .windsurf/
-*.swp
-*.swo
+.github/copilot-instructions.md
 
 # Environment files
 .env
